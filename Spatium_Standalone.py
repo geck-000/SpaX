@@ -174,11 +174,18 @@ def generate_channels(L, channel_vof_target, r_channel_avg, r_channel_std,
 def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                              max_iterations, sphericity_avg=0.85,
                              sphericity_std=0.1, growth_direction='Random',
-                             growth_concentration=0.0):
+                             growth_concentration=0.0, min_radius=None):
     """
     Random Sequential Adsorption sphere/ellipsoid packing.
     Returns numpy array shape (N, 10):
         [cx, cy, cz, rx, ry, rz, rot1, rot2, rot3, sphericity]
+
+    min_radius : float or None
+        Hard floor on the adaptive radius. Packing stops shrinking below this.
+        Pass a mesh-resolvable size (e.g. ~0.5*L_mesh) so the adaptive schedule
+        cannot fill the remaining VoF with thousands of sub-element-size
+        inclusions that blow up the Gmsh entity count and wreck periodic
+        meshing. If None, falls back to 10% of r_avg (geometry-only runs).
     """
     V_RVE = L ** 3
     spheres = []  # list of (cx, cy, cz, rx, ry, rz)
@@ -186,6 +193,8 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     current_vof = 0.0
     n_consecutive_fails = 0
     current_r = r_avg
+    # Floor on the adaptive radius: never shrink below a mesh-resolvable size.
+    r_floor = min_radius if (min_radius and min_radius > 0) else r_avg * 0.10
     
     for iteration in range(max_iterations):
         if current_vof >= VoF_target:
@@ -328,8 +337,9 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                 n_consecutive_fails = 0
                 print("    [Adaptive] r_avg reduced to {:.5f} after {} placements (VoF={:.1%})".format(
                     current_r, len(spheres), current_vof))
-                if current_r < r_avg * 0.10:
-                    print("    [Adaptive] Minimum radius reached (10% of original), stopping")
+                if current_r < r_floor:
+                    print("    [Adaptive] Minimum radius {:.5f} reached, stopping "
+                          "(keeps inclusions mesh-resolvable)".format(r_floor))
                     break
     
     # Build sphere array
@@ -1017,6 +1027,14 @@ def process_csv(csv_path, output_dir):
             gmsh_mode = 'Composite'
         
         # Step 1: Generate sphere packing
+        # Floor the adaptive radius at a mesh-resolvable size. Below ~0.75*L_mesh
+        # the packing emits spheres/caps too small for the surface mesher to
+        # resolve, which produces degenerate facets that crash Gmsh's 3D mesher
+        # (a C-level core dump, not a catchable exception). A sweep over seeds
+        # showed 0.6*L_mesh segfaults intermittently while 0.75*L_mesh meshes
+        # reliably; we floor here for robustness (VoF ~0.15-0.17 on the sea-ice
+        # cases). Lower it only together with stronger thin-cap/sliver rejection.
+        r_floor = max(r_avg * 0.10, 0.75 * L_mesh)
         print("  Step 1: Sphere packing...")
         Sphere_array, octree = generate_sphere_packing(
             L=L, r_avg=r_avg, r_std=r_std,
@@ -1024,7 +1042,8 @@ def process_csv(csv_path, output_dir):
             max_iterations=max_iter,
             sphericity_avg=sph_avg, sphericity_std=sph_std,
             growth_direction=growth_dir,
-            growth_concentration=growth_conc)
+            growth_concentration=growth_conc,
+            min_radius=r_floor)
         
         # Step 1b: Generate channels if requested
         gen_channels = params.get('generate_channels', 'No').strip().lower() in ('yes', 'true', '1')
@@ -1083,7 +1102,8 @@ def process_csv(csv_path, output_dir):
                         max_iterations=max_iter,
                         sphericity_avg=sph_avg, sphericity_std=sph_std,
                         growth_direction=growth_dir,
-                        growth_concentration=growth_conc)
+                        growth_concentration=growth_conc,
+                        min_radius=r_floor)
                     result = None
                 else:
                     print("    SKIPPING {} after {} failures".format(run_id, max_retries))

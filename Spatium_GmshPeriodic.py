@@ -132,6 +132,51 @@ def _match_periodic_surfaces(L, eps=None):
     return pairs
 
 
+def _match_periodic_curves(L, eps=None):
+    """
+    Match every curve lying on a min face (x=0, y=0 or z=0) to its translate on
+    the opposite max face. Returns list of (master_curve, slave_curve, trans).
+
+    This is the 1D analogue of _match_periodic_surfaces and is ESSENTIAL for a
+    strictly periodic mesh: Gmsh meshes all curves in the 1D phase BEFORE the
+    periodic 2D surface copy. Without explicit 1D periodicity the master and
+    slave boundary curves are meshed independently and can end up with different
+    node counts (geometric/algorithmic asymmetry — it happens even with a
+    perfectly uniform size field), which makes the 2D copy fail with
+    "curve X has N vertices, whereas correspondant has M". Setting periodicity
+    on the curves forces the slave curve to copy the master node-for-node, so
+    opposite faces become strictly conforming.
+
+    Matching is global over ALL min-face curves (not just the boundary curves of
+    matched surfaces) so that interior arcs — e.g. where a sphere cut meets the
+    RVE face — are covered too; those are exactly the ones that otherwise break.
+    """
+    if eps is None:
+        eps = 1e-4 * L
+    pairs = []
+    used_slaves = set()
+    for axis, trans in [(0, [L, 0, 0]), (1, [0, L, 0]), (2, [0, 0, L])]:
+        mins = []
+        maxs = []
+        for dim, c in gmsh.model.getEntities(1):
+            bb = gmsh.model.getBoundingBox(1, c)
+            if abs(bb[axis]) < eps and abs(bb[axis + 3]) < eps:
+                mins.append((c, bb))
+            if abs(bb[axis] - L) < eps and abs(bb[axis + 3] - L) < eps:
+                maxs.append((c, bb))
+        for c, bb in mins:
+            tb = [bb[0] + trans[0], bb[1] + trans[1], bb[2] + trans[2],
+                  bb[3] + trans[0], bb[4] + trans[1], bb[5] + trans[2]]
+            for c2, bb2 in maxs:
+                if c2 in used_slaves:
+                    continue
+                if all(abs(bb2[k] - tb[k]) < eps for k in range(6)):
+                    pairs.append((c, c2, list(trans)))
+                    used_slaves.add(c2)
+                    break
+    return pairs
+
+
 def _validate_periodic_pairs(face_pairs, L, eps=None):
     """
     Verify that every matched surface pair is exactly translation-compatible
@@ -170,6 +215,141 @@ def _validate_periodic_pairs(face_pairs, L, eps=None):
             bad.append((master, slave,
                         "{} curve(s) without translate match".format(unmatched)))
     return bad
+
+
+def _periodic_curve_pairs(L, eps=1e-6):
+    """Single-axis periodic curve correspondence for the RVE boundary.
+
+    A curve lying on one or more *max* faces is slaved, along the LOWEST such
+    axis, to its -L translate. This builds a consistent master tree rooted at
+    the all-min curves, so a cube-edge curve (shared by two faces) is never
+    double-assigned. Matching is by centre-of-mass translate (unambiguous for
+    distinct curves, unlike a bounding box which two arcs can share).
+
+    This is the foundation of strict periodicity here: we drive 1D periodicity
+    ourselves with these pairs (gmsh.model.mesh.setPeriodic(1, ...)) and then
+    copy the 2D face meshes manually (see _manual_periodic_surface_copy).
+
+    Why not Gmsh's own setPeriodic(2)? Its surface-derived curve correspondence
+    mis-matches cube-edge curves once a face is split into many sub-surfaces by
+    inclusion cuts (it maps an edge to the wrong parallel edge). That internal
+    map drives the 2D copy and cannot be overridden through the API, so the copy
+    fails with "curve X has N vertices, whereas correspondant has M". Driving 1D
+    ourselves + a manual 2D copy sidesteps it entirely.
+
+    Returns list of (master_curve, slave_curve, [tx, ty, tz]).
+    """
+    info = {}
+    for dim, c in gmsh.model.getEntities(1):
+        bb = gmsh.model.getBoundingBox(1, c)
+        com = gmsh.model.occ.getCenterOfMass(1, c)
+        onmax = [a for a in range(3)
+                 if abs(bb[a] - L) < eps and abs(bb[a + 3] - L) < eps]
+        info[c] = (com, onmax)
+
+    def key(p):
+        return (round(p[0], 7), round(p[1], 7), round(p[2], 7))
+
+    idx = {key(v[0]): c for c, v in info.items()}
+    pairs = []
+    for c, (com, onmax) in info.items():
+        if not onmax:
+            continue
+        axis = min(onmax)
+        trans = [0.0, 0.0, 0.0]
+        trans[axis] = L
+        m = idx.get(key([com[0] - trans[0], com[1] - trans[1],
+                         com[2] - trans[2]]))
+        if m is not None and m != c:
+            pairs.append((m, c, trans))
+    return pairs
+
+
+def _manual_periodic_surface_copy(L, face_pairs):
+    """Replace each slave (max-face) sub-surface mesh with the exact translate
+    of its master (min-face) sub-surface mesh, reusing the already-periodic
+    boundary-curve nodes.
+
+    Prerequisite: the 1D mesh must already be periodic (set the pairs from
+    _periodic_curve_pairs via setPeriodic(1) and run generate(2) first) so the
+    slave's bounding-curve nodes are exact translates of the master's. We then
+    create new interior nodes for the slave as translated copies of the master
+    interior nodes, map the master boundary nodes onto the existing slave
+    boundary nodes, clear the slave's old surface mesh, and re-add the master
+    triangulation (winding reversed for the opposite outward normal). After this
+    the opposite RVE faces are conforming node-for-node, so the 3D mesh and the
+    exported periodic node pairs are strictly periodic.
+
+    Returns (n_pairs, n_missing_boundary_nodes); n_missing must be 0.
+    """
+    def key(p):
+        return (round(p[0], 7), round(p[1], 7), round(p[2], 7))
+
+    all_nt, _, _ = gmsh.model.mesh.getNodes()
+    next_tag = int(max(all_nt)) + 1 if len(all_nt) else 1
+    max_et = 0
+    _, etags_all, _ = gmsh.model.mesh.getElements()
+    for a in etags_all:
+        if len(a):
+            max_et = max(max_et, int(max(a)))
+    next_elem = max_et + 1
+
+    total_missing = 0
+    for master, slave, trans in face_pairs:
+        # Index slave boundary-curve nodes by coordinate.
+        snode = {}
+        for d, cv in gmsh.model.getBoundary([(2, slave)], oriented=False):
+            nt, co, _ = gmsh.model.mesh.getNodes(1, cv, includeBoundary=True)
+            for i, t in enumerate(nt):
+                snode[key(co[3 * i:3 * i + 3])] = int(t)
+
+        # Master interior nodes -> new translated slave interior nodes.
+        mnt, mco, _ = gmsh.model.mesh.getNodes(2, master, includeBoundary=False)
+        nodemap = {}
+        ntags = []
+        ncoords = []
+        for i, t in enumerate(mnt):
+            p = mco[3 * i:3 * i + 3]
+            nodemap[int(t)] = next_tag
+            ntags.append(next_tag)
+            ncoords.extend([p[0] + trans[0], p[1] + trans[1], p[2] + trans[2]])
+            next_tag += 1
+
+        # Master boundary nodes -> existing slave boundary nodes.
+        for d, cv in gmsh.model.getBoundary([(2, master)], oriented=False):
+            nt, co, _ = gmsh.model.mesh.getNodes(1, cv, includeBoundary=True)
+            for i, t in enumerate(nt):
+                if int(t) in nodemap:
+                    continue
+                p = co[3 * i:3 * i + 3]
+                k = key([p[0] + trans[0], p[1] + trans[1], p[2] + trans[2]])
+                if k in snode:
+                    nodemap[int(t)] = snode[k]
+                else:
+                    total_missing += 1
+
+        # Master triangles -> slave, winding reversed (opposite outward normal).
+        etypes, etags, enodes = gmsh.model.mesh.getElements(2, master)
+        gmsh.model.mesh.clear([(2, slave)])
+        if ntags:
+            gmsh.model.mesh.addNodes(2, slave, ntags, ncoords)
+        new_etags = []
+        new_enodes = []
+        for ti, et in enumerate(etypes):
+            nn = gmsh.model.mesh.getElementProperties(et)[3]
+            etl = []
+            enl = []
+            for e in range(len(etags[ti])):
+                tri = [int(enodes[ti][e * nn + k]) for k in range(nn)]
+                mapped = [nodemap[x] for x in tri][::-1]
+                etl.append(next_elem)
+                next_elem += 1
+                enl.extend(mapped)
+            new_etags.append(etl)
+            new_enodes.append(enl)
+        gmsh.model.mesh.addElements(2, slave, etypes, new_etags, new_enodes)
+
+    return len(face_pairs), total_missing
 
 
 # =====================================================================
@@ -528,67 +708,57 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         gmsh.model.mesh.setSize(gmsh.model.getEntities(0), L_mesh)
         print("  Uniform mesh: lc={:.5f}".format(L_mesh))
     
-    # ---- Apply periodic constraints ----
-    # Conforming external faces are MANDATORY for a valid periodic RVE: the
-    # mesh on each min face must be an exact translate of its max face. We do
-    # this by (1) matching every sub-surface to its translate with the
-    # canonical bounding-box index, (2) validating curve-level compatibility
-    # up front, and (3) letting setPeriodic COPY the master face mesh onto the
-    # slave so the two faces are conforming by construction.
+    # ---- Apply periodic constraints (strict 1D + 2D, then 3D) ----
+    # Conforming external faces are MANDATORY for a valid periodic RVE: the mesh
+    # on each min face must be an exact translate of its max face. Gmsh's own
+    # setPeriodic(2) is unreliable here — once inclusion cuts split a face into
+    # many sub-surfaces it mis-matches cube-edge curves (mapping an edge to the
+    # wrong parallel edge) and the 2D copy fails with "curve X has N vertices,
+    # whereas correspondant has M". That internal correspondence drives the copy
+    # and cannot be overridden through the API. So we enforce periodicity
+    # ourselves in three stages:
+    #   1. setPeriodic(1) on every boundary curve, using a single-axis master
+    #      tree (_periodic_curve_pairs) so 1D meshes of opposite curves are
+    #      exact translates and cube edges are never double-assigned.
+    #   2. generate(2): mesh all surfaces. Boundary curves are now periodic;
+    #      face interiors are still independent.
+    #   3. _manual_periodic_surface_copy: stamp each master face's 2D mesh onto
+    #      its slave as an exact translate, reusing the periodic boundary nodes.
+    # The result is conforming node-for-node on every opposite-face pair.
     print("  Matching periodic face pairs...")
     face_pairs = _match_periodic_surfaces(L)
     print("  Matched {} surface pairs".format(len(face_pairs)))
 
-    # Validate curve-level translation compatibility; heal once and re-match
-    # if anything is off. If it still fails the packing is geometrically
-    # non-periodic — raise so the caller retries with a fresh packing.
-    bad = _validate_periodic_pairs(face_pairs, L)
-    if bad:
-        print("  WARNING: {} pair(s) not translation-compatible:".format(len(bad)))
-        for mt, st, reason in bad[:3]:
-            print("    Surface {} -> {}: {}".format(mt, st, reason))
-        print("  Attempting geometry heal...")
-        try:
-            gmsh.model.occ.healShapes()
-            gmsh.model.occ.synchronize()
-        except Exception as e:
-            print("    heal skipped: {}".format(e))
-        face_pairs = _match_periodic_surfaces(L)
-        bad = _validate_periodic_pairs(face_pairs, L)
-        if bad:
-            gmsh.finalize()
-            raise RuntimeError(
-                "Periodic faces not conforming: {} pair(s) lack a translate "
-                "match after heal (e.g. {}). Sphere placement creates "
-                "asymmetric face geometry.".format(bad[0][2] if bad else '', bad[0][:2]))
-        print("  Heal fixed all mismatches")
+    # Stage 1: periodic 1D curves.
+    affine_id = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]
+    curve_pairs = _periodic_curve_pairs(L)
+    for master_c, slave_c, trans in curve_pairs:
+        aff = list(affine_id)
+        aff[3], aff[7], aff[11] = trans[0], trans[1], trans[2]
+        gmsh.model.mesh.setPeriodic(1, [slave_c], [master_c], aff)
+    print("  Periodic curve pairs set: {}".format(len(curve_pairs)))
 
-    # Tight Delaunay tolerance for clean periodic node placement.
+    # Stage 2: mesh 1D + 2D (master faces meshed with the size field; slave
+    # boundary curves are periodic copies of their masters).
     gmsh.option.setNumber("Mesh.ToleranceInitialDelaunay", 1e-8)
+    print("  Generating surface mesh (2D)...")
+    gmsh.model.mesh.generate(2)
 
-    # Master = min face (neg), slave = max face (pos): the mesh is generated on
-    # the master and stamped onto the slave under the +L translation.
-    n_set = 0
-    for master_tag, slave_tag, trans in face_pairs:
-        affine = [1, 0, 0, trans[0],
-                  0, 1, 0, trans[1],
-                  0, 0, 1, trans[2],
-                  0, 0, 0, 1]
-        try:
-            gmsh.model.mesh.setPeriodic(2, [slave_tag], [master_tag], affine)
-            n_set += 1
-        except Exception as e:
-            gmsh.finalize()
-            raise RuntimeError(
-                "setPeriodic failed for surface {} -> {} ({}). Increase "
-                "Geometry.Tolerance or retry packing.".format(
-                    master_tag, slave_tag, str(e)[:80]))
-    print("  Periodicity set on {} surface pairs".format(n_set))
+    # Stage 3: manual periodic copy of every slave face mesh.
+    print("  Copying master face meshes onto slaves...")
+    n_copied, n_missing = _manual_periodic_surface_copy(L, face_pairs)
+    if n_missing:
+        gmsh.finalize()
+        raise RuntimeError(
+            "Manual periodic copy left {} slave boundary node(s) unmatched — "
+            "the 1D periodic mesh is inconsistent (retry packing).".format(
+                n_missing))
+    print("  Copied {} face pairs (boundary nodes all matched)".format(n_copied))
 
-    # ---- Generate mesh ----
+    # ---- Generate 3D mesh on the now-periodic boundary ----
     print("  Generating 3D mesh...")
     gmsh.model.mesh.generate(3)
-    
+
     if optimise:
         print("  Optimising mesh...")
         gmsh.model.mesh.optimize("", force=True)
