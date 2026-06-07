@@ -174,7 +174,8 @@ def generate_channels(L, channel_vof_target, r_channel_avg, r_channel_std,
 def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                              max_iterations, sphericity_avg=0.85,
                              sphericity_std=0.1, growth_direction='Random',
-                             growth_concentration=0.0, min_radius=None):
+                             growth_concentration=0.0, min_radius=None,
+                             sliver_gap=0.0):
     """
     Random Sequential Adsorption sphere/ellipsoid packing.
     Returns numpy array shape (N, 10):
@@ -186,6 +187,15 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         cannot fill the remaining VoF with thousands of sub-element-size
         inclusions that blow up the Gmsh entity count and wreck periodic
         meshing. If None, falls back to 10% of r_avg (geometry-only runs).
+    sliver_gap : float
+        Mesh-resolvable feature floor (typically ~half a surface element,
+        i.e. ~0.5*lc_fine). Any boundary cap, inter-inclusion gap, or
+        edge/corner grazing thinner than this is geometrically degenerate —
+        the surface mesher produces invalid elements there and Gmsh's C++
+        kernel can crash. Rejecting such placements at the packing stage
+        prevents the degeneracy at its source (cheaper and more reliable than
+        catching the downstream mesher crash). 0 disables the extra guard
+        (legacy behaviour, thresholds tied to min_distance only).
     """
     V_RVE = L ** 3
     spheres = []  # list of (cx, cy, cz, rx, ry, rz)
@@ -195,6 +205,10 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     current_r = r_avg
     # Floor on the adaptive radius: never shrink below a mesh-resolvable size.
     r_floor = min_radius if (min_radius and min_radius > 0) else r_avg * 0.10
+    # Effective surface separation: a feature (cap, inter-sphere gap, edge
+    # grazing) below this is an unmeshable sliver. max() so it never weakens
+    # the user's physical min_distance.
+    sep = max(min_distance, sliver_gap)
     
     for iteration in range(max_iterations):
         if current_vof >= VoF_target:
@@ -213,14 +227,15 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         # asymmetric Gmsh periodic topology. A sphere must either:
         # (a) NOT intersect any face (centre > r + margin from face), or
         # (b) Intersect DEEPLY (centre < r - margin from face)
-        # The "danger zone" (shallow grazing) is eliminated.
-        margin = min_distance * 2.0  # minimum intersection depth
+        # The "danger zone" (shallow grazing) is eliminated. Width is the
+        # mesh-resolvable sep so a grazing cap can never be a sub-element sliver.
+        margin = max(min_distance * 2.0, sep)  # minimum intersection depth
         coords = [cx, cy, cz]
         for i in range(3):
             v = coords[i]
             dist_lo = v            # distance to face at 0
             dist_hi = L - v        # distance to face at L
-            
+
             # Check face at 0
             if abs(dist_lo - r) < margin:
                 # In danger zone — push to cross deeply
@@ -273,39 +288,78 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
             np.random.shuffle(axes)
             rx, ry, rz = axes
         
-        # Overlap portion validation: reject spheres that create thin
-        # slivers near faces (cap height < min_distance)
+        # Sliver rejection (geometric, mesh-aware). Reject placements whose
+        # cut geometry would be thinner than one resolvable element (sep):
+        #   - a thin spherical cap where the sphere grazes a face,
+        #   - a thin body left inside the RVE,
+        #   - a shallow grazing of a cube EDGE or CORNER (the sphere surface
+        #     skims the edge/corner without crossing it deeply), which leaves a
+        #     wedge/needle the surface mesher cannot triangulate.
         r_check = max(rx, ry, rz)
         reject_portion = False
-        for i, v in enumerate([cx, cy, cz]):
+        cc = [cx, cy, cz]
+        for i, v in enumerate(cc):
             for face_dist in [v, L - v]:  # distance to each face pair
                 if face_dist < r_check:  # sphere crosses this face
                     cap_height = r_check - face_dist
-                    if cap_height < min_distance * 0.5:
+                    if cap_height < sep:
                         reject_portion = True
                         break
                     # Also check the body (portion inside RVE)
                     body_height = 2 * r_check - cap_height
-                    if body_height < min_distance:
+                    if body_height < sep:
                         reject_portion = True
                         break
-            if reject_portion: break
+            if reject_portion:
+                break
+        # Edge / corner grazing: distance from centre to each cube edge line
+        # (two axes pinned to a face value) and each corner point. A sphere is
+        # a sliver risk when its surface lies within sep of the feature but it
+        # does not engulf the feature deeply (|d - r| < sep).
+        if not reject_portion and sliver_gap > 0.0:
+            # Edges: pick two distinct axes, each pinned to 0 or L.
+            for a in range(3):
+                for b in range(a + 1, 3):
+                    k = 3 - a - b  # the free axis
+                    for fa in (0.0, L):
+                        for fb in (0.0, L):
+                            d_edge = math.hypot(cc[a] - fa, cc[b] - fb)
+                            if abs(d_edge - r_check) < sep:
+                                reject_portion = True
+                                break
+                        if reject_portion: break
+                    if reject_portion: break
+                if reject_portion: break
+        if not reject_portion and sliver_gap > 0.0:
+            for fx in (0.0, L):
+                for fy in (0.0, L):
+                    for fz in (0.0, L):
+                        d_corner = math.sqrt((cx - fx) ** 2 + (cy - fy) ** 2
+                                             + (cz - fz) ** 2)
+                        if abs(d_corner - r_check) < sep:
+                            reject_portion = True
+                            break
+                    if reject_portion: break
+                if reject_portion: break
         if reject_portion:
             n_consecutive_fails += 1
             continue
         
-        # Check overlap using octree (O(log N) instead of O(N))
+        # Check overlap using octree (O(log N) instead of O(N)). The required
+        # surface separation is `sep`, so two inclusions are never closer than
+        # one resolvable element — eliminating the thin matrix wedge between
+        # near-tangent spheres that the volume mesher chokes on.
         overlap = False
         r_check = max(rx, ry, rz)
-        query_r = r_check + r_avg * 2.0 + min_distance
-        
+        query_r = r_check + r_avg * 2.0 + sep
+
         for dx in [0, L, -L]:
             for dy in [0, L, -L]:
                 for dz in [0, L, -L]:
                     candidates = octree.query((cx+dx, cy+dy, cz+dz), query_r)
                     for (sc, sr) in candidates:
                         dist = math.sqrt((cx+dx-sc[0])**2 + (cy+dy-sc[1])**2 + (cz+dz-sc[2])**2)
-                        if dist < r_check + sr + min_distance:
+                        if dist < r_check + sr + sep:
                             overlap = True; break
                     if overlap: break
                 if overlap: break
@@ -1098,6 +1152,33 @@ def process_csv(csv_path, output_dir):
         gap_mult = float(os.environ.get('SPAX_GAP_MULT', '0.0'))
         if gap_mult > 0.0:
             min_dist = max(min_dist, gap_mult * lc_fine_mult * L_mesh)
+        # Geometric sliver rejection, applied as an ESCALATION rather than
+        # globally. Refusing thin cut-geometry (face cap, inter-sphere gap,
+        # edge/corner grazing) at the packing stage removes the degeneracy that
+        # crashes Gmsh's mesher — but it also costs packing density (~6% VoF at
+        # full strength). So we keep it OFF for the first attempts (full VoF for
+        # the seeds that mesh fine) and ramp it in only once a packing keeps
+        # failing, trading density for meshability solely to rescue an otherwise
+        # skipped row. A/B over 10 seeds: full-on turned 9/10 -> 10/10 by
+        # rescuing one pathological seed but cost every seed ~6% VoF; escalation
+        # captures the rescue without taxing the seeds that never needed it.
+        #
+        # SPAX_SLIVER_MULT = max strength (units of lc_fine, default 0.5).
+        # SPAX_SLIVER_START = failed attempts before escalation begins (def 2).
+        sliver_mult = float(os.environ.get('SPAX_SLIVER_MULT', '0.5'))
+        sliver_start = int(os.environ.get('SPAX_SLIVER_START', '2'))
+        sliver_gap_max = sliver_mult * lc_fine_mult * L_mesh
+        max_retries = int(os.environ.get('SPAX_MAX_RETRIES', '6'))
+
+        def sliver_for_attempt(n):
+            # n = 0-based attempt index. 0 until sliver_start, then ramp
+            # linearly to sliver_gap_max on the final attempt.
+            if sliver_gap_max <= 0.0 or n < sliver_start:
+                return 0.0
+            span = max(1, (max_retries - 1) - sliver_start)
+            return min(1.0, (n - sliver_start + 1) / float(span)) * sliver_gap_max
+
+        sliver_gap = sliver_for_attempt(0)
         print("  Step 1: Sphere packing...")
         Sphere_array, octree = generate_sphere_packing(
             L=L, r_avg=r_avg, r_std=r_std,
@@ -1106,8 +1187,8 @@ def process_csv(csv_path, output_dir):
             sphericity_avg=sph_avg, sphericity_std=sph_std,
             growth_direction=growth_dir,
             growth_concentration=growth_conc,
-            min_radius=r_floor)
-        
+            min_radius=r_floor, sliver_gap=sliver_gap)
+
         # Step 1b: Generate channels if requested
         gen_channels = params.get('generate_channels', 'No').strip().lower() in ('yes', 'true', '1')
         channel_vof_target = float(params.get('channel_vof_target', 0) or 0)
@@ -1136,8 +1217,8 @@ def process_csv(csv_path, output_dir):
         # Each retry re-packs and re-meshes in an isolated subprocess, so a
         # crash or an intermittent periodic-matching failure costs only one
         # attempt and never kills the run. Retries are cheap and safe, so we
-        # allow several (env-tunable) to push the per-row success rate up.
-        max_retries = int(os.environ.get('SPAX_MAX_RETRIES', '6'))
+        # allow several (max_retries, set above) to push the success rate up,
+        # with sliver rejection escalating per attempt (sliver_for_attempt).
         result = None
         for attempt in range(max_retries):
             try:
@@ -1161,7 +1242,16 @@ def process_csv(csv_path, output_dir):
                 print("    Mesh attempt {}/{} failed: {}".format(
                     attempt + 1, max_retries, str(e)[:80]))
                 if attempt < max_retries - 1:
-                    print("    Retrying with new packing...")
+                    # Escalate sliver rejection for the next packing: stays 0
+                    # for the first SPAX_SLIVER_START retries (full VoF), then
+                    # ramps up to rescue a stubborn seed at a density cost.
+                    sliver_gap = sliver_for_attempt(attempt + 1)
+                    if sliver_gap > 0.0:
+                        print("    Retrying with new packing "
+                              "(sliver rejection on, gap={:.5f})...".format(
+                                  sliver_gap))
+                    else:
+                        print("    Retrying with new packing...")
                     np.random.seed(np.random.randint(0, 100000))
                     Sphere_array, octree = generate_sphere_packing(
                         L=L, r_avg=r_avg, r_std=r_std,
@@ -1170,7 +1260,7 @@ def process_csv(csv_path, output_dir):
                         sphericity_avg=sph_avg, sphericity_std=sph_std,
                         growth_direction=growth_dir,
                         growth_concentration=growth_conc,
-                        min_radius=r_floor)
+                        min_radius=r_floor, sliver_gap=sliver_gap)
                     result = None
                 else:
                     print("    SKIPPING {} after {} failures".format(run_id, max_retries))
