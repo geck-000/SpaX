@@ -800,8 +800,13 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         if is_bending:
             f.write('** Second-Order Bending PBCs\n')
             constrained = set()
+            # (node, dof) already eliminated as the leading/dependent term of an
+            # *Equation. Abaqus permits a given (node,dof) to lead only ONE
+            # equation; the bending PBCs and the Lesicar integral constraints
+            # below must not both claim the same one (else: over-constraint).
+            used_dep = set()
             eq_count = 0
-            
+
             for axis in ['X', 'Y', 'Z']:
                 for neg, pos in pairs[axis]:
                     if neg in constrained or pos in constrained:
@@ -842,6 +847,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
                             f.write('RP_E, 1, {}\n'.format(-c_mem))
                         if abs(c_bend) > 1e-15:
                             f.write('RP_K, 1, {}\n'.format(-c_bend))
+                        used_dep.add((pos, dof))
                         eq_count += 1
                     constrained.add(neg); constrained.add(pos)
             print("    Bending equations: {}".format(eq_count))
@@ -851,40 +857,74 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             lesicar_constraints = compute_lesicar_constraints(
                 nodes, elements, L, bending_plane)
             n_lesicar = 0
+            n_lesicar_skipped = 0
             for con in lesicar_constraints:
                 nw = con['nodes']
                 if len(nw) < 2: continue
-                
+                cdof = con['dof']
+
+                # Abaqus eliminates the FIRST listed node of the equation. The
+                # raw node order puts the same node first for every constraint,
+                # which would eliminate that (node,dof) repeatedly. Rotate the
+                # term list so it LEADS with a node not yet used as a dependent
+                # DOF (by a bending PBC eq or an earlier Lesicar eq). An integral
+                # constraint spans hundreds of face nodes, so a free one
+                # essentially always exists; if none does, the constraint is
+                # redundant with those already written, so skip it.
+                lead_idx = next((k for k, (lab, _w) in enumerate(nw)
+                                 if (lab, cdof) not in used_dep), None)
+                if lead_idx is None:
+                    n_lesicar_skipped += 1
+                    continue
+                nw = [nw[lead_idx]] + nw[:lead_idx] + nw[lead_idx + 1:]
+                used_dep.add((nw[0][0], cdof))
+
                 # Count terms: node terms + RP_E + RP_K
                 n_terms = len(nw)
                 if abs(con['rp_E_coeff']) > 1e-20: n_terms += 1
                 if abs(con['rp_K_coeff']) > 1e-20: n_terms += 1
-                
+
                 f.write('*Equation\n{}\n'.format(n_terms))
                 for node_label, weight in nw:
                     f.write('{}.{}, {}, {}\n'.format(
-                        inst_name, node_label, con['dof'], weight))
+                        inst_name, node_label, cdof, weight))
                 if abs(con['rp_E_coeff']) > 1e-20:
                     f.write('RP_E, 1, {}\n'.format(-con['rp_E_coeff']))
                 if abs(con['rp_K_coeff']) > 1e-20:
                     f.write('RP_K, 1, {}\n'.format(-con['rp_K_coeff']))
                 n_lesicar += 1
             
-            print("    Lesicar constraints: {}".format(n_lesicar))
+            print("    Lesicar constraints: {} ({} redundant skipped)".format(
+                n_lesicar, n_lesicar_skipped))
         
         else:
             f.write('** Periodic Boundary Conditions\n')
             eq_count = 0
-            
+            n_3term = 0
+            n_dropped = 0
+
+            # Abaqus eliminates the FIRST listed DOF of every *Equation (it
+            # becomes the dependent DOF). A given (node, dof) may therefore be
+            # the leading term of only ONE equation; reusing it in a second
+            # equation is an over-constraint that the input processor rejects
+            # ("*EQUATION ... node ... used as dependent more than once").
+            # Edge nodes are shared by 2 faces and corner nodes by 3, so Gmsh's
+            # face-pairwise matching lists them as `pos` in two/three axes. We
+            # therefore pick, per DOF, whichever endpoint is still free as the
+            # dependent term (flipping the equation's sign if we must lead with
+            # `neg` instead of `pos`); if BOTH endpoints are already eliminated
+            # the relation is implied by the ones already written, so we drop it.
+            used_dep = set()  # (node, dof) already eliminated as a dependent DOF
+
             for axis in ['X', 'Y', 'Z']:
                 n_dof = normal_dof[axis]
                 rp = face_rp[axis]
-                
+
                 for neg, pos in pairs[axis]:
                     for dof in [1, 2, 3]:
                         # Check if this DOF gets RP coupling
                         use_rp = None
-                        
+
                         if dof == n_dof:
                             # Normal DOF always through face RP
                             use_rp = rp
@@ -893,24 +933,35 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
                             if axis == cfg['face'] and dof == cfg['shear_dof']:
                                 # Shear DOF through RP-4
                                 use_rp = 'RP-4'
-                        
+
+                        # Choose the dependent (leading) node: prefer `pos`, fall
+                        # back to `neg`, drop if both are already eliminated.
+                        if (pos, dof) not in used_dep:
+                            dep, indep, sign = pos, neg, 1.0
+                        elif (neg, dof) not in used_dep:
+                            dep, indep, sign = neg, pos, -1.0
+                        else:
+                            n_dropped += 1
+                            continue
+                        used_dep.add((dep, dof))
+
                         if use_rp:
+                            # dep - indep - (sign)*RP = 0  (sign flips with dep)
                             f.write('*Equation\n3\n')
-                            f.write('{}.{}, {}, 1.\n'.format(inst_name, pos, dof))
-                            f.write('{}.{}, {}, -1.\n'.format(inst_name, neg, dof))
-                            f.write('{}, {}, -1.\n'.format(use_rp, dof))
+                            f.write('{}.{}, {}, {:g}\n'.format(inst_name, dep, dof, sign))
+                            f.write('{}.{}, {}, {:g}\n'.format(inst_name, indep, dof, -sign))
+                            f.write('{}, {}, {:g}\n'.format(use_rp, dof, -sign))
+                            n_3term += 1
                         else:
                             # 2-term: zero displacement jump
                             f.write('*Equation\n2\n')
-                            f.write('{}.{}, {}, 1.\n'.format(inst_name, pos, dof))
-                            f.write('{}.{}, {}, -1.\n'.format(inst_name, neg, dof))
-                        
+                            f.write('{}.{}, {}, {:g}\n'.format(inst_name, dep, dof, sign))
+                            f.write('{}.{}, {}, {:g}\n'.format(inst_name, indep, dof, -sign))
+
                         eq_count += 1
-            
-            print("    PBC equations: {} ({} 3-term, {} 2-term)".format(
-                eq_count,
-                sum(len(pairs[a]) for a in pairs) + (len(pairs[shear_config[mode]['face']]) if is_shear else 0),
-                eq_count - sum(len(pairs[a]) for a in pairs) - (len(pairs[shear_config[mode]['face']]) if is_shear else 0)))
+
+            print("    PBC equations: {} ({} 3-term, {} 2-term, {} redundant dropped)".format(
+                eq_count, n_3term, eq_count - n_3term, n_dropped))
         
         f.write('*End Assembly\n')
         f.write('**\n')
