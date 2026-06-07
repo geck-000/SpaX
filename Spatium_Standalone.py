@@ -652,30 +652,31 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
     elem_type = 'C3D4H' if Inclusion_Type == 'Liquid' else 'C3D4'
     
     # ---- Determine loading ----
-    if mode == 'utx':
-        step_name = 'Step-UTX'
-        step_desc = 'Uniaxial Tension along X'
-        bc_lines = [
-            '{}, 1, 1, {}'.format(rp_nodes['RP-1'][0], disp),
-        ]
-    elif mode == 'ss13':
-        step_name = 'Step-SS13'
-        step_desc = 'Simple Shear S13'
-        bc_lines = [
-            '{}, 1, 1, 0.0'.format(rp_nodes['RP-1'][0]),
-            '{}, 2, 2, 0.0'.format(rp_nodes['RP-1'][0]),
-            '{}, 3, 3, {}'.format(rp_nodes['RP-1'][0], disp),
-            '{}, 1, 1, {}'.format(rp_nodes['RP-3'][0], disp),
-            '{}, 2, 2, 0.0'.format(rp_nodes['RP-3'][0]),
-            '{}, 3, 3, 0.0'.format(rp_nodes['RP-3'][0]),
-        ]
+    # step_name is consumed at the *Step card below; step_desc only labels the
+    # header comment. The actual PBC equations and step BCs for every mode are
+    # written further down (see the assembly/loading sections), so this block
+    # just needs to name the step for all supported modes.
+    step_names = {
+        'utx': 'Step-UTX',  'uty': 'Step-UTY',  'utz': 'Step-UTZ',
+        'ss12': 'Step-SS12', 'ss13': 'Step-SS13', 'ss23': 'Step-SS23',
+    }
+    step_descs = {
+        'utx': 'Uniaxial Tension along X',
+        'uty': 'Uniaxial Tension along Y',
+        'utz': 'Uniaxial Tension along Z',
+        'ss12': 'Simple Shear S12',
+        'ss13': 'Simple Shear S13',
+        'ss23': 'Simple Shear S23',
+    }
+    if mode in step_names:
+        step_name = step_names[mode]
+        step_desc = step_descs[mode]
     elif mode == 'bend':
         step_name = 'Step-Bending'
         step_desc = 'Second-Order Bending ({})'.format(bending_plane)
-        # BC lines will be written directly in bending section
-        bc_lines = []  # handled separately below
     else:
-        raise ValueError("Unsupported mode: {}. Use 'utx', 'ss13', or 'bend'.".format(mode))
+        raise ValueError(
+            "Unsupported mode: {}. Use one of utx/uty/utz/ss12/ss13/ss23 or bend.".format(mode))
     
     # ---- Bending-specific setup ----
     # For bending mode, we need coordinate-dependent PBC equations
@@ -1349,11 +1350,37 @@ def process_csv(csv_path, output_dir):
             path_ben = os.path.join(output_dir, 'Job-{}-ben.inp'.format(run_id))
             write_complete_inp(gmsh_inp, pairs_csv, path_ben,
                 mode='bend', disp=0, bending_plane=bp, kappa=Kappa_val, **common)
-        
+
+        # Remove the Gmsh mesh .inp and periodic-pairs .csv now that they have
+        # been folded into the solver-ready Job-*.inp files. The output_dir is
+        # meant to hold only the Job .inp files; these per-run intermediates
+        # ({run_id}_gmsh.inp, {run_id}_periodic_pairs.csv) would otherwise be
+        # left behind alongside them.
+        for intermediate in (gmsh_inp, pairs_csv):
+            try:
+                if intermediate and os.path.exists(intermediate):
+                    os.remove(intermediate)
+            except OSError as e:
+                print("    Warning: could not remove intermediate {}: {}".format(
+                    intermediate, e))
+
         print("  Done: {} ({} nodes, {} elements)".format(
             run_id, result.get('n_nodes', '?'), 
             result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)))
     
+    # Final sweep: drop any mesh intermediates left by runs that were skipped
+    # after the mesh was already written (e.g. failing the strict-periodicity
+    # gate). Only the two known Gmsh patterns are removed, so Job-*.inp files
+    # and any unrelated user files in output_dir are untouched.
+    import glob
+    leftovers = (glob.glob(os.path.join(output_dir, '*_gmsh.inp'))
+                 + glob.glob(os.path.join(output_dir, '*_periodic_pairs.csv')))
+    for f in leftovers:
+        try:
+            os.remove(f)
+        except OSError as e:
+            print("Warning: could not remove leftover {}: {}".format(f, e))
+
     print("\n" + "=" * 70)
     print("GENERATION COMPLETE: {} RVEs".format(len(rows)))
     print("Output: {}".format(output_dir))
