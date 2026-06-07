@@ -1236,7 +1236,20 @@ def process_csv(csv_path, output_dir):
                 n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
                 if n_total == 0:
                     raise RuntimeError("Empty mesh (0 elements)")
-                
+
+                # Strict-periodicity gate: a non-zero skipped count means some
+                # boundary nodes have no periodic partner in a meshed volume —
+                # i.e. material on one face maps to a void on the opposite face
+                # (a grazing-void asymmetry). Those nodes would get no PBC
+                # equation, so the RVE is not strictly periodic. Treat it as a
+                # soft failure: re-pack with escalated sliver rejection (which
+                # rejects the grazing void) rather than emit a defective RVE.
+                n_skip = result.get('n_pairs_skipped', 0)
+                if n_skip > 0:
+                    raise RuntimeError(
+                        "{} periodic pair(s) unmatched — void/boundary not "
+                        "strictly periodic".format(n_skip))
+
                 break  # success
             except Exception as e:
                 print("    Mesh attempt {}/{} failed: {}".format(
