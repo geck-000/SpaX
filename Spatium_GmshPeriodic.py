@@ -352,6 +352,118 @@ def _manual_periodic_surface_copy(L, face_pairs):
     return len(face_pairs), total_missing
 
 
+def _manual_periodic_curve_copy(L, curve_pairs, eps=1e-6):
+    """Replace each slave boundary curve's 1D mesh with the exact translate of
+    its master curve's mesh, reusing the shared end-point (vertex) nodes.
+
+    Prerequisite: generate(1) has meshed all curves independently. For each
+    (master, slave) pair from _periodic_curve_pairs we create new interior
+    nodes on the slave as translated copies of the master interior nodes, map
+    the master end nodes onto the existing slave end nodes (cube-corner /
+    arc-junction point nodes, matched by translated coordinate), clear the
+    slave's old line mesh and re-add the master's line elements. Afterwards
+    every opposite boundary curve is an exact translate, so generate(2) meshes
+    each face against a periodic boundary WITHOUT any Gmsh setPeriodic call —
+    sidestepping Gmsh's internal 1D periodic node-copy, which intermittently
+    fails ("Can't find periodic counterpart of mesh edge ... on curve ...") and
+    was the dominant cause of exhausted mesh retries (worse with finer meshes).
+
+    Ordering matters: a cube-edge curve lies on two max faces and is slaved,
+    via the single-axis rule, to another edge that is itself a slave (a chain
+    edge(x=L,y=L) -> edge(x=0,y=L) -> root edge(x=0,y=0)). We must finalise a
+    master before copying any slave that reads from it, so we process pairs in
+    order of increasing slave "depth" = number of max faces the slave lies on
+    (1 before 2). Reading the master with getNodes then returns its already
+    translated nodes, composing the chain correctly.
+
+    Returns (n_pairs, n_missing_end_nodes); n_missing must be 0.
+    """
+    def key(p):
+        return (round(p[0], 7), round(p[1], 7), round(p[2], 7))
+
+    def depth(curve):
+        bb = gmsh.model.getBoundingBox(1, curve)
+        return sum(1 for a in range(3)
+                   if abs(bb[a] - L) < eps and abs(bb[a + 3] - L) < eps)
+
+    ordered = sorted(curve_pairs, key=lambda pr: depth(pr[1]))
+
+    all_nt, _, _ = gmsh.model.mesh.getNodes()
+    next_tag = int(max(all_nt)) + 1 if len(all_nt) else 1
+    max_et = 0
+    _, etags_all, _ = gmsh.model.mesh.getElements()
+    for a in etags_all:
+        if len(a):
+            max_et = max(max_et, int(max(a)))
+    next_elem = max_et + 1
+
+    total_missing = 0
+    for master, slave, trans in ordered:
+        # Index slave end-point (vertex) nodes by coordinate.
+        send = {}
+        for d, pt in gmsh.model.getBoundary([(1, slave)], oriented=False):
+            nt, co, _ = gmsh.model.mesh.getNodes(0, pt)
+            for i, t in enumerate(nt):
+                send[key(co[3 * i:3 * i + 3])] = int(t)
+
+        # Master interior nodes -> new translated slave interior nodes.
+        mnt, mco, _ = gmsh.model.mesh.getNodes(1, master, includeBoundary=False)
+        nodemap = {}
+        ntags = []
+        ncoords = []
+        for i, t in enumerate(mnt):
+            p = mco[3 * i:3 * i + 3]
+            nodemap[int(t)] = next_tag
+            ntags.append(next_tag)
+            ncoords.extend([p[0] + trans[0], p[1] + trans[1], p[2] + trans[2]])
+            next_tag += 1
+
+        # Master end nodes -> existing slave end nodes (translated coordinate).
+        for d, pt in gmsh.model.getBoundary([(1, master)], oriented=False):
+            nt, co, _ = gmsh.model.mesh.getNodes(0, pt)
+            for i, t in enumerate(nt):
+                if int(t) in nodemap:
+                    continue
+                p = co[3 * i:3 * i + 3]
+                k = key([p[0] + trans[0], p[1] + trans[1], p[2] + trans[2]])
+                if k in send:
+                    nodemap[int(t)] = send[k]
+                else:
+                    total_missing += 1
+
+        # Master line elements -> slave (same node order).
+        etypes, etags, enodes = gmsh.model.mesh.getElements(1, master)
+        gmsh.model.mesh.clear([(1, slave)])
+        if ntags:
+            # Curve nodes MUST carry a parametric coordinate (u) on the slave
+            # curve, or the following generate(2) cannot recover boundary edges
+            # ("No parametric coordinate on node ... classified on curve" -> the
+            # 2D Delaunay spins forever). The new nodes lie exactly on the slave
+            # curve (translated copies), so getParametrization gives the correct
+            # u in the slave's own parametrization.
+            uparams = gmsh.model.getParametrization(1, slave, ncoords)
+            gmsh.model.mesh.addNodes(1, slave, ntags, ncoords, uparams)
+        new_etags = []
+        new_enodes = []
+        for ti, et in enumerate(etypes):
+            nn = gmsh.model.mesh.getElementProperties(et)[3]
+            etl = []
+            enl = []
+            for e in range(len(etags[ti])):
+                ln = [int(enodes[ti][e * nn + k]) for k in range(nn)]
+                if any(x not in nodemap for x in ln):
+                    continue
+                mapped = [nodemap[x] for x in ln]
+                etl.append(next_elem)
+                next_elem += 1
+                enl.extend(mapped)
+            new_etags.append(etl)
+            new_enodes.append(enl)
+        gmsh.model.mesh.addElements(1, slave, etypes, new_etags, new_enodes)
+
+    return len(curve_pairs), total_missing
+
+
 # =====================================================================
 # Main mesh generation
 # =====================================================================
@@ -635,7 +747,10 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     # Uses Gmsh Distance + Threshold fields for smooth grading.
     
     # Mesh size parameters
-    lc_fine = L_mesh * 0.4      # fine size at inclusion surfaces
+    # lc_fine sets the surface element size at inclusion boundaries. Finer
+    # lc_fine resolves smaller spheres, which lets the packer use a lower
+    # min-radius floor and reach higher VoF (env-tunable for sweeps).
+    lc_fine = L_mesh * float(os.environ.get('SPAX_LC_FINE_MULT', '0.4'))
     lc_coarse = L_mesh * 2.5    # coarse size far from inclusions
     dist_min = 0.0              # start fine at surface
     dist_max = L * 0.15         # transition to coarse over 15% of L
@@ -719,12 +834,23 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     # ourselves in three stages:
     #   1. setPeriodic(1) on every boundary curve, using a single-axis master
     #      tree (_periodic_curve_pairs) so 1D meshes of opposite curves are
-    #      exact translates and cube edges are never double-assigned.
+    #      exact translates and cube edges are never double-assigned. Gmsh owns
+    #      the 1D periodic node-copy (handling parametric coords and loop
+    #      closure correctly); when opposite-face curve decompositions differ it
+    #      raises a *catchable* "Can't find periodic counterpart" — the caller's
+    #      retry loop re-packs, and Fix-1 subprocess isolation makes that safe.
     #   2. generate(2): mesh all surfaces. Boundary curves are now periodic;
     #      face interiors are still independent.
     #   3. _manual_periodic_surface_copy: stamp each master face's 2D mesh onto
     #      its slave as an exact translate, reusing the periodic boundary nodes.
     # The result is conforming node-for-node on every opposite-face pair.
+    #
+    # (A fully manual 1D copy was tried to remove the last setPeriodic
+    # dependency, but per-curve stamping can leave a slave face boundary that
+    # is not a closed loop when OCC splits opposite faces differently — it then
+    # fails on every retry instead of intermittently. setPeriodic(1) + retries
+    # is strictly more robust. _manual_periodic_curve_copy is kept unused for
+    # reference.)
     print("  Matching periodic face pairs...")
     face_pairs = _match_periodic_surfaces(L)
     print("  Matched {} surface pairs".format(len(face_pairs)))
@@ -1619,8 +1745,32 @@ def load_sphere_array(filepath):
 # =====================================================================
 
 if __name__ == '__main__':
+    import sys
+
+    # ---- Isolated subprocess mesh mode ----
+    # Run one mesh job from a pickled payload and write the result back. The
+    # parent (Spatium_Standalone) invokes this in a child process so that a
+    # native crash on degenerate geometry (SIGSEGV/SIGABRT inside Gmsh's
+    # C++ mesher — uncatchable from Python) is contained here and surfaces to
+    # the parent as a non-zero exit code it can catch and retry, instead of
+    # taking down the whole parametric run.
+    if len(sys.argv) >= 4 and sys.argv[1] == '--_subprocess_mesh':
+        import pickle
+        in_pkl, out_pkl = sys.argv[2], sys.argv[3]
+        with open(in_pkl, 'rb') as _f:
+            _p = pickle.load(_f)
+        _res = generate_periodic_mesh(
+            sphere_array=_p['sphere_array'], L=_p['L'], L_mesh=_p['L_mesh'],
+            output_dir=_p['output_dir'], Is_Porous=_p['Is_Porous'],
+            run_id=_p['run_id'], VoF_void_sphere=_p['VoF_void_sphere'],
+            VoF_incl_sphere=_p['VoF_incl_sphere'],
+            Inclusion_Type=_p['Inclusion_Type'])
+        with open(out_pkl, 'wb') as _f:
+            pickle.dump(_res, _f)
+        sys.exit(0)
+
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='Generate periodic RVE mesh with Gmsh')
     parser.add_argument('--spheres', type=str, default='',
                         help='Path to sphere array CSV (from Abaqus export)')

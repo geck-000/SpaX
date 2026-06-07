@@ -959,6 +959,59 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
 # BATCH PIPELINE
 # =====================================================================
 
+def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
+                       VoF_void, VoF_incl, Inclusion_Type):
+    """Run generate_periodic_mesh in an isolated child process.
+
+    Gmsh's C++ mesher can SIGSEGV/SIGABRT on degenerate inclusion geometry
+    (a tiny sphere cap / sub-element sliver that MeshAdapt cannot repair).
+    That native crash is uncatchable from Python and would kill the whole
+    parametric run. Running the mesh job in a child process contains the
+    crash: it becomes a non-zero exit code here, which we raise as a normal
+    exception so the caller's retry loop can re-pack and try again.
+
+    Output mesh/match/.inp files are written to output_dir by the child and
+    persist on disk; only the small result dict is returned via a pickle.
+    Works identically with the system Gmsh on any machine (laptop or HPC).
+    """
+    import pickle, subprocess, tempfile
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    gmsh_module = os.path.join(script_dir, 'Spatium_GmshPeriodic.py')
+    payload = dict(sphere_array=sphere_array, L=L, L_mesh=L_mesh,
+                   output_dir=output_dir, Is_Porous=mode, run_id=run_id,
+                   VoF_void_sphere=VoF_void, VoF_incl_sphere=VoF_incl,
+                   Inclusion_Type=Inclusion_Type)
+    tmpd = tempfile.mkdtemp(prefix='spax_mesh_')
+    in_pkl = os.path.join(tmpd, 'in.pkl')
+    out_pkl = os.path.join(tmpd, 'out.pkl')
+    try:
+        with open(in_pkl, 'wb') as f:
+            pickle.dump(payload, f)
+        # Hard wall-clock cap: a degenerate boundary can make Gmsh's 2D/3D
+        # mesher spin indefinitely (edge recovery loop) rather than crash.
+        # Timing out turns that into a catchable failure the retry loop handles.
+        mesh_timeout = float(os.environ.get('SPAX_MESH_TIMEOUT', '900'))
+        try:
+            proc = subprocess.run(
+                [sys.executable, gmsh_module, '--_subprocess_mesh',
+                 in_pkl, out_pkl], timeout=mesh_timeout)
+        except subprocess.TimeoutExpired:
+            raise RuntimeError(
+                "mesh subprocess exceeded {:.0f}s (degenerate geometry — "
+                "stuck in mesher)".format(mesh_timeout))
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "mesh subprocess crashed (exit {}) — degenerate geometry".format(
+                    proc.returncode))
+        if not os.path.exists(out_pkl):
+            raise RuntimeError("mesh subprocess produced no result")
+        with open(out_pkl, 'rb') as f:
+            return pickle.load(f)
+    finally:
+        import shutil
+        shutil.rmtree(tmpd, ignore_errors=True)
+
+
 def process_csv(csv_path, output_dir):
     """
     Read a parametric study CSV and generate complete .inp files
@@ -1034,7 +1087,17 @@ def process_csv(csv_path, output_dir):
         # showed 0.6*L_mesh segfaults intermittently while 0.75*L_mesh meshes
         # reliably; we floor here for robustness (VoF ~0.15-0.17 on the sea-ice
         # cases). Lower it only together with stronger thin-cap/sliver rejection.
-        r_floor = max(r_avg * 0.10, 0.75 * L_mesh)
+        # Couple the floor to the inclusion mesh size: a sphere is cleanly
+        # meshable when its radius spans a few surface elements (lc_fine).
+        # min_radius = FLOOR_MULT * lc_fine, with lc_fine = LC_FINE_MULT*L_mesh.
+        lc_fine_mult = float(os.environ.get('SPAX_LC_FINE_MULT', '0.4'))
+        floor_mult = float(os.environ.get('SPAX_FLOOR_MULT', str(0.75 / lc_fine_mult)))
+        r_floor = max(r_avg * 0.10, floor_mult * lc_fine_mult * L_mesh)
+        # Keep the inter-inclusion gap mesh-resolvable to avoid matrix slivers
+        # (a sub-lc_fine gap makes degenerate facets that crash the 3D mesher).
+        gap_mult = float(os.environ.get('SPAX_GAP_MULT', '0.0'))
+        if gap_mult > 0.0:
+            min_dist = max(min_dist, gap_mult * lc_fine_mult * L_mesh)
         print("  Step 1: Sphere packing...")
         Sphere_array, octree = generate_sphere_packing(
             L=L, r_avg=r_avg, r_std=r_std,
@@ -1070,18 +1133,22 @@ def process_csv(csv_path, output_dir):
         # Step 2: Gmsh periodic mesh (with retry on mesh failure)
         print("  Step 2: Gmsh mesh...")
         
-        max_retries = 3
+        # Each retry re-packs and re-meshes in an isolated subprocess, so a
+        # crash or an intermittent periodic-matching failure costs only one
+        # attempt and never kills the run. Retries are cheap and safe, so we
+        # allow several (env-tunable) to push the per-row success rate up.
+        max_retries = int(os.environ.get('SPAX_MAX_RETRIES', '6'))
         result = None
         for attempt in range(max_retries):
             try:
-                result = SG.generate_periodic_mesh(
+                result = mesh_in_subprocess(
                     sphere_array=Sphere_array,
                     L=L, L_mesh=L_mesh,
                     output_dir=output_dir,
-                    Is_Porous=gmsh_mode,
+                    mode=gmsh_mode,
                     run_id=run_id,
-                    VoF_void_sphere=VoF_void,
-                    VoF_incl_sphere=VoF_incl,
+                    VoF_void=VoF_void,
+                    VoF_incl=VoF_incl,
                     Inclusion_Type=Inclusion_Type)
                 
                 # Check for empty mesh
