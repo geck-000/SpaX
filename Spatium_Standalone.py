@@ -1209,10 +1209,47 @@ def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
         shutil.rmtree(tmpd, ignore_errors=True)
 
 
+def _mode_short(m):
+    m = m.lower()
+    if 'uniaxial' in m and 'x' in m: return 'utx'
+    if 'uniaxial' in m and 'y' in m: return 'uty'
+    if 'uniaxial' in m and 'z' in m: return 'utz'
+    if 'shear' in m and '12' in m: return 'ss12'
+    if 'shear' in m and '13' in m: return 'ss13'
+    if 'shear' in m and '23' in m: return 'ss23'
+    if 'uniaxial' in m: return 'utx'
+    if 'shear' in m: return 'ss13'
+    return 'utx'
+
+
+def _expected_job_paths(params, output_dir):
+    """Job-*.inp file(s) a row is expected to produce, mirroring the write
+    logic in _generate_one_row. Used by the resume check."""
+    run_id = params['run_id']
+    full_tensor = params.get('full_tensor', 'No').strip().lower() in ('yes', 'true', '1')
+    if full_tensor:
+        modes = ['utx', 'uty', 'utz', 'ss12', 'ss13', 'ss23']
+    else:
+        modes = [_mode_short(params.get('Mode', 'Uniaxial Tension X'))]
+        if params.get('Mode2', ''):
+            modes.append(_mode_short(params['Mode2']))
+    if float(params.get('Kappa', 0.0) or 0.0) > 0:
+        modes.append('ben')
+    seen = []  # de-dup, preserve order (Mode/Mode2 may map to the same short name)
+    for ms in modes:
+        if ms not in seen:
+            seen.append(ms)
+    return [os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms)) for ms in seen]
+
+
+def _resume_enabled():
+    return os.environ.get('SPAX_RESUME', '').strip().lower() in ('1', 'yes', 'true', 'on')
+
+
 def _generate_one_row(task):
     """Generate one RVE's .inp file(s). Independent per row, so this runs
     in a worker process and packing+meshing parallelise across CPUs.
-    Returns (run_id, status) where status is 'ok' or 'skipped'."""
+    Returns (run_id, status) where status is 'ok', 'exists' or 'skipped'."""
     idx, n_rows, params, output_dir = task
     # Independent RNG per worker: forked children inherit the parent's
     # numpy state, which would make parallel rows pack identically. Reseed
@@ -1226,6 +1263,18 @@ def _generate_one_row(task):
     print("\n" + "=" * 70)
     print("[{}/{}] {}".format(idx + 1, n_rows, run_id))
     print("=" * 70)
+
+    # Resume (opt-in via SPAX_RESUME): if this row's expected Job-*.inp already
+    # exist and are non-empty, skip the expensive pack+mesh. Lets a timed-out or
+    # partial generation job pick up where it left off; a fresh run (flag unset)
+    # still regenerates everything.
+    if _resume_enabled():
+        expected = _expected_job_paths(params, output_dir)
+        if expected and all(os.path.exists(p) and os.path.getsize(p) > 0
+                            for p in expected):
+            print("  RESUME: {} Job file(s) already present -> skip".format(
+                len(expected)))
+            return (run_id, 'exists')
 
     # Parse parameters
     L = float(params['L'])
@@ -1447,18 +1496,6 @@ def _generate_one_row(task):
         matrix_label_range=m_range, sphere_label_range=s_range,
         nlgeom=nlgeom_flag)
 
-    def mode_short(m):
-        m = m.lower()
-        if 'uniaxial' in m and 'x' in m: return 'utx'
-        if 'uniaxial' in m and 'y' in m: return 'uty'
-        if 'uniaxial' in m and 'z' in m: return 'utz'
-        if 'shear' in m and '12' in m: return 'ss12'
-        if 'shear' in m and '13' in m: return 'ss13'
-        if 'shear' in m and '23' in m: return 'ss23'
-        if 'uniaxial' in m: return 'utx'
-        if 'shear' in m: return 'ss13'
-        return 'utx'
-
     if full_tensor:
         all_modes = ['utx', 'uty', 'utz', 'ss12', 'ss13', 'ss23']
         print("    Full tensor mode: generating {} load cases".format(len(all_modes)))
@@ -1467,14 +1504,14 @@ def _generate_one_row(task):
             write_complete_inp(gmsh_inp, pairs_csv, path,
                 mode=ms, disp=Disp, **common)
     else:
-        ms = mode_short(Mode)
+        ms = _mode_short(Mode)
         path1 = os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms))
         write_complete_inp(gmsh_inp, pairs_csv, path1,
             mode=ms, disp=Disp, **common)
 
         if Mode2:
             Disp2 = float(params.get('Disp2', Disp) or Disp)
-            ms2 = mode_short(Mode2)
+            ms2 = _mode_short(Mode2)
             path2 = os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms2))
             write_complete_inp(gmsh_inp, pairs_csv, path2,
                 mode=ms2, disp=Disp2, **common)
@@ -1555,7 +1592,14 @@ def process_csv(csv_path, output_dir):
                     results.append((rid, 'skipped'))
 
     n_ok = sum(1 for _, s in results if s == 'ok')
-    print("\n  Generated {}/{} RVEs ({} skipped)".format(n_ok, n_rows, n_rows - n_ok))
+    n_exists = sum(1 for _, s in results if s == 'exists')
+    n_skip = n_rows - n_ok - n_exists
+    if n_exists:
+        print("\n  Generated {} new, {} already present (resume), {} skipped "
+              "(of {} rows)".format(n_ok, n_exists, n_skip, n_rows))
+    else:
+        print("\n  Generated {}/{} RVEs ({} skipped)".format(
+            n_ok, n_rows, n_skip))
 
     
     # Final sweep: drop any mesh intermediates left by runs that were skipped
