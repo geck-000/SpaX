@@ -600,6 +600,64 @@ def build_bending_pbc_equations(pairs, nodes, L, bending_plane, tol=1e-15):
     return equations, used_dep, n_dropped
 
 
+def build_lesicar_equations(lesicar_constraints, used_dep, nodes, L, ftol_factor=0.01):
+    """Assign a dependent (leading) node to each Lesicar Eq.14 integral constraint.
+
+    Two hazards must be avoided, both of which Abaqus rejects as the dependent
+    DOF "already eliminated by another equation":
+
+    1. Over-constraint: a (node, dof) already eliminated (by a bending PBC eq or
+       an earlier Lesicar eq) must not lead again -> skip nodes in `used_dep`.
+    2. Dependency cycle: the leading node is expressed in terms of EVERY other
+       node on its face. If that lead is an edge/corner node, its cross-axis
+       periodic partner sits on the SAME face and is itself a dependent whose
+       PBC equation references the lead -> a cycle. Leading instead with an
+       INTERIOR-OF-FACE node (on exactly one cube face) guarantees its only
+       periodic partner is on the OPPOSITE face, never in this term list, so no
+       equation references the lead back and the dependent graph stays acyclic.
+
+    Mutates `used_dep`. Returns (equations, n_skipped); each equation is a list
+    of terms (is_node, name, dof, coeff) as in build_bending_pbc_equations.
+    """
+    ftol = L * ftol_factor
+
+    def faces_on(lab):
+        x, y, z = nodes[lab]
+        return ((x < ftol) + (x > L - ftol)
+                + (y < ftol) + (y > L - ftol)
+                + (z < ftol) + (z > L - ftol))
+
+    equations = []
+    n_skipped = 0
+    for con in lesicar_constraints:
+        nw = con['nodes']
+        if len(nw) < 2:
+            continue
+        cdof = con['dof']
+
+        # Prefer an interior-of-face free node; fall back to any free node;
+        # skip if none (constraint is then redundant with those written).
+        lead_idx = next((k for k, (lab, _w) in enumerate(nw)
+                         if (lab, cdof) not in used_dep and faces_on(lab) == 1), None)
+        if lead_idx is None:
+            lead_idx = next((k for k, (lab, _w) in enumerate(nw)
+                             if (lab, cdof) not in used_dep), None)
+        if lead_idx is None:
+            n_skipped += 1
+            continue
+        nw = [nw[lead_idx]] + nw[:lead_idx] + nw[lead_idx + 1:]
+        used_dep.add((nw[0][0], cdof))
+
+        terms = [(True, lab, cdof, w) for lab, w in nw]
+        if abs(con['rp_E_coeff']) > 1e-20:
+            terms.append((False, 'RP_E', 1, -con['rp_E_coeff']))
+        if abs(con['rp_K_coeff']) > 1e-20:
+            terms.append((False, 'RP_K', 1, -con['rp_K_coeff']))
+        equations.append(terms)
+
+    return equations, n_skipped
+
+
 # =====================================================================
 # COMPLETE .INP WRITER
 # =====================================================================
@@ -901,50 +959,23 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             print("    Bending equations: {} ({} redundant dropped)".format(
                 len(bend_eqs), n_dropped))
             
-            # Lesicar Eq.14 integral constraints (always included)
+            # Lesicar Eq.14 integral constraints (always included). The lead
+            # selection (interior-of-face, no over-constraint, no dependency
+            # cycle) lives in build_lesicar_equations and is unit-tested.
             f.write('** Lesicar Eq.14 integral constraints\n')
             lesicar_constraints = compute_lesicar_constraints(
                 nodes, elements, L, bending_plane)
-            n_lesicar = 0
-            n_lesicar_skipped = 0
-            for con in lesicar_constraints:
-                nw = con['nodes']
-                if len(nw) < 2: continue
-                cdof = con['dof']
-
-                # Abaqus eliminates the FIRST listed node of the equation. The
-                # raw node order puts the same node first for every constraint,
-                # which would eliminate that (node,dof) repeatedly. Rotate the
-                # term list so it LEADS with a node not yet used as a dependent
-                # DOF (by a bending PBC eq or an earlier Lesicar eq). An integral
-                # constraint spans hundreds of face nodes, so a free one
-                # essentially always exists; if none does, the constraint is
-                # redundant with those already written, so skip it.
-                lead_idx = next((k for k, (lab, _w) in enumerate(nw)
-                                 if (lab, cdof) not in used_dep), None)
-                if lead_idx is None:
-                    n_lesicar_skipped += 1
-                    continue
-                nw = [nw[lead_idx]] + nw[:lead_idx] + nw[lead_idx + 1:]
-                used_dep.add((nw[0][0], cdof))
-
-                # Count terms: node terms + RP_E + RP_K
-                n_terms = len(nw)
-                if abs(con['rp_E_coeff']) > 1e-20: n_terms += 1
-                if abs(con['rp_K_coeff']) > 1e-20: n_terms += 1
-
-                f.write('*Equation\n{}\n'.format(n_terms))
-                for node_label, weight in nw:
-                    f.write('{}.{}, {}, {}\n'.format(
-                        inst_name, node_label, cdof, weight))
-                if abs(con['rp_E_coeff']) > 1e-20:
-                    f.write('RP_E, 1, {}\n'.format(-con['rp_E_coeff']))
-                if abs(con['rp_K_coeff']) > 1e-20:
-                    f.write('RP_K, 1, {}\n'.format(-con['rp_K_coeff']))
-                n_lesicar += 1
-            
+            lesicar_eqs, n_lesicar_skipped = build_lesicar_equations(
+                lesicar_constraints, used_dep, nodes, L)
+            for terms in lesicar_eqs:
+                f.write('*Equation\n{}\n'.format(len(terms)))
+                for is_node, name, dof, coeff in terms:
+                    if is_node:
+                        f.write('{}.{}, {}, {}\n'.format(inst_name, name, dof, coeff))
+                    else:
+                        f.write('{}, {}, {:.12g}\n'.format(name, dof, coeff))
             print("    Lesicar constraints: {} ({} redundant skipped)".format(
-                n_lesicar, n_lesicar_skipped))
+                len(lesicar_eqs), n_lesicar_skipped))
         
         else:
             f.write('** Periodic Boundary Conditions\n')

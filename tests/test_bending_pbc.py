@@ -20,7 +20,7 @@ import sys
 # Import the helpers from the repo root regardless of where this is run from.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from Spatium_Standalone import build_bending_pbc_equations
+from Spatium_Standalone import build_bending_pbc_equations, build_lesicar_equations
 
 L = 2.0
 M = 4              # divisions per edge -> (M+1) points per edge
@@ -142,10 +142,107 @@ def run_plane(plane):
         plane, len(eqs), n_dropped, max_res))
 
 
+def synthetic_lesicar(nodes, L, tol):
+    """Build Lesicar-style integral constraints (one per negative face per dof):
+    every node on the face is a term. Mirrors compute_lesicar_constraints' shape
+    so build_lesicar_equations can pick a leading node. RP coeffs are irrelevant
+    to the lead choice, so set to 0."""
+    faces = {'x': [], 'y': [], 'z': []}
+    for lab, (x, y, z) in nodes.items():
+        if x < tol: faces['x'].append(lab)
+        if y < tol: faces['y'].append(lab)
+        if z < tol: faces['z'].append(lab)
+    cons = []
+    for ax, labs in faces.items():
+        for dof in (1, 2, 3):
+            cons.append({'face': (ax, 0), 'dof': dof,
+                         'nodes': [(l, 1.0) for l in labs],
+                         'rp_E_coeff': 0.0, 'rp_K_coeff': 0.0})
+    return cons
+
+
+def has_dependency_cycle(equations):
+    """equations: list of term-lists (is_node, name, dof, coeff). The first term
+    is the eliminated (dependent) DOF. Returns a cycle (list) among dependent
+    DOFs if one exists, else None. Abaqus cannot triangularize a cyclic set."""
+    dep = {(t[0][1], t[0][2]) for t in equations}     # (name, dof) that are deps
+    adj = {}
+    for t in equations:
+        d = (t[0][1], t[0][2])
+        adj.setdefault(d, [])
+        for is_node, name, dofv, _c in t[1:]:
+            m = (name, dofv)
+            if m in dep:
+                adj[d].append(m)
+    WHITE, GRAY, BLACK = 0, 1, 2
+    color = {d: WHITE for d in adj}
+    parent = {}
+    for s in list(adj):
+        if color[s] != WHITE:
+            continue
+        stack = [(s, iter(adj[s]))]
+        color[s] = GRAY
+        while stack:
+            node, it = stack[-1]
+            adv = False
+            for m in it:
+                cm = color.get(m, BLACK)
+                if cm == WHITE:
+                    parent[m] = node; color[m] = GRAY
+                    stack.append((m, iter(adj[m]))); adv = True; break
+                elif cm == GRAY:
+                    cyc = [node]; x = node
+                    while x != m and x in parent:
+                        x = parent[x]; cyc.append(x)
+                    return list(reversed(cyc))
+            if not adv:
+                color[node] = BLACK; stack.pop()
+    return None
+
+
+def run_plane_full(plane):
+    """PBC + Lesicar together: the combined dependent set must be over-constraint
+    free (no duplicate leads) AND acyclic (the bug where an edge node leads a
+    Lesicar constraint and cycles with its cross-axis PBC partner)."""
+    nodes, pairs = build_cube_boundary()
+    pbc_eqs, used_dep, _ = build_bending_pbc_equations(pairs, nodes, L, plane)
+    cons = synthetic_lesicar(nodes, L, EPS * 10)
+    les_eqs, _ = build_lesicar_equations(cons, used_dep, nodes, L)
+
+    # Convert PBC terms (node labels) to the same (is_node, name, dof, coeff)
+    # shape the cycle checker expects; node names are plain labels here.
+    all_eqs = pbc_eqs + les_eqs
+
+    leads = [(t[0][1], t[0][2]) for t in all_eqs]
+    assert len(leads) == len(set(leads)), \
+        "{}: duplicate leading (node,dof) across PBC+Lesicar".format(plane)
+
+    cyc = has_dependency_cycle(all_eqs)
+    assert cyc is None, "{}: dependency cycle among eliminated DOFs: {}".format(plane, cyc)
+
+    # Every Lesicar lead must be an interior-of-face node (on exactly one face).
+    ftol = L * 0.01
+    def faces_on(lab):
+        x, y, z = nodes[lab]
+        return ((x < ftol) + (x > L - ftol) + (y < ftol) + (y > L - ftol)
+                + (z < ftol) + (z > L - ftol))
+    for t in les_eqs:
+        lab = t[0][1]
+        assert faces_on(lab) == 1, \
+            "{}: Lesicar led by non-interior node {} (faces_on={})".format(
+                plane, lab, faces_on(lab))
+
+    print("  [{}] pbc={:<4d} lesicar={:<2d} dep-unique=OK acyclic=OK interior-leads=OK".format(
+        plane, len(pbc_eqs), len(les_eqs)))
+
+
 def main():
     print("Testing build_bending_pbc_equations on a {}^3 periodic cube boundary".format(M + 1))
     for plane in ('xz', 'yz', 'xy'):
         run_plane(plane)
+    print("\nTesting PBC + Lesicar combined (over-constraint + cycle freedom)")
+    for plane in ('xz', 'yz', 'xy'):
+        run_plane_full(plane)
     print("ALL BENDING PBC TESTS PASSED")
 
 
