@@ -63,6 +63,60 @@ def _get_data(val):
         return val.dataDouble
 
 
+def _field_by_label(field, region):
+    """Read an element field over `region` as (labels, data) NumPy arrays.
+
+    Uses field.bulkDataBlocks -- ONE C-level call returning the whole field as
+    arrays -- instead of iterating field.values element by element (each of
+    which crosses the Abaqus C++/Python boundary). This is the dominant cost of
+    post-processing, so the bulk read is ~10-100x faster. Falls back to .values
+    if bulkDataBlocks is unavailable or empty (older releases / odd fields).
+
+    Returns (labels: int ndarray (n,), data: float ndarray (n, ncomp)).
+    Assumes one value per element (1 integration point, as for C3D4/C3D4H);
+    that matches the volume-weighting the callers already do with whole-element
+    EVOL.
+    """
+    sub = field.getSubset(region=region)
+    try:
+        blocks = sub.bulkDataBlocks
+    except Exception:
+        blocks = None
+    if blocks:
+        labs, dats, ok = [], [], True
+        for b in blocks:
+            try:
+                el, da = b.elementLabels, b.data
+            except Exception:
+                ok = False
+                break
+            if el is None or da is None:
+                ok = False
+                break
+            d = np.asarray(da, dtype=float)
+            if d.ndim == 1:
+                d = d.reshape(-1, 1)
+            labs.append(np.asarray(el).ravel())
+            dats.append(d)
+        if ok and labs:
+            return np.concatenate(labs), np.concatenate(dats, axis=0)
+
+    # Fallback: per-element .values (slow path).
+    labs, dats = [], []
+    for v in sub.values:
+        labs.append(v.elementLabel)
+        dats.append(np.asarray(_get_data(v), dtype=float).reshape(-1))
+    if not labs:
+        return np.array([], dtype=int), np.zeros((0, 1))
+    return np.asarray(labs, dtype=int), np.vstack(dats)
+
+
+def _aligned(values_map, labels):
+    """Vectorized lookup: array of values_map[l] for l in labels, 0.0 if absent."""
+    return np.fromiter((values_map.get(l, 0.0) for l in labels),
+                       dtype=float, count=len(labels))
+
+
 def extract_first_order(odb_path, s_comp, eng_strain, L):
     """
     Extract E or G and nu from an ODB using direct odbAccess.
@@ -104,42 +158,37 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
                 break
         
         for inst_name, inst in solid_instances:
-            s_sub = stress_field.getSubset(region=inst)
-            v_sub = volume_field.getSubset(region=inst)
-            vol_dict = {v.elementLabel: _get_data(v) for v in v_sub.values}
-            
-            # Strain field
-            strain_dict = {}
+            # Bulk-read S, EVOL, (LE/E) as arrays, then volume-weight with NumPy.
+            # Same math as the old per-element loop, vectorized.
+            s_lab, s_dat = _field_by_label(stress_field, inst)
+            v_lab, v_dat = _field_by_label(volume_field, inst)
+            if len(s_lab) == 0:
+                continue
+            labs = s_lab.tolist()
+            vol_map = dict(zip(v_lab.tolist(), v_dat[:, 0].tolist()))
+            w = _aligned(vol_map, labs)            # vol per stress-element, 0 if no vol
+
+            total_stress_vol += float(np.dot(s_dat[:, s_idx], w))
+            total_vol += float(w.sum())
+
             if strain_key:
-                e_sub = frame.fieldOutputs[strain_key].getSubset(region=inst)
-                for ev in e_sub.values:
-                    strain_dict[ev.elementLabel] = _get_data(ev)
-            
-            for sv in s_sub.values:
-                el = sv.elementLabel
-                if el not in vol_dict:
-                    continue
-                vol = vol_dict[el]
-                s_data = _get_data(sv)
-                total_stress_vol += s_data[s_idx] * vol
-                total_vol += vol
-                
-                # Axial strain (element-averaged)
-                if el in strain_dict:
-                    e_data = strain_dict[el]
-                    total_strain_axial_vol += e_data[s_idx] * vol
-                    
-                    # Transverse strains for Poisson's ratio
-                    if not is_shear:
-                        if s_comp == 'S11':
-                            total_strain_trans1_vol += e_data[1] * vol
-                            total_strain_trans2_vol += e_data[2] * vol
-                        elif s_comp == 'S22':
-                            total_strain_trans1_vol += e_data[0] * vol
-                            total_strain_trans2_vol += e_data[2] * vol
-                        elif s_comp == 'S33':
-                            total_strain_trans1_vol += e_data[0] * vol
-                            total_strain_trans2_vol += e_data[1] * vol
+                e_lab, e_dat = _field_by_label(frame.fieldOutputs[strain_key], inst)
+                # Align strain rows to the stress-element order; rows with no
+                # strain (or no vol, via w=0) contribute nothing -- as before.
+                erow = {int(l): i for i, l in enumerate(e_lab.tolist())}
+                idx = np.fromiter((erow.get(l, -1) for l in labs),
+                                  dtype=int, count=len(labs))
+                estr = np.zeros((len(labs), e_dat.shape[1]))
+                valid = idx >= 0
+                if valid.any():
+                    estr[valid] = e_dat[idx[valid]]
+                total_strain_axial_vol += float(np.dot(estr[:, s_idx], w))
+                if not is_shear:
+                    t1, t2 = {'S11': (1, 2), 'S22': (0, 2), 'S33': (0, 1)}.get(
+                        s_comp, (None, None))
+                    if t1 is not None:
+                        total_strain_trans1_vol += float(np.dot(estr[:, t1], w))
+                        total_strain_trans2_vol += float(np.dot(estr[:, t2], w))
         
         # Hill-Mandel consistent:
         # Stress: sum(sigma*Ve) / V_RVE
@@ -277,24 +326,28 @@ def extract_second_order(odb_path, L, Kappa, Bending_Plane):
     total_vol = 0.0
     
     for inst_name, inst in solid_instances:
-        s_sub = stress_field.getSubset(region=inst)
-        v_sub = volume_field.getSubset(region=inst)
-        vol_dict = {v.elementLabel: _get_data(v) for v in v_sub.values}
-        
-        for sv in s_sub.values:
-            el = sv.elementLabel
-            key = (inst_name, el)
-            if el not in vol_dict or key not in elem_centroid:
-                continue
-            vol = vol_dict[el]
-            s_data = _get_data(sv)
-            centroid = elem_centroid[key]
-            z_rel = centroid[coord_idx] - coord_bar
-            
-            for c in range(min(6, len(s_data))):
-                sigma_vol[c] += s_data[c] * vol
-            moment_vol += s_data[s_idx] * z_rel * vol
-            total_vol += vol
+        # Bulk-read S and EVOL as arrays, then volume-weight with NumPy.
+        s_lab, s_dat = _field_by_label(stress_field, inst)
+        v_lab, v_dat = _field_by_label(volume_field, inst)
+        if len(s_lab) == 0:
+            continue
+        labs = s_lab.tolist()
+        vol_map = dict(zip(v_lab.tolist(), v_dat[:, 0].tolist()))
+
+        # Weight is the element volume, but ZERO for elements missing a volume
+        # OR a centroid (the old loop `continue`d on either).
+        cent_z = {el: c[coord_idx] for (iname, el), c in elem_centroid.items()
+                  if iname == inst_name}
+        w = _aligned(vol_map, labs)
+        in_cent = np.fromiter((1.0 if l in cent_z else 0.0 for l in labs),
+                              dtype=float, count=len(labs))
+        w = w * in_cent
+        z_rel = _aligned(cent_z, labs) - coord_bar
+
+        ncomp = min(6, s_dat.shape[1])
+        sigma_vol[:ncomp] += (s_dat[:, :ncomp] * w[:, None]).sum(axis=0)
+        moment_vol += float(np.dot(s_dat[:, s_idx] * z_rel, w))
+        total_vol += float(w.sum())
     
     kappa_actual = Kappa * last_frame.frameValue
     M_over_V = moment_vol / L
