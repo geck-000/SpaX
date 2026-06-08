@@ -13,7 +13,10 @@ import os
 import sys
 import csv
 import numpy as np
-from odbAccess import openOdb
+# NOTE: `from odbAccess import openOdb` is imported lazily inside the extract_*
+# functions, not here. That keeps the merge mode (--merge) and the CLI dispatch
+# importable under a plain `python3` (no Abaqus / no license needed) while the
+# actual ODB reading still runs under `abaqus python`.
 
 
 def mode_short(m):
@@ -121,6 +124,7 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
     """
     Extract E or G and nu from an ODB using direct odbAccess.
     """
+    from odbAccess import openOdb
     odb = openOdb(path=odb_path, readOnly=True)
     
     step = odb.steps[list(odb.steps.keys())[0]]
@@ -267,6 +271,7 @@ def extract_second_order(odb_path, L, Kappa, Bending_Plane):
     """
     Extract D_RVE and E_bending from a bending ODB using direct odbAccess.
     """
+    from odbAccess import openOdb
     odb = openOdb(path=odb_path, readOnly=True)
     
     # Find bending step
@@ -397,18 +402,34 @@ def compute_length_scale(D_rve, E_eff, G_eff, nu_eff, L):
     }
 
 
-def run(csv_path, odb_dir, output_csv='postprocess_results.csv'):
-    """Main post-processing pipeline."""
-    
+def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None):
+    """Main post-processing pipeline.
+
+    only_index : 1-based row index into the CSV. When set, process ONLY that one
+    RVE and write a 1-row CSV. This is what lets stage 3 run as a SLURM job array
+    (one task per RVE) for parallel post-processing; a separate merge step
+    (merge_partials) then unions the per-task CSVs into the final results.csv.
+    When None, every RVE is processed in one pass (original behaviour).
+    """
     params_list = read_csv(csv_path)
+
+    if only_index is not None:
+        if only_index < 1 or only_index > len(params_list):
+            raise IndexError("only_index {} out of range 1..{}".format(
+                only_index, len(params_list)))
+        params_list = [params_list[only_index - 1]]
+
     print("\n" + "=" * 70)
     print("SPATIUM POST-PROCESSING PIPELINE")
     print("=" * 70)
     print("  CSV: {}".format(csv_path))
     print("  ODB dir: {}".format(odb_dir))
-    print("  RVEs: {}".format(len(params_list)))
+    if only_index is not None:
+        print("  RVE: #{} ({})".format(only_index, params_list[0].get('run_id', '?')))
+    else:
+        print("  RVEs: {}".format(len(params_list)))
     print("  Output: {}".format(output_csv))
-    
+
     all_results = []
     
     for i, params in enumerate(params_list):
@@ -576,14 +597,69 @@ def print_summary_table(results):
     print("=" * 120)
 
 
+def merge_partials(parts_dir, output_csv):
+    """Union the per-RVE partial CSVs written by the post-processing job array
+    into one results.csv. Columns vary by RVE (e.g. only bending rows have
+    D_rve), so take the union of all columns (first-seen order) and fill blanks.
+    Rows are ordered by the row index encoded in each partial's filename so the
+    output matches the input CSV order. Pure-Python: run with plain python3."""
+    import glob
+    import os
+    import re
+
+    files = glob.glob(os.path.join(parts_dir, 'row_*.csv'))
+
+    def _idx(f):
+        m = re.search(r'row_(\d+)\.csv$', os.path.basename(f))
+        return int(m.group(1)) if m else (1 << 30)
+
+    files.sort(key=_idx)
+
+    rows = []
+    keys = []
+    for f in files:
+        with open(f) as fh:
+            for r in csv.DictReader(fh):
+                rows.append(r)
+                for k in r.keys():
+                    if k not in keys:
+                        keys.append(k)
+
+    if not rows:
+        print("merge: no partial rows found in {}".format(parts_dir))
+        return []
+
+    with open(output_csv, 'w', newline='') as fh:
+        w = csv.DictWriter(fh, fieldnames=keys)
+        w.writeheader()
+        for r in rows:
+            w.writerow({k: r.get(k, '') for k in keys})
+
+    print("merged {} rows from {} partial file(s) -> {}".format(
+        len(rows), len(files), output_csv))
+    return rows
+
+
 if __name__ == '__main__':
+    # Merge mode (no Abaqus needed): combine per-RVE partial CSVs.
+    if len(sys.argv) >= 2 and sys.argv[1] == '--merge':
+        if len(sys.argv) < 4:
+            print("Usage: python Spatium_PostProcess.py --merge <parts_dir> <output_csv>")
+            sys.exit(1)
+        merge_partials(sys.argv[2], sys.argv[3])
+        sys.exit(0)
+
     if len(sys.argv) < 3:
-        print("Usage: abaqus python Spatium_PostProcess.py <csv_path> <odb_dir> [output_csv]")
+        print("Usage: abaqus python Spatium_PostProcess.py <csv_path> <odb_dir> [output_csv] [index]")
+        print("       (index = 1-based RVE row; omit to process all RVEs in one pass)")
+        print("       python Spatium_PostProcess.py --merge <parts_dir> <output_csv>")
         sys.exit(1)
-    
+
     csv_path = sys.argv[1]
     odb_dir = sys.argv[2]
     output_csv = sys.argv[3] if len(sys.argv) > 3 else 'results.csv'
-    
-    results = run(csv_path, odb_dir, output_csv)
-    print_summary_table(results)
+    only_index = int(sys.argv[4]) if len(sys.argv) > 4 else None
+
+    results = run(csv_path, odb_dir, output_csv, only_index=only_index)
+    if only_index is None:
+        print_summary_table(results)
