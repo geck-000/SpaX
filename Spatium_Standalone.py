@@ -520,6 +520,86 @@ def compute_lesicar_constraints(nodes, elements, L, bending_plane='xz'):
     return constraints
 
 
+def bending_pbc_coeffs(xp, xn, L, bending_plane):
+    """Coordinate-dependent RP coupling coefficients for one periodic pair.
+
+    Returns {dof: (c_mem, c_bend)} so that the second-order periodicity relation
+    on each pair is  u_pos[dof] - u_neg[dof] = c_mem*RP_E + c_bend*RP_K , where
+    RP_E is the macroscopic membrane strain and RP_K the prescribed curvature.
+    Coordinates are taken relative to the RVE centre (L/2).
+    """
+    x1p, x2p, x3p = xp[0]-L/2, xp[1]-L/2, xp[2]-L/2
+    x1n, x2n, x3n = xn[0]-L/2, xn[1]-L/2, xn[2]-L/2
+    if bending_plane == 'xz':
+        return {
+            1: (x1p-x1n, -(x1p*x3p-x1n*x3n)),
+            2: (0.0, 0.0),
+            3: (0.0, 0.5*(x1p**2-x1n**2)),
+        }
+    elif bending_plane == 'yz':
+        return {
+            1: (0.0, 0.0),
+            2: (x2p-x2n, -(x2p*x3p-x2n*x3n)),
+            3: (0.0, 0.5*(x2p**2-x2n**2)),
+        }
+    else:  # xy
+        return {
+            1: (x1p-x1n, -(x1p*x2p-x1n*x2n)),
+            2: (0.0, 0.5*(x1p**2-x1n**2)),
+            3: (0.0, 0.0),
+        }
+
+
+def build_bending_pbc_equations(pairs, nodes, L, bending_plane, tol=1e-15):
+    """Build the second-order (bending) periodic *Equation set.
+
+    Each periodic node pair contributes, per DOF, the relation
+        u_pos[dof] - u_neg[dof] - c_mem*RP_E - c_bend*RP_K = 0.
+
+    Abaqus eliminates the FIRST-listed (node,dof) of every *Equation, so a given
+    (node,dof) may lead only one equation. Edge/corner nodes are periodic slaves
+    on 2-3 faces, so a single node can be `pos` in more than one axis; we
+    therefore pick, per DOF, whichever endpoint is still free as the eliminated
+    term (flipping the equation sign when we must lead with `neg`). When BOTH
+    endpoints are already eliminated the relation closes a loop of pairs; since
+    the macroscopic bending field is a single-valued (path-independent) function
+    of position, that loop relation is implied exactly by the equations already
+    written and is dropped.
+
+    Returns (equations, used_dep, n_dropped) where each equation is a list of
+    terms (is_node, name, dof, coeff): is_node True -> `name` is a node label,
+    is_node False -> `name` is 'RP_E'/'RP_K'.
+    """
+    used_dep = set()   # (node, dof) already eliminated as a dependent DOF
+    equations = []
+    n_dropped = 0
+
+    for axis in ['X', 'Y', 'Z']:
+        for neg, pos in pairs[axis]:
+            coeffs = bending_pbc_coeffs(nodes[pos], nodes[neg], L, bending_plane)
+            for dof in [1, 2, 3]:
+                c_mem, c_bend = coeffs[dof]
+
+                if (pos, dof) not in used_dep:
+                    dep, indep, s = pos, neg, 1.0
+                elif (neg, dof) not in used_dep:
+                    dep, indep, s = neg, pos, -1.0
+                else:
+                    n_dropped += 1
+                    continue
+
+                terms = [(True, dep, dof, 1.0), (True, indep, dof, -1.0)]
+                if abs(c_mem) > tol:
+                    terms.append((False, 'RP_E', 1, -c_mem * s))
+                if abs(c_bend) > tol:
+                    terms.append((False, 'RP_K', 1, -c_bend * s))
+
+                used_dep.add((dep, dof))
+                equations.append(terms)
+
+    return equations, used_dep, n_dropped
+
+
 # =====================================================================
 # COMPLETE .INP WRITER
 # =====================================================================
@@ -799,58 +879,22 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         
         if is_bending:
             f.write('** Second-Order Bending PBCs\n')
-            constrained = set()
-            # (node, dof) already eliminated as the leading/dependent term of an
-            # *Equation. Abaqus permits a given (node,dof) to lead only ONE
-            # equation; the bending PBCs and the Lesicar integral constraints
-            # below must not both claim the same one (else: over-constraint).
-            used_dep = set()
-            eq_count = 0
-
-            for axis in ['X', 'Y', 'Z']:
-                for neg, pos in pairs[axis]:
-                    if neg in constrained or pos in constrained:
-                        continue
-                    xn = nodes[neg]; xp = nodes[pos]
-                    x1p, x2p, x3p = xp[0]-L/2, xp[1]-L/2, xp[2]-L/2
-                    x1n, x2n, x3n = xn[0]-L/2, xn[1]-L/2, xn[2]-L/2
-                    
-                    if bending_plane == 'xz':
-                        coeffs = {
-                            1: (x1p-x1n, -(x1p*x3p-x1n*x3n)),
-                            2: (0.0, 0.0),
-                            3: (0.0, 0.5*(x1p**2-x1n**2)),
-                        }
-                    elif bending_plane == 'yz':
-                        coeffs = {
-                            1: (0.0, 0.0),
-                            2: (x2p-x2n, -(x2p*x3p-x2n*x3n)),
-                            3: (0.0, 0.5*(x2p**2-x2n**2)),
-                        }
-                    else:  # xy
-                        coeffs = {
-                            1: (x1p-x1n, -(x1p*x2p-x1n*x2n)),
-                            2: (0.0, 0.5*(x1p**2-x1n**2)),
-                            3: (0.0, 0.0),
-                        }
-                    
-                    for dof in [1, 2, 3]:
-                        c_mem, c_bend = coeffs[dof]
-                        n_terms = 2
-                        if abs(c_mem) > 1e-15: n_terms += 1
-                        if abs(c_bend) > 1e-15: n_terms += 1
-                        
-                        f.write('*Equation\n{}\n'.format(n_terms))
-                        f.write('{}.{}, {}, 1.\n'.format(inst_name, pos, dof))
-                        f.write('{}.{}, {}, -1.\n'.format(inst_name, neg, dof))
-                        if abs(c_mem) > 1e-15:
-                            f.write('RP_E, 1, {}\n'.format(-c_mem))
-                        if abs(c_bend) > 1e-15:
-                            f.write('RP_K, 1, {}\n'.format(-c_bend))
-                        used_dep.add((pos, dof))
-                        eq_count += 1
-                    constrained.add(neg); constrained.add(pos)
-            print("    Bending equations: {}".format(eq_count))
+            # Build the periodic *Equation set. `used_dep` (the (node,dof) pairs
+            # eliminated as dependent DOFs) is shared with the Lesicar integral
+            # constraints below so the two never claim the same dependent DOF.
+            bend_eqs, used_dep, n_dropped = build_bending_pbc_equations(
+                pairs, nodes, L, bending_plane)
+            for terms in bend_eqs:
+                f.write('*Equation\n{}\n'.format(len(terms)))
+                for is_node, name, dof, coeff in terms:
+                    # .12g keeps coordinate-derived RP coefficients essentially
+                    # exact while printing 1.0/-1.0 cleanly as 1/-1.
+                    if is_node:
+                        f.write('{}.{}, {}, {:.12g}\n'.format(inst_name, name, dof, coeff))
+                    else:
+                        f.write('{}, {}, {:.12g}\n'.format(name, dof, coeff))
+            print("    Bending equations: {} ({} redundant dropped)".format(
+                len(bend_eqs), n_dropped))
             
             # Lesicar Eq.14 integral constraints (always included)
             f.write('** Lesicar Eq.14 integral constraints\n')
@@ -988,8 +1032,14 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         f.write('Fix_Ref_Centre, 3, 3\n')
         
         if is_bending:
-            f.write('RP_E, 2, 6\n')
-            f.write('RP_K, 2, 6\n')
+            # RP_E (membrane strain) and RP_K (curvature) are plain assembly
+            # nodes coupled to the model only through DOF 1. Pin their remaining
+            # translational DOFs (2,3) so they are not left as free, unconstrained
+            # DOFs (which would make the stiffness matrix singular). Only DOFs 1-3
+            # exist on a plain node, so constraining 2-3 (not 2-6) avoids spurious
+            # "boundary condition on inactive dof" warnings.
+            f.write('RP_E, 2, 3\n')
+            f.write('RP_K, 2, 3\n')
         f.write('**\n')
         
         # Amplitude
@@ -1045,7 +1095,10 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         f.write('*Output, field, frequency=1\n')
         f.write('*Node Output\nU, RF\n')
         f.write('*Element Output\n')
-        f.write('S, E, LE, IVOL\n' if not is_bending else 'S, E, EVOL, COORD\n')
+        # EVOL (whole-element volume) is what the post-processor volume-averages
+        # over; it must be requested for every mode. (Was IVOL for first-order,
+        # which the post-processor doesn't read -> KeyError 'EVOL'.)
+        f.write('S, E, LE, EVOL\n' if not is_bending else 'S, E, EVOL, COORD\n')
         f.write('*Output, history, frequency=1\n')
         if mode == 'bend':
             f.write('*Node Output, nset=RP_K\n')

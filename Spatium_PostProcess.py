@@ -261,7 +261,13 @@ def extract_second_order(odb_path, L, Kappa, Bending_Plane):
                 cx += c[0]; cy += c[1]; cz += c[2]
             elem_centroid[(inst_name, elem.label)] = (cx/n, cy/n, cz/n)
     
-    # Process last frame
+    # Process last frame. A bending analysis that failed to converge writes an
+    # ODB with an empty step (0 frames); guard against it so the caller records
+    # this cleanly instead of dying on an out-of-range frame index.
+    if len(step.frames) == 0:
+        odb.close()
+        raise RuntimeError(
+            "bending step '{}' has 0 frames (analysis did not converge)".format(step_name))
     last_frame = step.frames[-1]
     stress_field = last_frame.fieldOutputs['S']
     volume_field = last_frame.fieldOutputs['EVOL']
