@@ -120,6 +120,43 @@ def _aligned(values_map, labels):
                        dtype=float, count=len(labels))
 
 
+# Maps the driven stress component to the reference-point node set and the
+# 0-based DOF on it that carries the imposed macro deformation. Normal modes
+# drive RP-1/2/3 on their normal DOF; shear modes drive RP-4 on the shear DOF
+# (ss12->2, ss13->1, ss23->2, matching Spatium_Standalone.shear_config).
+RP_FOR_SCOMP = {
+    'S11': ('RP-1', 0), 'S22': ('RP-2', 1), 'S33': ('RP-3', 2),
+    'S12': ('RP-4', 1), 'S13': ('RP-4', 0), 'S23': ('RP-4', 1),
+}
+
+
+def _rp_region(odb, rp_name):
+    """Assembly node set for a reference point, or None if absent."""
+    sets = odb.rootAssembly.nodeSets
+    for key in (rp_name, rp_name.upper(), rp_name.replace('-', '_').upper()):
+        if key in sets.keys():
+            return sets[key]
+    return None
+
+
+def _rp_disp(frame, rp_region, dof_idx):
+    """U[dof_idx] of the single reference-point node in `frame`, or None.
+
+    This is the actually-imposed macro deformation, independent of the load
+    *Amplitude shape -- unlike the step-time proxy `frameValue * eng_strain`,
+    which only equals it for a linear ramp.
+    """
+    if rp_region is None:
+        return None
+    try:
+        uf = frame.fieldOutputs['U'].getSubset(region=rp_region)
+        if len(uf.values) == 0:
+            return None
+        return float(_get_data(uf.values[0])[dof_idx])
+    except Exception:
+        return None
+
+
 def extract_first_order(odb_path, s_comp, eng_strain, L):
     """
     Extract E or G and nu from an ODB using direct odbAccess.
@@ -139,12 +176,16 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
         if 'PBC' not in inst_name.upper() and inst_name.upper() != 'ASSEMBLY':
             solid_instances.append((inst_name, inst))
     
+    # Reference point that carries the imposed macro deformation for this mode.
+    rp_name, rp_dof = RP_FOR_SCOMP.get(s_comp, (None, None))
+    rp_region = _rp_region(odb, rp_name) if rp_name else None
+
     stress_strain_data = []
-    
+
     for frame_idx, frame in enumerate(step.frames):
         if frame_idx == 0:
             continue
-        
+
         stress_field = frame.fieldOutputs['S']
         volume_field = frame.fieldOutputs['EVOL']
         
@@ -199,7 +240,11 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
         # Axial strain: RP-based (frameValue * eng_strain)
         # Transverse strain: element-averaged / V_solid (for Poisson only)
         sigma_macro = total_stress_vol / V_RVE
-        eps_macro = frame.frameValue * eng_strain
+        # Macro strain = imposed RP displacement / L (Hill-Mandel macro strain
+        # over the full RVE, voids included; amplitude-shape independent). Fall
+        # back to the step-time proxy if RP output is unavailable in the ODB.
+        rp_u = _rp_disp(frame, rp_region, rp_dof)
+        eps_macro = (rp_u / L) if rp_u is not None else (frame.frameValue * eng_strain)
         
         if total_vol > 0 and not is_shear:
             eps_axial_solid = total_strain_axial_vol / total_vol
@@ -354,7 +399,11 @@ def extract_second_order(odb_path, L, Kappa, Bending_Plane):
         moment_vol += float(np.dot(s_dat[:, s_idx] * z_rel, w))
         total_vol += float(w.sum())
     
-    kappa_actual = Kappa * last_frame.frameValue
+    # Imposed curvature: read RP_K's prescribed DOF directly (amplitude-shape
+    # independent), falling back to the step-time proxy if RP_K is unavailable.
+    rpk_u = _rp_disp(last_frame, _rp_region(odb, 'RP_K'), 0)
+    kappa_actual = rpk_u if (rpk_u is not None and abs(rpk_u) > 1e-30) \
+        else Kappa * last_frame.frameValue
     M_over_V = moment_vol / L
     
     D_rve = abs(M_over_V / kappa_actual) if abs(kappa_actual) > 1e-30 else 0

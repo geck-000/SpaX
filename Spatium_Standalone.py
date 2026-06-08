@@ -1078,11 +1078,13 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             f.write('RP_K, 2, 3\n')
         f.write('**\n')
         
-        # Amplitude
+        # Amplitude -- LINEAR (amplitude == step time). The post-processor uses
+        # eps_macro = frameValue * eng_strain, i.e. it treats step time as the
+        # strain axis. That proxy is only correct when the ramp is linear; a
+        # back-loaded ramp makes frameValue overstate the strain in the 10-40%
+        # fit window and halves the extracted E_eff/G_eff.
         f.write('*Amplitude, name=LoadRamp, time=STEP TIME\n')
-        f.write('0., 0., 0.01, 0.001, 0.025, 0.005, 0.05, 0.02\n')
-        f.write('0.1, 0.05, 0.2, 0.1, 0.36, 0.2, 0.52, 0.4\n')
-        f.write('0.68, 0.6, 0.84, 0.8, 1., 1.\n')
+        f.write('0., 0., 1., 1.\n')
         
         # ============================================================
         # STEP
@@ -1207,12 +1209,317 @@ def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
         shutil.rmtree(tmpd, ignore_errors=True)
 
 
+def _generate_one_row(task):
+    """Generate one RVE's .inp file(s). Independent per row, so this runs
+    in a worker process and packing+meshing parallelise across CPUs.
+    Returns (run_id, status) where status is 'ok' or 'skipped'."""
+    idx, n_rows, params, output_dir = task
+    # Independent RNG per worker: forked children inherit the parent's
+    # numpy state, which would make parallel rows pack identically. Reseed
+    # from SPAX_SEED (reproducible) or fresh OS entropy (default).
+    _seed = os.environ.get('SPAX_SEED')
+    if _seed:
+        np.random.seed((int(_seed) + idx * 2654435761) % (2 ** 32))
+    else:
+        np.random.seed(None)
+    run_id = params['run_id']
+    print("\n" + "=" * 70)
+    print("[{}/{}] {}".format(idx + 1, n_rows, run_id))
+    print("=" * 70)
+
+    # Parse parameters
+    L = float(params['L'])
+    L_mesh = float(params['L_mesh'])
+    r_avg = float(params['r_avg'])
+    r_std = float(params.get('r_std', r_avg * 0.2) or r_avg * 0.2)
+    VoF = float(params['VoF_sphere'])
+    E_matrix = float(params['E_matrix'])
+    nu_matrix = float(params['nu_matrix'])
+    Is_Porous = params['Is_Porous']
+    Disp = float(params['Disp'])
+    min_dist = float(params.get('min_distance', 0.002) or 0.002)
+    max_iter = int(params.get('max_iterations', 200000) or 200000)
+    sph_avg = float(params.get('sphericity_avg', 0.85) or 0.85)
+    sph_std = float(params.get('sphericity_std', 0.1) or 0.1)
+    growth_dir = params.get('Growth_Direction', 'Random')
+    growth_conc = float(params.get('Growth_Concentration', 0.0) or 0.0)
+
+    Inclusion_Type = params.get('Inclusion_Type', 'Solid')
+    K_incl = float(params.get('K_inclusion', 0) or 0)
+    G_incl = float(params.get('G_inclusion', 0) or 0)
+    VoF_void = float(params.get('VoF_void_sphere', 0) or 0)
+    VoF_incl = float(params.get('VoF_incl_sphere', 0) or 0)
+
+    # Compute inclusion material
+    if Inclusion_Type == 'Liquid' and K_incl > 0 and G_incl > 0:
+        E_incl = 9.0 * K_incl * G_incl / (3.0 * K_incl + G_incl)
+        nu_incl = (3.0 * K_incl - 2.0 * G_incl) / (2.0 * (3.0 * K_incl + G_incl))
+        print("  Liquid: K={:.3e}, G={:.3e} -> E={:.3e}, nu={:.6f}".format(
+            K_incl, G_incl, E_incl, nu_incl))
+    else:
+        E_incl = float(params.get('E_sphere_inclusion', E_matrix) or E_matrix)
+        nu_incl = float(params.get('nu_sphere_inclusion', nu_matrix) or nu_matrix)
+
+    # Determine Gmsh mode
+    if VoF_void > 0 and VoF_incl > 0:
+        gmsh_mode = 'Hybrid'
+    elif Is_Porous == 'Porous':
+        gmsh_mode = 'Porous'
+    else:
+        gmsh_mode = 'Composite'
+
+    # Step 1: Generate sphere packing
+    # Floor the adaptive radius at a mesh-resolvable size. Below ~0.75*L_mesh
+    # the packing emits spheres/caps too small for the surface mesher to
+    # resolve, which produces degenerate facets that crash Gmsh's 3D mesher
+    # (a C-level core dump, not a catchable exception). A sweep over seeds
+    # showed 0.6*L_mesh segfaults intermittently while 0.75*L_mesh meshes
+    # reliably; we floor here for robustness (VoF ~0.15-0.17 on the sea-ice
+    # cases). Lower it only together with stronger thin-cap/sliver rejection.
+    # Couple the floor to the inclusion mesh size: a sphere is cleanly
+    # meshable when its radius spans a few surface elements (lc_fine).
+    # min_radius = FLOOR_MULT * lc_fine, with lc_fine = LC_FINE_MULT*L_mesh.
+    lc_fine_mult = float(os.environ.get('SPAX_LC_FINE_MULT', '0.4'))
+    floor_mult = float(os.environ.get('SPAX_FLOOR_MULT', str(0.75 / lc_fine_mult)))
+    r_floor = max(r_avg * 0.10, floor_mult * lc_fine_mult * L_mesh)
+    # Keep the inter-inclusion gap mesh-resolvable to avoid matrix slivers
+    # (a sub-lc_fine gap makes degenerate facets that crash the 3D mesher).
+    gap_mult = float(os.environ.get('SPAX_GAP_MULT', '0.0'))
+    if gap_mult > 0.0:
+        min_dist = max(min_dist, gap_mult * lc_fine_mult * L_mesh)
+    # Geometric sliver rejection, applied as an ESCALATION rather than
+    # globally. Refusing thin cut-geometry (face cap, inter-sphere gap,
+    # edge/corner grazing) at the packing stage removes the degeneracy that
+    # crashes Gmsh's mesher — but it also costs packing density (~6% VoF at
+    # full strength). So we keep it OFF for the first attempts (full VoF for
+    # the seeds that mesh fine) and ramp it in only once a packing keeps
+    # failing, trading density for meshability solely to rescue an otherwise
+    # skipped row. A/B over 10 seeds: full-on turned 9/10 -> 10/10 by
+    # rescuing one pathological seed but cost every seed ~6% VoF; escalation
+    # captures the rescue without taxing the seeds that never needed it.
+    #
+    # SPAX_SLIVER_MULT = max strength (units of lc_fine, default 0.5).
+    # SPAX_SLIVER_START = failed attempts before escalation begins (def 2).
+    sliver_mult = float(os.environ.get('SPAX_SLIVER_MULT', '0.5'))
+    sliver_start = int(os.environ.get('SPAX_SLIVER_START', '2'))
+    sliver_gap_max = sliver_mult * lc_fine_mult * L_mesh
+    max_retries = int(os.environ.get('SPAX_MAX_RETRIES', '6'))
+
+    def sliver_for_attempt(n):
+        # n = 0-based attempt index. 0 until sliver_start, then ramp
+        # linearly to sliver_gap_max on the final attempt.
+        if sliver_gap_max <= 0.0 or n < sliver_start:
+            return 0.0
+        span = max(1, (max_retries - 1) - sliver_start)
+        return min(1.0, (n - sliver_start + 1) / float(span)) * sliver_gap_max
+
+    sliver_gap = sliver_for_attempt(0)
+    print("  Step 1: Sphere packing...")
+    Sphere_array, octree = generate_sphere_packing(
+        L=L, r_avg=r_avg, r_std=r_std,
+        VoF_target=VoF, min_distance=min_dist,
+        max_iterations=max_iter,
+        sphericity_avg=sph_avg, sphericity_std=sph_std,
+        growth_direction=growth_dir,
+        growth_concentration=growth_conc,
+        min_radius=r_floor, sliver_gap=sliver_gap)
+
+    # Step 1b: Generate channels if requested
+    gen_channels = params.get('generate_channels', 'No').strip().lower() in ('yes', 'true', '1')
+    channel_vof_target = float(params.get('channel_vof_target', 0) or 0)
+    channel_array = np.empty((0, 3))
+
+    if gen_channels and channel_vof_target > 0.001:
+        r_ch_avg = float(params.get('r_channel_avg', r_avg * 0.5) or r_avg * 0.5)
+        r_ch_std = float(params.get('r_channel_std', r_ch_avg * 0.2) or r_ch_avg * 0.2)
+        channel_array = generate_channels(
+            L=L, channel_vof_target=channel_vof_target,
+            r_channel_avg=r_ch_avg, r_channel_std=r_ch_std,
+            min_distance=min_dist, max_iterations=max_iter,
+            octree=octree, L_mesh=L_mesh)
+
+        # Convert channels to sphere array entries (cylinders as tall ellipsoids)
+        # GmshPeriodic handles cylinders via the sphere array with rz >> rx,ry
+        for i in range(channel_array.shape[0]):
+            ch_x, ch_y, ch_r = channel_array[i]
+            # Represent as very tall ellipsoid spanning full Z
+            ch_entry = np.array([[ch_x, ch_y, L/2, ch_r, ch_r, L/2, 0, 0, 0, 0.01]])
+            Sphere_array = np.vstack((Sphere_array, ch_entry))
+
+    # Step 2: Gmsh periodic mesh (with retry on mesh failure)
+    print("  Step 2: Gmsh mesh...")
+
+    # Each retry re-packs and re-meshes in an isolated subprocess, so a
+    # crash or an intermittent periodic-matching failure costs only one
+    # attempt and never kills the run. Retries are cheap and safe, so we
+    # allow several (max_retries, set above) to push the success rate up,
+    # with sliver rejection escalating per attempt (sliver_for_attempt).
+    result = None
+    for attempt in range(max_retries):
+        try:
+            result = mesh_in_subprocess(
+                sphere_array=Sphere_array,
+                L=L, L_mesh=L_mesh,
+                output_dir=output_dir,
+                mode=gmsh_mode,
+                run_id=run_id,
+                VoF_void=VoF_void,
+                VoF_incl=VoF_incl,
+                Inclusion_Type=Inclusion_Type)
+
+            # Check for empty mesh
+            n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
+            if n_total == 0:
+                raise RuntimeError("Empty mesh (0 elements)")
+
+            # Strict-periodicity gate: a non-zero skipped count means some
+            # boundary nodes have no periodic partner in a meshed volume —
+            # i.e. material on one face maps to a void on the opposite face
+            # (a grazing-void asymmetry). Those nodes would get no PBC
+            # equation, so the RVE is not strictly periodic. Treat it as a
+            # soft failure: re-pack with escalated sliver rejection (which
+            # rejects the grazing void) rather than emit a defective RVE.
+            n_skip = result.get('n_pairs_skipped', 0)
+            if n_skip > 0:
+                raise RuntimeError(
+                    "{} periodic pair(s) unmatched — void/boundary not "
+                    "strictly periodic".format(n_skip))
+
+            break  # success
+        except Exception as e:
+            print("    Mesh attempt {}/{} failed: {}".format(
+                attempt + 1, max_retries, str(e)[:80]))
+            if attempt < max_retries - 1:
+                # Escalate sliver rejection for the next packing: stays 0
+                # for the first SPAX_SLIVER_START retries (full VoF), then
+                # ramps up to rescue a stubborn seed at a density cost.
+                sliver_gap = sliver_for_attempt(attempt + 1)
+                if sliver_gap > 0.0:
+                    print("    Retrying with new packing "
+                          "(sliver rejection on, gap={:.5f})...".format(
+                              sliver_gap))
+                else:
+                    print("    Retrying with new packing...")
+                np.random.seed(np.random.randint(0, 100000))
+                Sphere_array, octree = generate_sphere_packing(
+                    L=L, r_avg=r_avg, r_std=r_std,
+                    VoF_target=VoF, min_distance=min_dist * 1.2,
+                    max_iterations=max_iter,
+                    sphericity_avg=sph_avg, sphericity_std=sph_std,
+                    growth_direction=growth_dir,
+                    growth_concentration=growth_conc,
+                    min_radius=r_floor, sliver_gap=sliver_gap)
+                result = None
+            else:
+                print("    SKIPPING {} after {} failures".format(run_id, max_retries))
+                result = None
+
+    if result is None:
+        return (run_id, 'skipped')
+
+    gmsh_inp = result['mesh_file']
+    pairs_csv = result['match_file']
+    m_range = result['matrix_label_range']
+    s_range = result['sphere_label_range']
+
+    # Validate mesh is not empty
+    n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
+    if n_total == 0:
+        print("  ERROR: Empty mesh (0 elements). Skipping {}".format(run_id))
+        return (run_id, 'skipped')
+
+    # Step 3: Write .inp files (all in output_dir, flat)
+    print("  Step 3: Writing .inp files...")
+
+    # Parse loading modes from CSV
+    Mode = params.get('Mode', 'Uniaxial Tension X')
+    Mode2 = params.get('Mode2', '')
+    Kappa_val = float(params.get('Kappa', 0.0) or 0.0)
+    bp = params.get('Bending_Plane', 'xz')
+    full_tensor = params.get('full_tensor', 'No').strip().lower() in ('yes', 'true', '1')
+    nlgeom_flag = params.get('nlgeom_flag', 'OFF')
+
+    # Common kwargs for all write_complete_inp calls
+    common = dict(
+        L=L, E_matrix=E_matrix, nu_matrix=nu_matrix,
+        E_incl=E_incl, nu_incl=nu_incl,
+        Is_Porous=Is_Porous, Inclusion_Type=Inclusion_Type,
+        matrix_label_range=m_range, sphere_label_range=s_range,
+        nlgeom=nlgeom_flag)
+
+    def mode_short(m):
+        m = m.lower()
+        if 'uniaxial' in m and 'x' in m: return 'utx'
+        if 'uniaxial' in m and 'y' in m: return 'uty'
+        if 'uniaxial' in m and 'z' in m: return 'utz'
+        if 'shear' in m and '12' in m: return 'ss12'
+        if 'shear' in m and '13' in m: return 'ss13'
+        if 'shear' in m and '23' in m: return 'ss23'
+        if 'uniaxial' in m: return 'utx'
+        if 'shear' in m: return 'ss13'
+        return 'utx'
+
+    if full_tensor:
+        all_modes = ['utx', 'uty', 'utz', 'ss12', 'ss13', 'ss23']
+        print("    Full tensor mode: generating {} load cases".format(len(all_modes)))
+        for ms in all_modes:
+            path = os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms))
+            write_complete_inp(gmsh_inp, pairs_csv, path,
+                mode=ms, disp=Disp, **common)
+    else:
+        ms = mode_short(Mode)
+        path1 = os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms))
+        write_complete_inp(gmsh_inp, pairs_csv, path1,
+            mode=ms, disp=Disp, **common)
+
+        if Mode2:
+            Disp2 = float(params.get('Disp2', Disp) or Disp)
+            ms2 = mode_short(Mode2)
+            path2 = os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms2))
+            write_complete_inp(gmsh_inp, pairs_csv, path2,
+                mode=ms2, disp=Disp2, **common)
+
+    # Bending (always if Kappa > 0)
+    if Kappa_val > 0:
+        path_ben = os.path.join(output_dir, 'Job-{}-ben.inp'.format(run_id))
+        write_complete_inp(gmsh_inp, pairs_csv, path_ben,
+            mode='bend', disp=0, bending_plane=bp, kappa=Kappa_val, **common)
+
+    # Remove the Gmsh mesh .inp and periodic-pairs .csv now that they have
+    # been folded into the solver-ready Job-*.inp files. The output_dir is
+    # meant to hold only the Job .inp files; these per-run intermediates
+    # ({run_id}_gmsh.inp, {run_id}_periodic_pairs.csv) would otherwise be
+    # left behind alongside them.
+    for intermediate in (gmsh_inp, pairs_csv):
+        try:
+            if intermediate and os.path.exists(intermediate):
+                os.remove(intermediate)
+        except OSError as e:
+            print("    Warning: could not remove intermediate {}: {}".format(
+                intermediate, e))
+
+    print("  Done: {} ({} nodes, {} elements)".format(
+        run_id, result.get('n_nodes', '?'), 
+        result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)))
+    return (run_id, 'ok')
+
+
+def _gen_workers(n_rows):
+    """Worker count: SPAX_GEN_WORKERS, else SLURM_CPUS_PER_TASK, else all cores;
+    never more than the number of rows."""
+    env = os.environ.get('SPAX_GEN_WORKERS')
+    if env:
+        n = int(env)
+    else:
+        n = int(os.environ.get('SLURM_CPUS_PER_TASK') or 0) or (os.cpu_count() or 1)
+    return max(1, min(n, n_rows))
+
+
 def process_csv(csv_path, output_dir):
     """
     Read a parametric study CSV and generate complete .inp files
     for each RVE (UTX + SS13 load cases).
     """
-    import Spatium_GmshPeriodic as SG
     
     with open(csv_path, 'r') as f:
         reader = csv.DictReader(f)
@@ -1227,286 +1534,29 @@ def process_csv(csv_path, output_dir):
     
     os.makedirs(output_dir, exist_ok=True)
     
-    for idx, params in enumerate(rows):
-        run_id = params['run_id']
-        print("\n" + "=" * 70)
-        print("[{}/{}] {}".format(idx + 1, len(rows), run_id))
-        print("=" * 70)
-        
-        # Parse parameters
-        L = float(params['L'])
-        L_mesh = float(params['L_mesh'])
-        r_avg = float(params['r_avg'])
-        r_std = float(params.get('r_std', r_avg * 0.2) or r_avg * 0.2)
-        VoF = float(params['VoF_sphere'])
-        E_matrix = float(params['E_matrix'])
-        nu_matrix = float(params['nu_matrix'])
-        Is_Porous = params['Is_Porous']
-        Disp = float(params['Disp'])
-        min_dist = float(params.get('min_distance', 0.002) or 0.002)
-        max_iter = int(params.get('max_iterations', 200000) or 200000)
-        sph_avg = float(params.get('sphericity_avg', 0.85) or 0.85)
-        sph_std = float(params.get('sphericity_std', 0.1) or 0.1)
-        growth_dir = params.get('Growth_Direction', 'Random')
-        growth_conc = float(params.get('Growth_Concentration', 0.0) or 0.0)
-        
-        Inclusion_Type = params.get('Inclusion_Type', 'Solid')
-        K_incl = float(params.get('K_inclusion', 0) or 0)
-        G_incl = float(params.get('G_inclusion', 0) or 0)
-        VoF_void = float(params.get('VoF_void_sphere', 0) or 0)
-        VoF_incl = float(params.get('VoF_incl_sphere', 0) or 0)
-        
-        # Compute inclusion material
-        if Inclusion_Type == 'Liquid' and K_incl > 0 and G_incl > 0:
-            E_incl = 9.0 * K_incl * G_incl / (3.0 * K_incl + G_incl)
-            nu_incl = (3.0 * K_incl - 2.0 * G_incl) / (2.0 * (3.0 * K_incl + G_incl))
-            print("  Liquid: K={:.3e}, G={:.3e} -> E={:.3e}, nu={:.6f}".format(
-                K_incl, G_incl, E_incl, nu_incl))
-        else:
-            E_incl = float(params.get('E_sphere_inclusion', E_matrix) or E_matrix)
-            nu_incl = float(params.get('nu_sphere_inclusion', nu_matrix) or nu_matrix)
-        
-        # Determine Gmsh mode
-        if VoF_void > 0 and VoF_incl > 0:
-            gmsh_mode = 'Hybrid'
-        elif Is_Porous == 'Porous':
-            gmsh_mode = 'Porous'
-        else:
-            gmsh_mode = 'Composite'
-        
-        # Step 1: Generate sphere packing
-        # Floor the adaptive radius at a mesh-resolvable size. Below ~0.75*L_mesh
-        # the packing emits spheres/caps too small for the surface mesher to
-        # resolve, which produces degenerate facets that crash Gmsh's 3D mesher
-        # (a C-level core dump, not a catchable exception). A sweep over seeds
-        # showed 0.6*L_mesh segfaults intermittently while 0.75*L_mesh meshes
-        # reliably; we floor here for robustness (VoF ~0.15-0.17 on the sea-ice
-        # cases). Lower it only together with stronger thin-cap/sliver rejection.
-        # Couple the floor to the inclusion mesh size: a sphere is cleanly
-        # meshable when its radius spans a few surface elements (lc_fine).
-        # min_radius = FLOOR_MULT * lc_fine, with lc_fine = LC_FINE_MULT*L_mesh.
-        lc_fine_mult = float(os.environ.get('SPAX_LC_FINE_MULT', '0.4'))
-        floor_mult = float(os.environ.get('SPAX_FLOOR_MULT', str(0.75 / lc_fine_mult)))
-        r_floor = max(r_avg * 0.10, floor_mult * lc_fine_mult * L_mesh)
-        # Keep the inter-inclusion gap mesh-resolvable to avoid matrix slivers
-        # (a sub-lc_fine gap makes degenerate facets that crash the 3D mesher).
-        gap_mult = float(os.environ.get('SPAX_GAP_MULT', '0.0'))
-        if gap_mult > 0.0:
-            min_dist = max(min_dist, gap_mult * lc_fine_mult * L_mesh)
-        # Geometric sliver rejection, applied as an ESCALATION rather than
-        # globally. Refusing thin cut-geometry (face cap, inter-sphere gap,
-        # edge/corner grazing) at the packing stage removes the degeneracy that
-        # crashes Gmsh's mesher — but it also costs packing density (~6% VoF at
-        # full strength). So we keep it OFF for the first attempts (full VoF for
-        # the seeds that mesh fine) and ramp it in only once a packing keeps
-        # failing, trading density for meshability solely to rescue an otherwise
-        # skipped row. A/B over 10 seeds: full-on turned 9/10 -> 10/10 by
-        # rescuing one pathological seed but cost every seed ~6% VoF; escalation
-        # captures the rescue without taxing the seeds that never needed it.
-        #
-        # SPAX_SLIVER_MULT = max strength (units of lc_fine, default 0.5).
-        # SPAX_SLIVER_START = failed attempts before escalation begins (def 2).
-        sliver_mult = float(os.environ.get('SPAX_SLIVER_MULT', '0.5'))
-        sliver_start = int(os.environ.get('SPAX_SLIVER_START', '2'))
-        sliver_gap_max = sliver_mult * lc_fine_mult * L_mesh
-        max_retries = int(os.environ.get('SPAX_MAX_RETRIES', '6'))
+    n_rows = len(rows)
+    workers = _gen_workers(n_rows)
+    tasks = [(i, n_rows, p, output_dir) for i, p in enumerate(rows)]
 
-        def sliver_for_attempt(n):
-            # n = 0-based attempt index. 0 until sliver_start, then ramp
-            # linearly to sliver_gap_max on the final attempt.
-            if sliver_gap_max <= 0.0 or n < sliver_start:
-                return 0.0
-            span = max(1, (max_retries - 1) - sliver_start)
-            return min(1.0, (n - sliver_start + 1) / float(span)) * sliver_gap_max
+    if workers <= 1:
+        results = [_generate_one_row(t) for t in tasks]
+    else:
+        from concurrent.futures import ProcessPoolExecutor, as_completed
+        print("  Parallel generation: {} workers over {} rows".format(workers, n_rows))
+        results = []
+        with ProcessPoolExecutor(max_workers=workers) as ex:
+            futs = {ex.submit(_generate_one_row, t): t for t in tasks}
+            for fut in as_completed(futs):
+                try:
+                    results.append(fut.result())
+                except Exception as e:
+                    rid = futs[fut][2].get('run_id', '?')
+                    print("  [{}] worker crashed: {}".format(rid, e))
+                    results.append((rid, 'skipped'))
 
-        sliver_gap = sliver_for_attempt(0)
-        print("  Step 1: Sphere packing...")
-        Sphere_array, octree = generate_sphere_packing(
-            L=L, r_avg=r_avg, r_std=r_std,
-            VoF_target=VoF, min_distance=min_dist,
-            max_iterations=max_iter,
-            sphericity_avg=sph_avg, sphericity_std=sph_std,
-            growth_direction=growth_dir,
-            growth_concentration=growth_conc,
-            min_radius=r_floor, sliver_gap=sliver_gap)
+    n_ok = sum(1 for _, s in results if s == 'ok')
+    print("\n  Generated {}/{} RVEs ({} skipped)".format(n_ok, n_rows, n_rows - n_ok))
 
-        # Step 1b: Generate channels if requested
-        gen_channels = params.get('generate_channels', 'No').strip().lower() in ('yes', 'true', '1')
-        channel_vof_target = float(params.get('channel_vof_target', 0) or 0)
-        channel_array = np.empty((0, 3))
-        
-        if gen_channels and channel_vof_target > 0.001:
-            r_ch_avg = float(params.get('r_channel_avg', r_avg * 0.5) or r_avg * 0.5)
-            r_ch_std = float(params.get('r_channel_std', r_ch_avg * 0.2) or r_ch_avg * 0.2)
-            channel_array = generate_channels(
-                L=L, channel_vof_target=channel_vof_target,
-                r_channel_avg=r_ch_avg, r_channel_std=r_ch_std,
-                min_distance=min_dist, max_iterations=max_iter,
-                octree=octree, L_mesh=L_mesh)
-            
-            # Convert channels to sphere array entries (cylinders as tall ellipsoids)
-            # GmshPeriodic handles cylinders via the sphere array with rz >> rx,ry
-            for i in range(channel_array.shape[0]):
-                ch_x, ch_y, ch_r = channel_array[i]
-                # Represent as very tall ellipsoid spanning full Z
-                ch_entry = np.array([[ch_x, ch_y, L/2, ch_r, ch_r, L/2, 0, 0, 0, 0.01]])
-                Sphere_array = np.vstack((Sphere_array, ch_entry))
-        
-        # Step 2: Gmsh periodic mesh (with retry on mesh failure)
-        print("  Step 2: Gmsh mesh...")
-        
-        # Each retry re-packs and re-meshes in an isolated subprocess, so a
-        # crash or an intermittent periodic-matching failure costs only one
-        # attempt and never kills the run. Retries are cheap and safe, so we
-        # allow several (max_retries, set above) to push the success rate up,
-        # with sliver rejection escalating per attempt (sliver_for_attempt).
-        result = None
-        for attempt in range(max_retries):
-            try:
-                result = mesh_in_subprocess(
-                    sphere_array=Sphere_array,
-                    L=L, L_mesh=L_mesh,
-                    output_dir=output_dir,
-                    mode=gmsh_mode,
-                    run_id=run_id,
-                    VoF_void=VoF_void,
-                    VoF_incl=VoF_incl,
-                    Inclusion_Type=Inclusion_Type)
-                
-                # Check for empty mesh
-                n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
-                if n_total == 0:
-                    raise RuntimeError("Empty mesh (0 elements)")
-
-                # Strict-periodicity gate: a non-zero skipped count means some
-                # boundary nodes have no periodic partner in a meshed volume —
-                # i.e. material on one face maps to a void on the opposite face
-                # (a grazing-void asymmetry). Those nodes would get no PBC
-                # equation, so the RVE is not strictly periodic. Treat it as a
-                # soft failure: re-pack with escalated sliver rejection (which
-                # rejects the grazing void) rather than emit a defective RVE.
-                n_skip = result.get('n_pairs_skipped', 0)
-                if n_skip > 0:
-                    raise RuntimeError(
-                        "{} periodic pair(s) unmatched — void/boundary not "
-                        "strictly periodic".format(n_skip))
-
-                break  # success
-            except Exception as e:
-                print("    Mesh attempt {}/{} failed: {}".format(
-                    attempt + 1, max_retries, str(e)[:80]))
-                if attempt < max_retries - 1:
-                    # Escalate sliver rejection for the next packing: stays 0
-                    # for the first SPAX_SLIVER_START retries (full VoF), then
-                    # ramps up to rescue a stubborn seed at a density cost.
-                    sliver_gap = sliver_for_attempt(attempt + 1)
-                    if sliver_gap > 0.0:
-                        print("    Retrying with new packing "
-                              "(sliver rejection on, gap={:.5f})...".format(
-                                  sliver_gap))
-                    else:
-                        print("    Retrying with new packing...")
-                    np.random.seed(np.random.randint(0, 100000))
-                    Sphere_array, octree = generate_sphere_packing(
-                        L=L, r_avg=r_avg, r_std=r_std,
-                        VoF_target=VoF, min_distance=min_dist * 1.2,
-                        max_iterations=max_iter,
-                        sphericity_avg=sph_avg, sphericity_std=sph_std,
-                        growth_direction=growth_dir,
-                        growth_concentration=growth_conc,
-                        min_radius=r_floor, sliver_gap=sliver_gap)
-                    result = None
-                else:
-                    print("    SKIPPING {} after {} failures".format(run_id, max_retries))
-                    result = None
-        
-        if result is None:
-            continue
-        
-        gmsh_inp = result['mesh_file']
-        pairs_csv = result['match_file']
-        m_range = result['matrix_label_range']
-        s_range = result['sphere_label_range']
-        
-        # Validate mesh is not empty
-        n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
-        if n_total == 0:
-            print("  ERROR: Empty mesh (0 elements). Skipping {}".format(run_id))
-            continue
-        
-        # Step 3: Write .inp files (all in output_dir, flat)
-        print("  Step 3: Writing .inp files...")
-        
-        # Parse loading modes from CSV
-        Mode = params.get('Mode', 'Uniaxial Tension X')
-        Mode2 = params.get('Mode2', '')
-        Kappa_val = float(params.get('Kappa', 0.0) or 0.0)
-        bp = params.get('Bending_Plane', 'xz')
-        full_tensor = params.get('full_tensor', 'No').strip().lower() in ('yes', 'true', '1')
-        nlgeom_flag = params.get('nlgeom_flag', 'OFF')
-        
-        # Common kwargs for all write_complete_inp calls
-        common = dict(
-            L=L, E_matrix=E_matrix, nu_matrix=nu_matrix,
-            E_incl=E_incl, nu_incl=nu_incl,
-            Is_Porous=Is_Porous, Inclusion_Type=Inclusion_Type,
-            matrix_label_range=m_range, sphere_label_range=s_range,
-            nlgeom=nlgeom_flag)
-        
-        def mode_short(m):
-            m = m.lower()
-            if 'uniaxial' in m and 'x' in m: return 'utx'
-            if 'uniaxial' in m and 'y' in m: return 'uty'
-            if 'uniaxial' in m and 'z' in m: return 'utz'
-            if 'shear' in m and '12' in m: return 'ss12'
-            if 'shear' in m and '13' in m: return 'ss13'
-            if 'shear' in m and '23' in m: return 'ss23'
-            if 'uniaxial' in m: return 'utx'
-            if 'shear' in m: return 'ss13'
-            return 'utx'
-        
-        if full_tensor:
-            all_modes = ['utx', 'uty', 'utz', 'ss12', 'ss13', 'ss23']
-            print("    Full tensor mode: generating {} load cases".format(len(all_modes)))
-            for ms in all_modes:
-                path = os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms))
-                write_complete_inp(gmsh_inp, pairs_csv, path,
-                    mode=ms, disp=Disp, **common)
-        else:
-            ms = mode_short(Mode)
-            path1 = os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms))
-            write_complete_inp(gmsh_inp, pairs_csv, path1,
-                mode=ms, disp=Disp, **common)
-            
-            if Mode2:
-                Disp2 = float(params.get('Disp2', Disp) or Disp)
-                ms2 = mode_short(Mode2)
-                path2 = os.path.join(output_dir, 'Job-{}-{}.inp'.format(run_id, ms2))
-                write_complete_inp(gmsh_inp, pairs_csv, path2,
-                    mode=ms2, disp=Disp2, **common)
-        
-        # Bending (always if Kappa > 0)
-        if Kappa_val > 0:
-            path_ben = os.path.join(output_dir, 'Job-{}-ben.inp'.format(run_id))
-            write_complete_inp(gmsh_inp, pairs_csv, path_ben,
-                mode='bend', disp=0, bending_plane=bp, kappa=Kappa_val, **common)
-
-        # Remove the Gmsh mesh .inp and periodic-pairs .csv now that they have
-        # been folded into the solver-ready Job-*.inp files. The output_dir is
-        # meant to hold only the Job .inp files; these per-run intermediates
-        # ({run_id}_gmsh.inp, {run_id}_periodic_pairs.csv) would otherwise be
-        # left behind alongside them.
-        for intermediate in (gmsh_inp, pairs_csv):
-            try:
-                if intermediate and os.path.exists(intermediate):
-                    os.remove(intermediate)
-            except OSError as e:
-                print("    Warning: could not remove intermediate {}: {}".format(
-                    intermediate, e))
-
-        print("  Done: {} ({} nodes, {} elements)".format(
-            run_id, result.get('n_nodes', '?'), 
-            result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)))
     
     # Final sweep: drop any mesh intermediates left by runs that were skipped
     # after the mesh was already written (e.g. failing the strict-periodicity
