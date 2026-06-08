@@ -729,7 +729,12 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
     }
     
     # ---- Determine element type ----
-    elem_type = 'C3D4H' if Inclusion_Type == 'Liquid' else 'C3D4'
+    # C3D4H (hybrid linear tet) for BOTH matrix and inclusion, regardless of
+    # Inclusion_Type. Plain C3D4 locks volumetrically and is excessively stiff
+    # in bending; the hybrid formulation adds an internal pressure DOF that
+    # relieves that locking at the same node count, giving a far better
+    # second-order (bending) response.
+    elem_type = 'C3D4H'
     
     # ---- Determine loading ----
     # step_name is consumed at the *Step card below; step_desc only labels the
