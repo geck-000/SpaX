@@ -171,11 +171,159 @@ def generate_channels(L, channel_vof_target, r_channel_avg, r_channel_std,
 # RSA SPHERE PACKING with Octree acceleration
 # =====================================================================
 
+def _ellipsoid_radial(rx, ry, rz, ux, uy, uz):
+    """Distance from an axis-aligned ellipsoid centre to its surface along the
+    unit direction (ux,uy,uz). Exact for the centre-line interaction that
+    dominates packing: r(u) = 1 / sqrt((ux/rx)^2 + (uy/ry)^2 + (uz/rz)^2)."""
+    return 1.0 / math.sqrt((ux/rx)**2 + (uy/ry)**2 + (uz/rz)**2)
+
+
+def _densify_packing(spheres, L, sep, min_distance, VoF_target,
+                     current_vof, V_RVE, max_rounds=400, max_step=0.05):
+    """Ellipsoid-aware growth + perturbation densification of a jammed RSA pack.
+
+    Pure RSA jams well below the target volume fraction (~60-65% of target for
+    the inclusion sizes used here) because it never rearranges. Inclusions are
+    axis-aligned ellipsoids (semi-axes rx,ry,rz along x,y,z; no rotation), so
+    overlap, headroom and boundary clearance are measured with the *radial*
+    centre-line extent r(u) (see `_ellipsoid_radial`) rather than the bounding
+    sphere -- elongated inclusions can interlock and reach target instead of
+    being held a bounding-sphere apart.
+
+    Each round: (1) GROW pass scales every inclusion's three semi-axes by a
+    single factor (so sphericity AND orientation are preserved) into the radial
+    clearance to its tightest neighbour and up to the per-axis boundary
+    danger-zone cap; (2) PERTURB pass nudges each inclusion off the neighbour
+    with least radial clearance to open room for the next grow pass
+    (Jodrey-Tory). Growth is sequential with immediate write-back, so each
+    inclusion is sized against the current geometry of all others -- closing the
+    full clearance keeps every pair >= sep apart. Rounds repeat until the target
+    VoF is reached or progress stalls. O(N^2) per round; N is small (~100-300).
+    """
+    n = len(spheres)
+    if n == 0 or current_vof >= VoF_target:
+        return spheres, current_vof
+    margin = max(min_distance * 2.0, sep)
+    rad = _ellipsoid_radial
+
+    stagnant = 0
+    for _ in range(max_rounds):
+        if current_vof >= VoF_target:
+            break
+        vof_round_start = current_vof
+        order = list(range(n))
+        np.random.shuffle(order)
+        # --- grow pass ---
+        grew = False
+        for i in order:
+            cx, cy, cz, rx, ry, rz = spheres[i]
+            s_max = 1.0 + max_step           # cap growth rate per round
+            for j in range(n):
+                if j == i:
+                    continue
+                jx, jy, jz, jrx, jry, jrz = spheres[j]
+                dx = cx - jx; dx -= L * round(dx / L)
+                dy = cy - jy; dy -= L * round(dy / L)
+                dz = cz - jz; dz -= L * round(dz / L)
+                D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if D < 1e-12:
+                    s_max = 1.0; break
+                ux, uy, uz = dx/D, dy/D, dz/D
+                avail = D - rad(jrx, jry, jrz, ux, uy, uz) - sep   # room for I
+                if avail <= 0.0:
+                    s_max = 1.0; break
+                s_j = avail / rad(rx, ry, rz, ux, uy, uz)
+                if s_j < s_max:
+                    s_max = s_j
+            if s_max <= 1.0 + 1e-9:
+                continue
+            # Per-axis boundary cap: the extent toward a face is the semi-axis on
+            # that face's axis. A face the inclusion does not cross caps growth at
+            # `margin` short of it; a face it crosses deeply only deepens its cap.
+            for c, r_ax in ((cx, rx), (cy, ry), (cz, rz)):
+                for d in (c, L - c):
+                    if r_ax < d:
+                        cap = (d - margin) / r_ax
+                        if cap < s_max:
+                            s_max = cap
+            if s_max <= 1.0 + 1e-9:
+                continue
+            nrx, nry, nrz = rx*s_max, ry*s_max, rz*s_max
+            current_vof += (4.0/3.0*math.pi*(nrx*nry*nrz - rx*ry*rz)) / V_RVE
+            spheres[i] = (cx, cy, cz, nrx, nry, nrz)
+            grew = True
+            if current_vof >= VoF_target:
+                break
+        if current_vof >= VoF_target:
+            break
+        # --- perturb pass ---
+        moved = False
+        for i in order:
+            cx, cy, cz, rx, ry, rz = spheres[i]
+            wx = wy = wz = 0.0
+            worst = float('inf')             # least radial clearance neighbour
+            for j in range(n):
+                if j == i:
+                    continue
+                jx, jy, jz, jrx, jry, jrz = spheres[j]
+                dx = cx - jx; dx -= L * round(dx / L)
+                dy = cy - jy; dy -= L * round(dy / L)
+                dz = cz - jz; dz -= L * round(dz / L)
+                D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if D < 1e-12:
+                    continue
+                ux, uy, uz = dx/D, dy/D, dz/D
+                clr = D - rad(rx, ry, rz, ux, uy, uz) - rad(jrx, jry, jrz, ux, uy, uz)
+                if clr < worst:
+                    worst = clr; wx, wy, wz = dx, dy, dz
+            norm = math.sqrt(wx*wx + wy*wy + wz*wz)
+            if norm < 1e-12:
+                continue
+            step = 0.10 * max(rx, ry, rz)
+            nx = cx + step * wx / norm
+            ny = cy + step * wy / norm
+            nz = cz + step * wz / norm
+            if not (0.0 <= nx <= L and 0.0 <= ny <= L and 0.0 <= nz <= L):
+                continue
+            bad = False                       # per-axis face danger-zone
+            for c, r_ax in ((nx, rx), (ny, ry), (nz, rz)):
+                if abs(c - r_ax) < margin or abs((L - c) - r_ax) < margin:
+                    bad = True; break
+            if bad:
+                continue
+            ok = True                          # radial separation to neighbours
+            for j in range(n):
+                if j == i:
+                    continue
+                jx, jy, jz, jrx, jry, jrz = spheres[j]
+                dx = nx - jx; dx -= L * round(dx / L)
+                dy = ny - jy; dy -= L * round(dy / L)
+                dz = nz - jz; dz -= L * round(dz / L)
+                D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if D < 1e-12:
+                    ok = False; break
+                ux, uy, uz = dx/D, dy/D, dz/D
+                if D < rad(rx, ry, rz, ux, uy, uz) + rad(jrx, jry, jrz, ux, uy, uz) + sep:
+                    ok = False; break
+            if ok:
+                spheres[i] = (nx, ny, nz, rx, ry, rz)
+                moved = True
+        if current_vof - vof_round_start < 1e-5:
+            stagnant += 1
+            if stagnant >= 6:
+                break
+        else:
+            stagnant = 0
+        if not grew and not moved:
+            break
+    return spheres, current_vof
+
+
 def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                              max_iterations, sphericity_avg=0.85,
                              sphericity_std=0.1, growth_direction='Random',
                              growth_concentration=0.0, min_radius=None,
-                             sliver_gap=0.0):
+                             sliver_gap=0.0, densify=True):
     """
     Random Sequential Adsorption sphere/ellipsoid packing.
     Returns numpy array shape (N, 10):
@@ -396,6 +544,27 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                           "(keeps inclusions mesh-resolvable)".format(r_floor))
                     break
     
+    # Densify: grow the jammed RSA packing into the empty headroom to approach
+    # the target VoF (RSA alone jams ~35-40% short). The octree is then rebuilt
+    # from the grown radii so downstream consumers (channel placement, meshing)
+    # see the true inclusion sizes rather than the pre-growth ones.
+    if densify and current_vof < VoF_target:
+        vof_before = current_vof
+        spheres, current_vof = _densify_packing(
+            spheres, L, sep, min_distance, VoF_target, current_vof, V_RVE)
+        octree = Octree(L, capacity=8, max_depth=12)
+        for (cx, cy, cz, rx, ry, rz) in spheres:
+            rc = max(rx, ry, rz)
+            octree.insert((cx, cy, cz), rc)
+            for dx in [L, -L, 0]:
+                for dy in [L, -L, 0]:
+                    for dz in [L, -L, 0]:
+                        if dx == 0 and dy == 0 and dz == 0:
+                            continue
+                        octree.insert((cx+dx, cy+dy, cz+dz), rc)
+        print("    [Densify] VoF {:.4f} -> {:.4f} by growing {} inclusions".format(
+            vof_before, current_vof, len(spheres)))
+
     # Build sphere array
     N = len(spheres)
     Sphere_array = np.zeros((N, 10))
@@ -1333,7 +1502,16 @@ def _generate_one_row(task):
     r_floor = max(r_avg * 0.10, floor_mult * lc_fine_mult * L_mesh)
     # Keep the inter-inclusion gap mesh-resolvable to avoid matrix slivers
     # (a sub-lc_fine gap makes degenerate facets that crash the 3D mesher).
-    gap_mult = float(os.environ.get('SPAX_GAP_MULT', '0.0'))
+    # Enabled by default (1.0 -> one fine element): the ellipsoid-aware
+    # densification pass packs inclusion *surfaces* `min_dist` apart along the
+    # inter-centre line, but two ellipsoids can sit closer off that line, so the
+    # matrix slivers between grown inclusions collapse below element size unless
+    # the gap floor is a full element. A real gmsh run on the sea-ice RVE
+    # confirmed 0.5 (half element) still crashed the mesher on the first two
+    # attempts at 100% target VoF, while 1.0 meshes first-try and still hits
+    # ~100% (densification recovers VoF, so the larger gap costs no final volume
+    # fraction). Set 0 to restore the legacy min_distance-only behaviour.
+    gap_mult = float(os.environ.get('SPAX_GAP_MULT', '1.0'))
     if gap_mult > 0.0:
         min_dist = max(min_dist, gap_mult * lc_fine_mult * L_mesh)
     # Geometric sliver rejection, applied as an ESCALATION rather than
