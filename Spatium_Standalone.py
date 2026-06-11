@@ -403,9 +403,10 @@ def _cp_simplex(s):
     return bp, list(bs)
 
 
-def _gjk_gap(cx, cy, cz, A2, B2, max_iter=30):
-    """Minimum surface-to-surface distance between two axis-aligned ellipsoids
-    (A at origin, B at (cx,cy,cz)). 0.0 if they intersect."""
+def _gjk_gap_vec(cx, cy, cz, A2, B2, max_iter=30):
+    """As _gjk_gap, but also returns the closest point on the Minkowski
+    difference (the separation vector). Returns (gap, closest) with closest=None
+    when the ellipsoids intersect."""
     dx, dy, dz = -cx, -cy, -cz
     if dx == 0 and dy == 0 and dz == 0:
         dx = 1.0
@@ -414,7 +415,7 @@ def _gjk_gap(cx, cy, cz, A2, B2, max_iter=30):
     for _ in range(max_iter):
         dx, dy, dz = -closest[0], -closest[1], -closest[2]
         if dx*dx + dy*dy + dz*dz < 1e-20:
-            return 0.0
+            return 0.0, None
         p = _gjk_support(cx, cy, cz, A2, B2, dx, dy, dz)
         if (p[0]*dx + p[1]*dy + p[2]*dz) - (closest[0]*dx + closest[1]*dy + closest[2]*dz) < 1e-10:
             break
@@ -422,8 +423,14 @@ def _gjk_gap(cx, cy, cz, A2, B2, max_iter=30):
         closest, s = _cp_simplex(s)
         s = list(s)
         if closest[0]**2 + closest[1]**2 + closest[2]**2 < 1e-20:
-            return 0.0
-    return math.sqrt(closest[0]**2 + closest[1]**2 + closest[2]**2)
+            return 0.0, None
+    return math.sqrt(closest[0]**2 + closest[1]**2 + closest[2]**2), closest
+
+
+def _gjk_gap(cx, cy, cz, A2, B2, max_iter=30):
+    """Minimum surface-to-surface distance between two axis-aligned ellipsoids
+    (A at origin, B at (cx,cy,cz)). 0.0 if they intersect."""
+    return _gjk_gap_vec(cx, cy, cz, A2, B2, max_iter)[0]
 
 
 def _ellipsoid_gap(A, B, L):
@@ -469,6 +476,148 @@ def _channel_inclusion_gap(ch, A, L):
     dx = ch[0]-A[0]; dx -= L*round(dx/L)
     dy = ch[1]-A[1]; dy -= L*round(dy/L)
     return _point_ellipse_dist(dx, dy, A[3], A[4]) - ch[2]
+
+
+def _channel_inclusion_gap_mid(ch, A, L):
+    """True channel<->inclusion gap AND the world-space midpoint of the thin
+    matrix sliver, for mesh refinement. The sliver is thinnest at the inclusion
+    equator (z=cz): the channel axis sees the inclusion's XY (rx,ry) ellipse, so
+    the nearest ellipse point and the facing channel-surface point bound the
+    sliver. Returns (gap, (mx,my,mz))."""
+    dx = ch[0]-A[0]; dx -= L*round(dx/L)     # channel relative to inclusion
+    dy = ch[1]-A[1]; dy -= L*round(dy/L)
+    a, b = A[3], A[4]
+    px, py = abs(dx), abs(dy)
+    sgx = 1.0 if dx >= 0 else -1.0
+    sgy = 1.0 if dy >= 0 else -1.0
+    if px < 1e-15 and py < 1e-15:
+        return _channel_inclusion_gap(ch, A, L), (A[0], A[1], A[2])
+    t = math.atan2(py * a, px * b)
+    for _ in range(12):
+        ct, st = math.cos(t), math.sin(t)
+        ex, ey = a * ct, b * st
+        exd, eyd = -a * st, b * ct
+        f = (ex - px) * exd + (ey - py) * eyd
+        fp = (exd*exd + (ex - px)*(-a*ct)) + (eyd*eyd + (ey - py)*(-b*st))
+        if abs(fp) < 1e-18:
+            break
+        t -= f / fp
+        t = min(math.pi/2.0, max(0.0, t))
+    ct, st = math.cos(t), math.sin(t)
+    # nearest ellipse point (inclusion-centred, signs restored)
+    enx, eny = sgx * a * ct, sgy * b * st
+    # facing channel-surface point: from channel axis toward the ellipse point
+    vx, vy = enx - dx, eny - dy
+    vn = math.hypot(vx, vy) or 1e-300
+    cnx, cny = dx + ch[2] * vx / vn, dy + ch[2] * vy / vn
+    mx = A[0] + 0.5 * (enx + cnx)
+    my = A[1] + 0.5 * (eny + cny)
+    return (vn - ch[2]), (mx, my, A[2])
+
+
+def _ellipsoid_gap_mid(A, B, L):
+    """True min surface gap between inclusions A,B AND the world-space midpoint
+    of the closest-approach segment, over the nearest periodic image of B.
+    Returns (gap, (mx,my,mz)). The midpoint is the centre of the thin matrix
+    sliver, used to place a local mesh-refinement ball. Witness points come from
+    the converged GJK separation direction (exact for the smooth single-point
+    contact of two ellipsoids)."""
+    dx = B[0]-A[0]; dx -= L*round(dx/L)
+    dy = B[1]-A[1]; dy -= L*round(dy/L)
+    dz = B[2]-A[2]; dz -= L*round(dz/L)
+    A2 = (A[3]**2, A[4]**2, A[5]**2)
+    B2 = (B[3]**2, B[4]**2, B[5]**2)
+    g, closest = _gjk_gap_vec(dx, dy, dz, A2, B2)
+    if closest is None:
+        return g, None
+    # dir = -closest is the separation direction (from A's surface toward B).
+    ex, ey, ez = -closest[0], -closest[1], -closest[2]
+    na = math.sqrt(A2[0]*ex*ex + A2[1]*ey*ey + A2[2]*ez*ez) or 1e-300
+    nb = math.sqrt(B2[0]*ex*ex + B2[1]*ey*ey + B2[2]*ez*ez) or 1e-300
+    # closest point on A (A-centred frame) and on B (B at (dx,dy,dz))
+    ax, ay, az = A2[0]*ex/na, A2[1]*ey/na, A2[2]*ez/na
+    bx, by, bz = dx - B2[0]*ex/nb, dy - B2[1]*ey/nb, dz - B2[2]*ez/nb
+    mx = A[0] + 0.5*(ax + bx)
+    my = A[1] + 0.5*(ay + by)
+    mz = A[2] + 0.5*(az + bz)
+    return g, (mx, my, mz)
+
+
+def _collect_gap_balls(spheres, L, lc_fine, channels=None,
+                       thresh_mult=1.0, resolve=0.5, broad=2.5,
+                       channel_thresh_mult=1.5):
+    """Locate narrow matrix slivers and return mesh-refinement balls for the
+    mesher: list of (x, y, z, size). A pair whose TRUE gap falls below the
+    threshold gets a ball at the sliver centre forcing the local element size to
+    ~resolve*gap, so the mesher puts ~1/resolve elements across the gap and
+    resolves it -- letting the packer keep the inclusions TIGHT (full VoF)
+    instead of widening the gap (which costs VoF).
+
+    Two sliver types are refined:
+      * sphere-sphere (TRUE GJK gap < thresh_mult*lc_fine) -- the off-axis
+        slivers that crash the mesher;
+      * channel<->inclusion (gap < channel_thresh_mult*lc_fine) -- a vertical
+        channel sees the inclusion equator head-on, so its gap == the XY
+        centre-line clearance, which the packer holds at exactly one element.
+        An exactly-one-element matrix sheet meshes unreliably (overlapping
+        facets), so it is refined too.
+
+    Balls near a periodic face are duplicated across it so the size field stays
+    periodic (required for matched periodic surface meshes). Returns world-space
+    (x,y,z,size); size is floored so the element count stays bounded."""
+    n = len(spheres)
+    if n < 2 or lc_fine <= 0.0:
+        return []
+    rad = _ellipsoid_radial
+    thresh = thresh_mult * lc_fine
+    reach = broad * thresh
+    size_floor = 0.18 * lc_fine          # don't refine below this (cost cap)
+    balls = []
+    for i in range(n):
+        xi, yi, zi, rxi, ryi, rzi = spheres[i]
+        for j in range(i+1, n):
+            xj, yj, zj, rxj, ryj, rzj = spheres[j]
+            dx = xi-xj; dx -= L*round(dx/L)
+            dy = yi-yj; dy -= L*round(dy/L)
+            dz = zi-zj; dz -= L*round(dz/L)
+            D = math.sqrt(dx*dx + dy*dy + dz*dz)
+            if D < 1e-12:
+                continue
+            ux, uy, uz = dx/D, dy/D, dz/D
+            clg = (D - rad(rxi, ryi, rzi, ux, uy, uz)
+                   - rad(rxj, ryj, rzj, ux, uy, uz))
+            if clg >= reach:                 # broad-phase prune
+                continue
+            g, mid = _ellipsoid_gap_mid(spheres[i], spheres[j], L)
+            if mid is None or g >= thresh:
+                continue
+            size = max(size_floor, resolve * g)
+            mx = mid[0] % L; my = mid[1] % L; mz = mid[2] % L
+            balls.append((mx, my, mz, size))
+    # channel<->inclusion slivers
+    cthresh = channel_thresh_mult * lc_fine
+    for ch in (channels or []):
+        for i in range(n):
+            g, mid = _channel_inclusion_gap_mid(ch, spheres[i], L)
+            if g >= cthresh:
+                continue
+            size = max(size_floor, resolve * max(g, 0.0))
+            balls.append((mid[0] % L, mid[1] % L, mid[2] % L, size))
+    if not balls:
+        return balls
+    # Periodic duplication: a ball within `margin` of a face needs a twin on the
+    # opposite face so matching periodic surfaces see the same size field.
+    margin = 2.5 * lc_fine
+    out = []
+    for (x, y, z, sz) in balls:
+        shifts_x = [0.0] + ([L] if x < margin else []) + ([-L] if x > L-margin else [])
+        shifts_y = [0.0] + ([L] if y < margin else []) + ([-L] if y > L-margin else [])
+        shifts_z = [0.0] + ([L] if z < margin else []) + ([-L] if z > L-margin else [])
+        for sx in shifts_x:
+            for sy in shifts_y:
+                for sz_ in shifts_z:
+                    out.append((x+sx, y+sy, z+sz_, sz))
+    return out
 
 
 def _repair_offaxis_slivers(spheres, L, gap_target, V_RVE, current_vof,
@@ -1781,7 +1930,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
 # =====================================================================
 
 def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
-                       VoF_void, VoF_incl, Inclusion_Type):
+                       VoF_void, VoF_incl, Inclusion_Type, gap_balls=None):
     """Run generate_periodic_mesh in an isolated child process.
 
     Gmsh's C++ mesher can SIGSEGV/SIGABRT on degenerate inclusion geometry
@@ -1801,7 +1950,7 @@ def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
     payload = dict(sphere_array=sphere_array, L=L, L_mesh=L_mesh,
                    output_dir=output_dir, Is_Porous=mode, run_id=run_id,
                    VoF_void_sphere=VoF_void, VoF_incl_sphere=VoF_incl,
-                   Inclusion_Type=Inclusion_Type)
+                   Inclusion_Type=Inclusion_Type, gap_balls=gap_balls or [])
     tmpd = tempfile.mkdtemp(prefix='spax_mesh_')
     in_pkl = os.path.join(tmpd, 'in.pkl')
     out_pkl = os.path.join(tmpd, 'out.pkl')
@@ -2016,25 +2165,27 @@ def _generate_one_row(task):
     offaxis_channel_floor = (offaxis_channel_frac * lc_fine_mult * L_mesh
                              if offaxis_channel_frac > 0 else None)
 
-    # Channel/hybrid cases pack densely (many small inclusions packed around
-    # vertical channels), so two near-tangent ellipsoids routinely tilt into a
-    # sub-element OFF-AXIS sliver (validated: worst sphere-sphere true gap
-    # ~0.88*lc_fine at the default sep -> Gmsh "overlapping facets" crash on the
-    # first attempt). Widening the densify centre-line separation alone is
-    # inefficient (the off-axis penalty is ~0.82-0.88, so it over-widens every
-    # gap to fix the worst outlier); pairing a modest widening with an off-axis
-    # repair to a FULL element is the cheap mesh-safe combo (a seed sweep put
-    # the VoF plateau at gm~1.15 + floor 1.0 -> worst SS >=1.0*lc_fine, ~0.20
-    # VoF vs 0.11 for pure shrink). Scope it to channel cases: the brine/sea-ice
-    # rows are validated clean and full-VoF at the tighter defaults, and lifting
-    # their floor would only shrink inclusions that already mesh. SPAX_CHANNEL_*
-    # override; retries widen further via md_scale on top of this.
-    if do_channels:
-        chan_sep = float(os.environ.get('SPAX_CHANNEL_SEP', '1.15'))
+    # Dense (esp. channel/hybrid) packs let two near-tangent ellipsoids tilt
+    # into a sub-element OFF-AXIS sliver (worst sphere-sphere true gap
+    # ~0.88*lc_fine at the default sep -> Gmsh "overlapping facets" crash).
+    # Rather than WIDEN the gap to a full element (which caps VoF -- widening
+    # the densify sep over-widens every gap to fix the worst outlier, costing
+    # ~5 VoF points), we keep the inclusions TIGHT and instead REFINE THE MESH
+    # IN THE GAP: each sub-element sliver gets a local size ball (below) so the
+    # mesher resolves it. This recovers the VoF the gap-widening sacrificed.
+    # SPAX_CHANNEL_SEP still widens the channel-side sep if ever needed (default
+    # 1.0 = no extra widening; channel<->inclusion gaps have no off-axis penalty
+    # and are already mesh-safe at sep>=lc_fine).
+    chan_sep = float(os.environ.get('SPAX_CHANNEL_SEP', '1.0'))
+    if do_channels and chan_sep > 1.0:
         min_dist = max(min_dist, chan_sep * lc_fine_mult * L_mesh)
-        chan_offaxis = float(os.environ.get('SPAX_CHANNEL_OFFAXIS_FRAC', '1.0'))
-        if offaxis_floor is not None and chan_offaxis > 0:
-            offaxis_floor = max(offaxis_floor, chan_offaxis * lc_fine_mult * L_mesh)
+
+    # Mesh-in-gap refinement: collect local size balls at narrow sphere-sphere
+    # slivers so the mesher resolves tight gaps instead of the packer widening
+    # them. On by default; SPAX_GAP_REFINE=0 disables (legacy widen-only path).
+    gap_refine = os.environ.get('SPAX_GAP_REFINE', '1') != '0'
+    gap_resolve = float(os.environ.get('SPAX_GAP_RESOLVE', '0.5'))
+    lc_fine = lc_fine_mult * L_mesh
 
     def _pack_row(sliver_gap, md_scale=1.0):
         """Pack one RVE's inclusions + channels (channel-FIRST). Channels are
@@ -2074,16 +2225,28 @@ def _generate_one_row(task):
             channels=channel_prims, offaxis_floor=offaxis_floor,
             offaxis_channel_floor=offaxis_channel_floor)
 
+        # Mesh-in-gap balls from the INCLUSION pack (before channels are
+        # appended): channels are vertical cylinders meshed head-on and never
+        # need gap refinement, so only sphere-sphere slivers are collected.
+        gap_balls = []
+        if gap_refine:
+            incl = [tuple(row[:6]) for row in sphere_array]
+            gap_balls = _collect_gap_balls(incl, L, lc_fine, channels=channel_prims,
+                                           resolve=gap_resolve)
+            if gap_balls:
+                print("    [Mesh-in-gap] {} refinement ball(s) at narrow "
+                      "sphere-sphere slivers".format(len(gap_balls)))
+
         # Append channels as tall ellipsoids (rz = L/2 spans full Z); the
         # GmshPeriodic path treats these like any other inclusion.
         for i in range(channel_array.shape[0]):
             ch_x, ch_y, ch_r = channel_array[i]
             ch_entry = np.array([[ch_x, ch_y, L/2, ch_r, ch_r, L/2, 0, 0, 0, 0.01]])
             sphere_array = np.vstack((sphere_array, ch_entry))
-        return sphere_array, oct_
+        return sphere_array, oct_, gap_balls
 
     sliver_gap = sliver_for_attempt(0)
-    Sphere_array, octree = _pack_row(sliver_gap)
+    Sphere_array, octree, gap_balls = _pack_row(sliver_gap)
 
     # Step 2: Gmsh periodic mesh (with retry on mesh failure)
     print("  Step 2: Gmsh mesh...")
@@ -2104,7 +2267,8 @@ def _generate_one_row(task):
                 run_id=run_id,
                 VoF_void=VoF_void,
                 VoF_incl=VoF_incl,
-                Inclusion_Type=Inclusion_Type)
+                Inclusion_Type=Inclusion_Type,
+                gap_balls=gap_balls)
 
             # Check for empty mesh
             n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
@@ -2140,7 +2304,7 @@ def _generate_one_row(task):
                 else:
                     print("    Retrying with new packing...")
                 np.random.seed(np.random.randint(0, 100000))
-                Sphere_array, octree = _pack_row(sliver_gap, md_scale=1.2)
+                Sphere_array, octree, gap_balls = _pack_row(sliver_gap, md_scale=1.2)
                 result = None
             else:
                 print("    SKIPPING {} after {} failures".format(run_id, max_retries))
