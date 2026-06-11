@@ -728,7 +728,7 @@ def _repair_offaxis_slivers(spheres, L, gap_target, V_RVE, current_vof,
 
 def _densify_packing(spheres, L, sep, min_distance, VoF_target,
                      current_vof, V_RVE, max_rounds=400, max_step=0.05,
-                     channels=None):
+                     channels=None, z_bias=0.0, grow_axis=2):
     """Ellipsoid-aware growth + perturbation densification of a jammed RSA pack.
 
     Pure RSA jams well below the target volume fraction (~60-65% of target for
@@ -748,6 +748,20 @@ def _densify_packing(spheres, L, sep, min_distance, VoF_target,
     inclusion is sized against the current geometry of all others -- closing the
     full clearance keeps every pair >= sep apart. Rounds repeat until the target
     VoF is reached or progress stalls. O(N^2) per round; N is small (~100-300).
+
+    z_bias : float, default 0.0 (isotropic)
+        Anisotropic-growth strength. With z_bias=w>0 the grow pass elongates
+        each inclusion preferentially along `grow_axis` (Z by default) as it
+        fills headroom, instead of scaling all three axes equally -- mimicking
+        the vertically elongated brine channels of sea ice. The biased axis
+        grows as s**(1+w) and the other two as s**(1-w/2), so the volume gain is
+        still s**3 for the same overall factor s (the distribution changes, not
+        the budget). Because the radial extent is then non-linear in s, the
+        per-inclusion factor is found by bisection against the same neighbour /
+        boundary / channel constraints. w>0 LOWERS the final sphericity (a
+        deliberate modelling choice); w=0 keeps the original uniform behaviour.
+    grow_axis : int, default 2
+        Preferred elongation axis when z_bias>0 (0=x, 1=y, 2=z).
     """
     n = len(spheres)
     if n == 0 or current_vof >= VoF_target:
@@ -766,56 +780,123 @@ def _densify_packing(spheres, L, sep, min_distance, VoF_target,
         grew = False
         for i in order:
             cx, cy, cz, rx, ry, rz = spheres[i]
-            s_max = 1.0 + max_step           # cap growth rate per round
-            for j in range(n):
-                if j == i:
-                    continue
-                jx, jy, jz, jrx, jry, jrz = spheres[j]
-                dx = cx - jx; dx -= L * round(dx / L)
-                dy = cy - jy; dy -= L * round(dy / L)
-                dz = cz - jz; dz -= L * round(dz / L)
-                D = math.sqrt(dx*dx + dy*dy + dz*dz)
-                if D < 1e-12:
-                    s_max = 1.0; break
-                ux, uy, uz = dx/D, dy/D, dz/D
-                avail = D - rad(jrx, jry, jrz, ux, uy, uz) - sep   # room for I
-                if avail <= 0.0:
-                    s_max = 1.0; break
-                s_j = avail / rad(rx, ry, rz, ux, uy, uz)
-                if s_j < s_max:
-                    s_max = s_j
-            if s_max <= 1.0 + 1e-9:
-                continue
-            # Per-axis boundary cap: the extent toward a face is the semi-axis on
-            # that face's axis. A face the inclusion does not cross caps growth at
-            # `margin` short of it; a face it crosses deeply only deepens its cap.
-            for c, r_ax in ((cx, rx), (cy, ry), (cz, rz)):
-                for d in (c, L - c):
-                    if r_ax < d:
-                        cap = (d - margin) / r_ax
-                        if cap < s_max:
-                            s_max = cap
-            if channels:
-                # Channel cap: the grown equatorial ellipse must stay `sep` clear
-                # of every vertical channel. Toward a channel along XY direction
-                # u the inclusion extent is s*r_xy(rx,ry,u); cap s so it does not
-                # encroach (XY-only -- a Z channel spans the full height).
-                for (chx, chy, R) in channels:
-                    dx = cx - chx; dx -= L * round(dx / L)
-                    dy = cy - chy; dy -= L * round(dy / L)
-                    dxy = math.sqrt(dx*dx + dy*dy)
-                    if dxy < 1e-12:
+            if z_bias <= 0.0:
+                # Uniform growth: radial extent scales linearly with the single
+                # factor s, so the binding factor is a closed-form min over
+                # neighbour / boundary / channel constraints.
+                s_max = 1.0 + max_step           # cap growth rate per round
+                for j in range(n):
+                    if j == i:
+                        continue
+                    jx, jy, jz, jrx, jry, jrz = spheres[j]
+                    dx = cx - jx; dx -= L * round(dx / L)
+                    dy = cy - jy; dy -= L * round(dy / L)
+                    dz = cz - jz; dz -= L * round(dz / L)
+                    D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                    if D < 1e-12:
                         s_max = 1.0; break
-                    ux, uy = dx / dxy, dy / dxy
-                    avail = dxy - R - sep
+                    ux, uy, uz = dx/D, dy/D, dz/D
+                    avail = D - rad(jrx, jry, jrz, ux, uy, uz) - sep   # room for I
                     if avail <= 0.0:
                         s_max = 1.0; break
-                    s_c = avail / (1.0 / math.sqrt((ux/rx)**2 + (uy/ry)**2))
-                    if s_c < s_max:
-                        s_max = s_c
-            if s_max <= 1.0 + 1e-9:
-                continue
-            nrx, nry, nrz = rx*s_max, ry*s_max, rz*s_max
+                    s_j = avail / rad(rx, ry, rz, ux, uy, uz)
+                    if s_j < s_max:
+                        s_max = s_j
+                if s_max <= 1.0 + 1e-9:
+                    continue
+                # Per-axis boundary cap: the extent toward a face is the semi-axis
+                # on that face's axis. A face the inclusion does not cross caps
+                # growth at `margin` short of it; a crossed face only deepens it.
+                for c, r_ax in ((cx, rx), (cy, ry), (cz, rz)):
+                    for d in (c, L - c):
+                        if r_ax < d:
+                            cap = (d - margin) / r_ax
+                            if cap < s_max:
+                                s_max = cap
+                if channels:
+                    # Channel cap: the grown equatorial ellipse must stay `sep`
+                    # clear of every vertical channel (XY-only -- a Z channel
+                    # spans the full height).
+                    for (chx, chy, R) in channels:
+                        dx = cx - chx; dx -= L * round(dx / L)
+                        dy = cy - chy; dy -= L * round(dy / L)
+                        dxy = math.sqrt(dx*dx + dy*dy)
+                        if dxy < 1e-12:
+                            s_max = 1.0; break
+                        ux, uy = dx / dxy, dy / dxy
+                        avail = dxy - R - sep
+                        if avail <= 0.0:
+                            s_max = 1.0; break
+                        s_c = avail / (1.0 / math.sqrt((ux/rx)**2 + (uy/ry)**2))
+                        if s_c < s_max:
+                            s_max = s_c
+                if s_max <= 1.0 + 1e-9:
+                    continue
+                nrx, nry, nrz = rx*s_max, ry*s_max, rz*s_max
+            else:
+                # Anisotropic growth: elongate `grow_axis` as s**(1+w), the other
+                # two as s**(1-w/2) (volume gain still s**3). The radial extent is
+                # non-linear in s, so bisect the largest s that still satisfies
+                # every constraint.
+                w = z_bias
+                ex = [1.0 - 0.5*w, 1.0 - 0.5*w, 1.0 - 0.5*w]
+                ex[grow_axis] = 1.0 + w
+
+                def _axes(s, _rx=rx, _ry=ry, _rz=rz, _ex=ex):
+                    return _rx*s**_ex[0], _ry*s**_ex[1], _rz*s**_ex[2]
+
+                def _fits(s):
+                    ax, ay, az = _axes(s)
+                    for j in range(n):
+                        if j == i:
+                            continue
+                        jx, jy, jz, jrx, jry, jrz = spheres[j]
+                        dx = cx - jx; dx -= L * round(dx / L)
+                        dy = cy - jy; dy -= L * round(dy / L)
+                        dz = cz - jz; dz -= L * round(dz / L)
+                        D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                        if D < 1e-12:
+                            return False
+                        ux, uy, uz = dx/D, dy/D, dz/D
+                        if (D - rad(jrx, jry, jrz, ux, uy, uz) - sep
+                                < rad(ax, ay, az, ux, uy, uz)):
+                            return False
+                    for c, r_o, R in ((cx, rx, ax), (cy, ry, ay), (cz, rz, az)):
+                        for d in (c, L - c):
+                            if r_o < d and R > d - margin:
+                                return False
+                    if channels:
+                        for (chx, chy, Rc) in channels:
+                            dx = cx - chx; dx -= L * round(dx / L)
+                            dy = cy - chy; dy -= L * round(dy / L)
+                            dxy = math.sqrt(dx*dx + dy*dy)
+                            if dxy < 1e-12:
+                                return False
+                            ux, uy = dx / dxy, dy / dxy
+                            avail = dxy - Rc - sep
+                            if avail <= 0.0:
+                                return False
+                            if 1.0 / math.sqrt((ux/ax)**2 + (uy/ay)**2) > avail:
+                                return False
+                    return True
+
+                hi = 1.0 + max_step
+                if _fits(hi):
+                    s = hi
+                else:
+                    if not _fits(1.0 + 1e-6):
+                        continue                 # no room to grow at all
+                    lo = 1.0
+                    for _ in range(20):
+                        mid = 0.5*(lo + hi)
+                        if _fits(mid):
+                            lo = mid
+                        else:
+                            hi = mid
+                    s = lo
+                if s <= 1.0 + 1e-9:
+                    continue
+                nrx, nry, nrz = _axes(s)
             current_vof += (4.0/3.0*math.pi*(nrx*nry*nrz - rx*ry*rz)) / V_RVE
             spheres[i] = (cx, cy, cz, nrx, nry, nrz)
             grew = True
@@ -893,7 +974,8 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                              sphericity_std=0.1, growth_direction='Random',
                              growth_concentration=0.0, min_radius=None,
                              sliver_gap=0.0, densify=True, channels=None,
-                             offaxis_floor=None, offaxis_channel_floor=None):
+                             offaxis_floor=None, offaxis_channel_floor=None,
+                             z_bias=0.0):
     """
     Random Sequential Adsorption sphere/ellipsoid packing.
     Returns numpy array shape (N, 10):
@@ -1144,9 +1226,11 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     # see the true inclusion sizes rather than the pre-growth ones.
     if densify and current_vof < VoF_target:
         vof_before = current_vof
+        grow_axis = {'X': 0, 'Y': 1, 'Z': 2}.get(
+            str(growth_direction).strip().upper()[:1], 2)
         spheres, current_vof = _densify_packing(
             spheres, L, sep, min_distance, VoF_target, current_vof, V_RVE,
-            channels=channels)
+            channels=channels, z_bias=z_bias, grow_axis=grow_axis)
         # Off-axis sliver repair: the grow pass separates surfaces along the
         # centre line, but tilted ellipsoids can sit closer off it; this shrinks
         # the few offending pairs to a true (GJK) gap of `sep` so the mesher
@@ -2187,6 +2271,12 @@ def _generate_one_row(task):
     gap_resolve = float(os.environ.get('SPAX_GAP_RESOLVE', '0.5'))
     lc_fine = lc_fine_mult * L_mesh
 
+    # Anisotropic densification: grow inclusions preferentially along the
+    # Growth_Direction axis (physical brine channels elongate vertically) rather
+    # than scaling all axes equally. Opt-in (default 0 = isotropic, unchanged);
+    # w>0 lowers final sphericity by design. SPAX_ZGROW_BIAS sets the strength.
+    z_bias = float(os.environ.get('SPAX_ZGROW_BIAS', '0.0'))
+
     def _pack_row(sliver_gap, md_scale=1.0):
         """Pack one RVE's inclusions + channels (channel-FIRST). Channels are
         placed on an empty octree so they claim their XY space before the
@@ -2223,7 +2313,7 @@ def _generate_one_row(task):
             growth_concentration=growth_conc,
             min_radius=r_floor, sliver_gap=sliver_gap,
             channels=channel_prims, offaxis_floor=offaxis_floor,
-            offaxis_channel_floor=offaxis_channel_floor)
+            offaxis_channel_floor=offaxis_channel_floor, z_bias=z_bias)
 
         # Mesh-in-gap balls from the INCLUSION pack (before channels are
         # appended): channels are vertical cylinders meshed head-on and never
