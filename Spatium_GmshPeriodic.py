@@ -79,8 +79,28 @@ def _add_periodic_sphere_copies(cx, cy, cz, r, L, tol=1e-10):
         if sx == 0 and sy == 0 and sz == 0:
             continue  # skip original
         copies.append((cx + sx, cy + sy, cz + sz))
-    
+
     return copies
+
+
+def _add_periodic_cylinder_copies(cx, cy, r, L, tol=1e-10):
+    """Periodic XY copies for a vertical (Z) channel of radius r at (cx,cy).
+    A channel spans the full RVE height, so it only needs XY tiling (never a
+    Z copy): a copy in +x if it crosses x=0, in -x if it crosses x=L, likewise
+    in y, plus the corner combinations."""
+    from itertools import product
+    shifts_x = [0]
+    shifts_y = [0]
+    if cx - r < tol:
+        shifts_x.append(L)
+    if cx + r > L - tol:
+        shifts_x.append(-L)
+    if cy - r < tol:
+        shifts_y.append(L)
+    if cy + r > L - tol:
+        shifts_y.append(-L)
+    return [(cx + sx, cy + sy) for sx, sy in product(shifts_x, shifts_y)
+            if not (sx == 0 and sy == 0)]
 
 
 def _match_periodic_surfaces(L, eps=None):
@@ -483,31 +503,57 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     
     for i in range(len(sphere_array)):
         cx, cy, cz = sphere_array[i, 0:3]
-        r = max(sphere_array[i, 3], sphere_array[i, 4], sphere_array[i, 5])
-        
+        # Channel sentinel: a vertical (Z) cylinder is stored in the sphere
+        # array as a tall entry (rz >= ~L/2) tagged with sphericity ~0.01. Its
+        # cross-section radius is the XY semi-axis, NOT max(rx,ry,rz) (which
+        # would be the full half-height) — using the bounding sphere here built
+        # a box-filling sphere and crashed the Boolean kernel.
+        is_channel = (sphere_array[i, 9] <= 0.02 and
+                      sphere_array[i, 5] >= 0.4 * L)
+        if is_channel:
+            r = sphere_array[i, 3]
+        else:
+            r = max(sphere_array[i, 3], sphere_array[i, 4], sphere_array[i, 5])
+
         # Check if this is a parent (centre inside or on boundary of RVE)
         if (-tol_inside <= cx <= L + tol_inside and
             -tol_inside <= cy <= L + tol_inside and
             -tol_inside <= cz <= L + tol_inside):
-            
+
             # Avoid duplicates (periodic copies already in the array)
             key = (round(cx, 8), round(cy, 8), round(cz, 8), round(r, 8))
             if key not in seen:
                 seen.add(key)
-                parents.append((cx, cy, cz, r, i))
-    
+                parents.append((cx, cy, cz, r, i, is_channel))
+
     print("  Parent spheres: {}".format(len(parents)))
-    
+
     # Create spheres and their periodic copies
     sphere_tags = []  # (3, tag) for all sphere volumes
     sphere_to_parent = {}  # tag -> parent_index
-    
-    for cx, cy, cz, r, parent_idx in parents:
+    # Channels extend past the z-faces so the Boolean fragment cuts them
+    # cleanly (a cylinder ending exactly on a face would graze it and confuse
+    # OCC's orientation); the box clips the overhang back to [0,L].
+    z_ext = 0.1 * L
+
+    for cx, cy, cz, r, parent_idx, is_channel in parents:
+        if is_channel:
+            # Vertical cylinder spanning the full height (Z), XY-periodic only.
+            cyl = gmsh.model.occ.addCylinder(
+                cx, cy, -z_ext, 0.0, 0.0, L + 2.0 * z_ext, r)
+            sphere_tags.append((3, cyl))
+            sphere_to_parent[cyl] = parent_idx
+            for ccx, ccy in _add_periodic_cylinder_copies(cx, cy, r, L):
+                cc = gmsh.model.occ.addCylinder(
+                    ccx, ccy, -z_ext, 0.0, 0.0, L + 2.0 * z_ext, r)
+                sphere_tags.append((3, cc))
+                sphere_to_parent[cc] = parent_idx
+            continue
         # Main sphere (clipped to RVE later via fragment)
         s = gmsh.model.occ.addSphere(cx, cy, cz, r)
         sphere_tags.append((3, s))
         sphere_to_parent[s] = parent_idx
-        
+
         # Periodic copies
         copies = _add_periodic_sphere_copies(cx, cy, cz, r, L)
         for ccx, ccy, ccz in copies:
@@ -590,7 +636,20 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             # Find closest parent sphere
             best_parent = 0
             best_dist = 1e30
-            for pi, (scx, scy, scz, sr, _) in enumerate(parents):
+            for pi, (scx, scy, scz, sr, _pidx, p_is_channel) in enumerate(parents):
+                if p_is_channel:
+                    # Channel match on XY only (cylinder spans full Z); compare
+                    # against the nearest XY periodic image.
+                    dmin = 1e30
+                    for ccx, ccy in ([(scx, scy)]
+                                     + _add_periodic_cylinder_copies(scx, scy, sr, L)):
+                        d = math.sqrt((com[0]-ccx)**2 + (com[1]-ccy)**2)
+                        if d < dmin:
+                            dmin = d
+                    if dmin < best_dist:
+                        best_dist = dmin
+                        best_parent = pi
+                    continue
                 d = math.sqrt((com[0]-scx)**2 + (com[1]-scy)**2 + (com[2]-scz)**2)
                 if d < best_dist:
                     best_dist = d
