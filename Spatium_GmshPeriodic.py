@@ -79,8 +79,28 @@ def _add_periodic_sphere_copies(cx, cy, cz, r, L, tol=1e-10):
         if sx == 0 and sy == 0 and sz == 0:
             continue  # skip original
         copies.append((cx + sx, cy + sy, cz + sz))
-    
+
     return copies
+
+
+def _add_periodic_cylinder_copies(cx, cy, r, L, tol=1e-10):
+    """Periodic XY copies for a vertical (Z) channel of radius r at (cx,cy).
+    A channel spans the full RVE height, so it only needs XY tiling (never a
+    Z copy): a copy in +x if it crosses x=0, in -x if it crosses x=L, likewise
+    in y, plus the corner combinations."""
+    from itertools import product
+    shifts_x = [0]
+    shifts_y = [0]
+    if cx - r < tol:
+        shifts_x.append(L)
+    if cx + r > L - tol:
+        shifts_x.append(-L)
+    if cy - r < tol:
+        shifts_y.append(L)
+    if cy + r > L - tol:
+        shifts_y.append(-L)
+    return [(cx + sx, cy + sy) for sx, sy in product(shifts_x, shifts_y)
+            if not (sx == 0 and sy == 0)]
 
 
 def _match_periodic_surfaces(L, eps=None):
@@ -387,7 +407,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                            Is_Porous='Composite', run_id='gmsh_rve',
                            mesh_order=1, optimise=True,
                            VoF_void_sphere=0.0, VoF_incl_sphere=0.0,
-                           Inclusion_Type='Solid'):
+                           Inclusion_Type='Solid', gap_balls=None):
     """
     Generate a periodic RVE mesh using Gmsh.
     
@@ -483,31 +503,57 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     
     for i in range(len(sphere_array)):
         cx, cy, cz = sphere_array[i, 0:3]
-        r = max(sphere_array[i, 3], sphere_array[i, 4], sphere_array[i, 5])
-        
+        # Channel sentinel: a vertical (Z) cylinder is stored in the sphere
+        # array as a tall entry (rz >= ~L/2) tagged with sphericity ~0.01. Its
+        # cross-section radius is the XY semi-axis, NOT max(rx,ry,rz) (which
+        # would be the full half-height) — using the bounding sphere here built
+        # a box-filling sphere and crashed the Boolean kernel.
+        is_channel = (sphere_array[i, 9] <= 0.02 and
+                      sphere_array[i, 5] >= 0.4 * L)
+        if is_channel:
+            r = sphere_array[i, 3]
+        else:
+            r = max(sphere_array[i, 3], sphere_array[i, 4], sphere_array[i, 5])
+
         # Check if this is a parent (centre inside or on boundary of RVE)
         if (-tol_inside <= cx <= L + tol_inside and
             -tol_inside <= cy <= L + tol_inside and
             -tol_inside <= cz <= L + tol_inside):
-            
+
             # Avoid duplicates (periodic copies already in the array)
             key = (round(cx, 8), round(cy, 8), round(cz, 8), round(r, 8))
             if key not in seen:
                 seen.add(key)
-                parents.append((cx, cy, cz, r, i))
-    
+                parents.append((cx, cy, cz, r, i, is_channel))
+
     print("  Parent spheres: {}".format(len(parents)))
-    
+
     # Create spheres and their periodic copies
     sphere_tags = []  # (3, tag) for all sphere volumes
     sphere_to_parent = {}  # tag -> parent_index
-    
-    for cx, cy, cz, r, parent_idx in parents:
+    # Channels extend past the z-faces so the Boolean fragment cuts them
+    # cleanly (a cylinder ending exactly on a face would graze it and confuse
+    # OCC's orientation); the box clips the overhang back to [0,L].
+    z_ext = 0.1 * L
+
+    for cx, cy, cz, r, parent_idx, is_channel in parents:
+        if is_channel:
+            # Vertical cylinder spanning the full height (Z), XY-periodic only.
+            cyl = gmsh.model.occ.addCylinder(
+                cx, cy, -z_ext, 0.0, 0.0, L + 2.0 * z_ext, r)
+            sphere_tags.append((3, cyl))
+            sphere_to_parent[cyl] = parent_idx
+            for ccx, ccy in _add_periodic_cylinder_copies(cx, cy, r, L):
+                cc = gmsh.model.occ.addCylinder(
+                    ccx, ccy, -z_ext, 0.0, 0.0, L + 2.0 * z_ext, r)
+                sphere_tags.append((3, cc))
+                sphere_to_parent[cc] = parent_idx
+            continue
         # Main sphere (clipped to RVE later via fragment)
         s = gmsh.model.occ.addSphere(cx, cy, cz, r)
         sphere_tags.append((3, s))
         sphere_to_parent[s] = parent_idx
-        
+
         # Periodic copies
         copies = _add_periodic_sphere_copies(cx, cy, cz, r, L)
         for ccx, ccy, ccz in copies:
@@ -566,7 +612,28 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                            "Check sphere positions (overlapping or outside RVE).")
     print("  Sphere volumes: {} tags={}".format(len(sphere_vols), sphere_vols))
     print("  Outside volumes: {} (excluded)".format(len(outside_vols)))
-    
+
+    # ---- Remove OUTSIDE protrusions from the geometry ----
+    # The part of an inclusion poking past a box face is redundant: the periodic
+    # copy already supplies that material on the opposite face. Leaving it in the
+    # model means the 2D mesher meshes its outer surface, which sits right
+    # against the box cut-disc of the SAME inclusion -- and the 3D mesher then
+    # reports "overlapping facets" on those two coincident surfaces and crashes
+    # (seed-dependent: it bites whenever an inclusion crosses a face deeply
+    # enough to leave a sizeable protrusion). recursive=True drops the
+    # protrusion's now-unused surfaces/curves but keeps the cut-disc, which is
+    # shared with the retained inside body. This is a geometry fix, independent
+    # of mesh size, so it cannot be worked around by refinement.
+    if outside_vols:
+        try:
+            gmsh.model.occ.remove([(3, t) for t in outside_vols], recursive=True)
+            gmsh.model.occ.synchronize()
+            print("  Removed {} outside protrusion volume(s) from geometry".format(
+                len(outside_vols)))
+        except Exception as _e:
+            print("  WARN: could not remove outside volumes ({}); "
+                  "meshing may hit overlapping facets".format(_e))
+
     # ---- Hybrid mode: classify sphere volumes as void or inclusion ----
     void_vols = []
     incl_vols = []
@@ -590,7 +657,20 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             # Find closest parent sphere
             best_parent = 0
             best_dist = 1e30
-            for pi, (scx, scy, scz, sr, _) in enumerate(parents):
+            for pi, (scx, scy, scz, sr, _pidx, p_is_channel) in enumerate(parents):
+                if p_is_channel:
+                    # Channel match on XY only (cylinder spans full Z); compare
+                    # against the nearest XY periodic image.
+                    dmin = 1e30
+                    for ccx, ccy in ([(scx, scy)]
+                                     + _add_periodic_cylinder_copies(scx, scy, sr, L)):
+                        d = math.sqrt((com[0]-ccx)**2 + (com[1]-ccy)**2)
+                        if d < dmin:
+                            dmin = d
+                    if dmin < best_dist:
+                        best_dist = dmin
+                        best_parent = pi
+                    continue
                 d = math.sqrt((com[0]-scx)**2 + (com[1]-scy)**2 + (com[2]-scz)**2)
                 if d < best_dist:
                     best_dist = d
@@ -702,13 +782,41 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         gmsh.model.mesh.field.setNumber(f_thresh, "DistMin", dist_min)
         gmsh.model.mesh.field.setNumber(f_thresh, "DistMax", dist_max)
         
+        # Mesh-in-gap refinement: a local size ball at each narrow sphere-sphere
+        # sliver the packer flagged. Forcing a small element size inside the gap
+        # lets the mesher resolve a sub-element matrix sliver (which would
+        # otherwise produce overlapping facets) WITHOUT the packer having to
+        # widen the gap, so the pack keeps its volume fraction. Each ball:
+        # SizeIn at the sliver centre, grading to lc_coarse over Thickness.
+        gap_fields = []
+        if gap_balls:
+            for (gx, gy, gz, gsize) in gap_balls:
+                f_ball = gmsh.model.mesh.field.add("Ball")
+                gmsh.model.mesh.field.setNumber(f_ball, "XCenter", gx)
+                gmsh.model.mesh.field.setNumber(f_ball, "YCenter", gy)
+                gmsh.model.mesh.field.setNumber(f_ball, "ZCenter", gz)
+                # Radius of the fully-refined core: the sliver's lateral reach
+                # (a few element sizes) so the thin matrix region is covered.
+                r_in = max(4.0 * gsize, 0.5 * lc_fine)
+                gmsh.model.mesh.field.setNumber(f_ball, "Radius", r_in)
+                gmsh.model.mesh.field.setNumber(f_ball, "Thickness", 3.0 * r_in)
+                gmsh.model.mesh.field.setNumber(f_ball, "VIn", gsize)
+                gmsh.model.mesh.field.setNumber(f_ball, "VOut", lc_coarse)
+                gap_fields.append(f_ball)
+            # allow the global floor to reach the smallest requested ball size
+            min_ball = min(b[3] for b in gap_balls)
+            gmsh.option.setNumber("Mesh.CharacteristicLengthMin",
+                                  min(lc_fine * 0.5, min_ball * 0.9))
+            print("  Mesh-in-gap: {} refinement ball(s), smallest size "
+                  "{:.5f}".format(len(gap_balls), min_ball))
+
         # Also need fine mesh on RVE boundary faces for periodic matching
         boundary_tags = []
         cube_boundary = gmsh.model.getBoundary([(3, matrix_vols[0])], oriented=False)
         for bdim, btag in cube_boundary:
             if bdim == 2:
                 boundary_tags.append(btag)
-        
+
         if boundary_tags:
             # Distance field from RVE boundaries
             f_bdist = gmsh.model.mesh.field.add("Distance")
@@ -724,9 +832,15 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             gmsh.model.mesh.field.setNumber(f_bthresh, "DistMin", 0.0)
             gmsh.model.mesh.field.setNumber(f_bthresh, "DistMax", L * 0.05)
             
-            # Minimum of both fields
+            # Minimum of all fields (surface grading + boundary + gap balls)
             f_min = gmsh.model.mesh.field.add("Min")
-            gmsh.model.mesh.field.setNumbers(f_min, "FieldsList", [f_thresh, f_bthresh])
+            gmsh.model.mesh.field.setNumbers(f_min, "FieldsList",
+                                             [f_thresh, f_bthresh] + gap_fields)
+            gmsh.model.mesh.field.setAsBackgroundMesh(f_min)
+        elif gap_fields:
+            f_min = gmsh.model.mesh.field.add("Min")
+            gmsh.model.mesh.field.setNumbers(f_min, "FieldsList",
+                                             [f_thresh] + gap_fields)
             gmsh.model.mesh.field.setAsBackgroundMesh(f_min)
         else:
             gmsh.model.mesh.field.setAsBackgroundMesh(f_thresh)
@@ -738,6 +852,32 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         gmsh.model.mesh.setSize(gmsh.model.getEntities(0), L_mesh)
         print("  Uniform mesh: lc={:.5f}".format(L_mesh))
     
+    # ---- DEBUG: map specific surface tags to their nearest inclusion ----
+    _dbg = os.environ.get('SPAX_DEBUG_SURF', '')
+    if _dbg:
+        import math as _m
+        targets = [int(t) for t in _dbg.split(',') if t.strip()]
+        for st in targets:
+            try:
+                bb = gmsh.model.getBoundingBox(2, st)
+            except Exception as _e:
+                print("  [dbg] surface {} not found ({})".format(st, _e))
+                continue
+            sx = 0.5*(bb[0]+bb[3]); sy = 0.5*(bb[1]+bb[4]); sz = 0.5*(bb[2]+bb[5])
+            ext = (bb[3]-bb[0], bb[4]-bb[1], bb[5]-bb[2])
+            best = None
+            for (px, py, pz, pr, pidx, pch) in parents:
+                dx = sx-px; dx -= L*round(dx/L)
+                dy = sy-py; dy -= L*round(dy/L)
+                dz = sz-pz; dz -= L*round(dz/L)
+                d = _m.sqrt(dx*dx+dy*dy+dz*dz)
+                if best is None or d < best[0]:
+                    best = (d, px, py, pz, pr, pidx, pch)
+            print("  [dbg] surf {}: ctr=({:.3f},{:.3f},{:.3f}) ext=({:.3f},{:.3f},{:.3f}) "
+                  "-> parent idx={} ch={} ctr=({:.3f},{:.3f},{:.3f}) r={:.3f} dist={:.4f}".format(
+                      st, sx, sy, sz, ext[0], ext[1], ext[2],
+                      best[5], best[6], best[1], best[2], best[3], best[4], best[0]))
+
     # ---- Apply periodic constraints (strict 1D + 2D, then 3D) ----
     # Conforming external faces are MANDATORY for a valid periodic RVE: the mesh
     # on each min face must be an exact translate of its max face. Gmsh's own
@@ -1516,7 +1656,8 @@ if __name__ == '__main__':
             output_dir=_p['output_dir'], Is_Porous=_p['Is_Porous'],
             run_id=_p['run_id'], VoF_void_sphere=_p['VoF_void_sphere'],
             VoF_incl_sphere=_p['VoF_incl_sphere'],
-            Inclusion_Type=_p['Inclusion_Type'])
+            Inclusion_Type=_p['Inclusion_Type'],
+            gap_balls=_p.get('gap_balls'))
         with open(out_pkl, 'wb') as _f:
             pickle.dump(_res, _f)
         sys.exit(0)

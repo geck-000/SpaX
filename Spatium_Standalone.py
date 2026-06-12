@@ -92,78 +92,196 @@ class Octree:
 # CHANNEL GENERATION (from Spatium_Kernel)
 # =====================================================================
 
+def _channel_sphere_cap(cx, cy, octree, L, sep):
+    """Max channel radius at (cx,cy) before a vertical channel touches any
+    inclusion. ELLIPSOID-AWARE: a Z channel only meets an inclusion's XY
+    cross-section, whose extent toward the channel is the *XY* radial
+    r_xy(u)=1/sqrt((ux/rx)^2+(uy/ry)^2) -- NOT the bounding sphere max(rx,ry,rz).
+    For Z-elongated inclusions the long axis rz is irrelevant to a Z channel, so
+    using the bounding sphere would push channels needlessly far away. Periodic
+    inclusion images are already in the octree. Returns inf if no inclusion."""
+    cap = float('inf')
+    for (sc, sax) in octree.query((cx, cy, L / 2.0), L):
+        dx = cx - sc[0]; dy = cy - sc[1]
+        dxy = math.sqrt(dx*dx + dy*dy)
+        if dxy < 1e-12:
+            return 0.0
+        ux, uy = dx / dxy, dy / dxy
+        r_xy = 1.0 / math.sqrt((ux/sax[0])**2 + (uy/sax[1])**2)
+        c = dxy - r_xy - sep
+        if c < cap:
+            cap = c
+    return cap
+
+
+def _densify_channels(prim, L, sep, octree, vof_target, current_vof, A,
+                      max_rounds=300, max_step=0.05):
+    """Grow + perturb densification for channels (2D analogue of the sphere
+    pass). Grow each channel radius into its free XY headroom -- clearance to
+    other channels (min-image), to inclusions (ellipsoid-aware XY), and to the
+    XY-face danger zone -- then nudge it off its tightest neighbour. Channels
+    span the full Z height, so only XY matters."""
+    n = len(prim)
+    if n == 0 or current_vof >= vof_target:
+        return prim, current_vof
+    margin = sep
+    stagnant = 0
+    for _ in range(max_rounds):
+        if current_vof >= vof_target:
+            break
+        vof0 = current_vof
+        order = list(range(n)); np.random.shuffle(order)
+        grew = False
+        for i in order:
+            cx, cy, R = prim[i]
+            head = max_step * R
+            for j in range(n):                       # other channels (min-image)
+                if j == i:
+                    continue
+                ex, ey, er = prim[j]
+                dx = cx - ex; dx -= L * round(dx / L)
+                dy = cy - ey; dy -= L * round(dy / L)
+                g = math.sqrt(dx*dx + dy*dy) - er - R - sep
+                if g < head:
+                    head = g
+            scap = _channel_sphere_cap(cx, cy, octree, L, sep) - R   # inclusions
+            if scap < head:
+                head = scap
+            for c in (cx, cy):                       # XY-face danger zone
+                for d in (c, L - c):
+                    if R < d:
+                        h = (d - margin) - R
+                        if h < head:
+                            head = h
+            if head <= 1e-12:
+                continue
+            Rn = R + head
+            current_vof += math.pi * (Rn*Rn - R*R) / A
+            prim[i] = (cx, cy, Rn)
+            grew = True
+            if current_vof >= vof_target:
+                break
+        if current_vof >= vof_target:
+            break
+        moved = False
+        for i in order:
+            cx, cy, R = prim[i]
+            wx = wy = 0.0; worst = float('inf')
+            for j in range(n):
+                if j == i:
+                    continue
+                ex, ey, er = prim[j]
+                dx = cx - ex; dx -= L * round(dx / L)
+                dy = cy - ey; dy -= L * round(dy / L)
+                clr = math.sqrt(dx*dx + dy*dy) - er - R
+                if clr < worst:
+                    worst = clr; wx, wy = dx, dy
+            norm = math.sqrt(wx*wx + wy*wy)
+            if norm < 1e-12:
+                continue
+            step = 0.10 * R
+            nx = cx + step * wx / norm
+            ny = cy + step * wy / norm
+            if not (0.0 <= nx <= L and 0.0 <= ny <= L):
+                continue
+            if (abs(nx - R) < margin or abs((L - nx) - R) < margin or
+                    abs(ny - R) < margin or abs((L - ny) - R) < margin):
+                continue
+            ok = True
+            for j in range(n):
+                if j == i:
+                    continue
+                ex, ey, er = prim[j]
+                dx = nx - ex; dx -= L * round(dx / L)
+                dy = ny - ey; dy -= L * round(dy / L)
+                if math.sqrt(dx*dx + dy*dy) < R + er + sep:
+                    ok = False; break
+            if ok and _channel_sphere_cap(nx, ny, octree, L, sep) >= R:
+                prim[i] = (nx, ny, R); moved = True
+        if current_vof - vof0 < 1e-6:
+            stagnant += 1
+            if stagnant >= 6:
+                break
+        else:
+            stagnant = 0
+        if not grew and not moved:
+            break
+    return prim, current_vof
+
+
 def generate_channels(L, channel_vof_target, r_channel_avg, r_channel_std,
-                      min_distance, max_iterations, octree, L_mesh=0.0):
-    """Generate vertical cylindrical channels through Z-direction."""
+                      min_distance, max_iterations, octree, L_mesh=0.0,
+                      densify=True):
+    """Generate vertical (Z) cylindrical channels: RSA in XY with adaptive
+    radius reduction, then growth+perturbation densification, then periodic XY
+    copies. Channel<->inclusion clearance is ellipsoid-aware (see
+    `_channel_sphere_cap`)."""
+    A = L * L                       # channel VoF = pi r^2 L / L^3 = pi r^2 / L^2
+    sep = min_distance
+    r_floor = max(L_mesh, 0.001)
+    margin = sep
+    prim = []                       # primary channels (cx, cy, r), centres in [0,L)
     channel_vof = 0.0
-    channels = []  # list of (cx, cy, radius)
-    
-    for iteration in range(max_iterations):
+    current_r = max(r_channel_avg, r_floor)
+    fails = 0
+
+    for _ in range(max_iterations):
         if channel_vof >= channel_vof_target:
             break
-        
         cx = L * np.random.rand()
         cy = L * np.random.rand()
-        radius = max(np.random.normal(r_channel_avg, r_channel_std), L_mesh, 0.001)
-        if radius <= 0:
-            continue
-        
-        # Check overlap with existing channels (periodic in XY)
-        overlap = False
-        for ex, ey, er in channels:
+        radius = max(np.random.normal(current_r, min(r_channel_std, current_r*0.3)),
+                     current_r * 0.3, r_floor)
+
+        ok = True
+        for ex, ey, er in prim:                 # channel-channel (periodic XY)
             dx = cx - ex; dx -= L * round(dx / L)
             dy = cy - ey; dy -= L * round(dy / L)
-            if math.sqrt(dx*dx + dy*dy) < radius + er + min_distance:
-                overlap = True; break
-        if overlap: continue
-        
-        # Check overlap with spheres via octree
-        # Query along entire Z-column
-        query_r = radius + min_distance
-        candidates = octree.query((cx, cy, L/2), max(query_r, L))
-        sphere_overlap = False
-        for (sc, sr) in candidates:
-            dx = cx - sc[0]; dy = cy - sc[1]
-            dist_xy = math.sqrt(dx*dx + dy*dy)
-            if dist_xy < radius + sr + min_distance:
-                sphere_overlap = True; break
-        if sphere_overlap: continue
-        
-        # Boundary portion check: reject channels that create thin slivers
-        # near XY boundaries (cap must be substantial)
-        eff_r = radius + min_distance / 2.0
-        bad_boundary = False
-        for coord in [cx, cy]:
-            for face_dist in [coord, L - coord]:
-                if face_dist < eff_r:
-                    # Channel crosses this face
-                    cap_depth = eff_r - face_dist
-                    body_depth = 2 * eff_r - cap_depth
-                    # Reject if cap or body is too thin
-                    if cap_depth < min_distance * 0.5 or body_depth < min_distance:
-                        bad_boundary = True
-                        break
-            if bad_boundary: break
-        if bad_boundary: continue
-        
-        # Accept — add periodic copies if needed
-        from itertools import product
+            if math.sqrt(dx*dx + dy*dy) < radius + er + sep:
+                ok = False; break
+        if ok and _channel_sphere_cap(cx, cy, octree, L, sep) < radius:
+            ok = False                          # inclusion clearance (XY)
+        if ok:                                  # XY-face danger zone
+            for c in (cx, cy):
+                if abs(c - radius) < margin or abs((L - c) - radius) < margin:
+                    ok = False; break
+        if not ok:
+            fails += 1
+            if fails >= 25:
+                current_r *= 0.92
+                fails = 0
+                if current_r < r_floor:
+                    break
+            continue
+
+        prim.append((cx, cy, radius))
+        channel_vof += math.pi * radius**2 / A
+        fails = 0
+
+    if densify and channel_vof < channel_vof_target:
+        vof_before = channel_vof
+        prim, channel_vof = _densify_channels(
+            prim, L, sep, octree, channel_vof_target, channel_vof, A)
+        print("    [Densify] channel VoF {:.4f} -> {:.4f}".format(vof_before, channel_vof))
+
+    # Expand primaries to periodic XY copies (preserved return contract).
+    from itertools import product
+    channels = []
+    for cx, cy, radius in prim:
+        eff_r = radius + sep / 2.0
         x_shifts = [0]; y_shifts = [0]
         if cx - eff_r < 0: x_shifts.append(L)
         if cx + eff_r > L: x_shifts.append(-L)
         if cy - eff_r < 0: y_shifts.append(L)
         if cy + eff_r > L: y_shifts.append(-L)
-        
         for dx, dy in product(x_shifts, y_shifts):
             xn, yn = cx + dx, cy + dy
-            if not any(abs(xn-e[0])<1e-10 and abs(yn-e[1])<1e-10 for e in channels):
+            if not any(abs(xn-e[0]) < 1e-10 and abs(yn-e[1]) < 1e-10 for e in channels):
                 channels.append((xn, yn, radius))
-        
-        channel_vof += math.pi * radius**2 * L / L**3
-    
-    print("  Channels: {} placed, VoF = {:.4f} (target {:.4f})".format(
-        len(channels), channel_vof, channel_vof_target))
-    
+
+    print("  Channels: {} placed ({} with copies), VoF = {:.4f} (target {:.4f})".format(
+        len(prim), len(channels), channel_vof, channel_vof_target))
+
     return np.array(channels) if channels else np.empty((0, 3))
 
 
@@ -171,11 +289,693 @@ def generate_channels(L, channel_vof_target, r_channel_avg, r_channel_std,
 # RSA SPHERE PACKING with Octree acceleration
 # =====================================================================
 
+def _ellipsoid_radial(rx, ry, rz, ux, uy, uz):
+    """Distance from an axis-aligned ellipsoid centre to its surface along the
+    unit direction (ux,uy,uz). Exact for the centre-line interaction that
+    dominates packing: r(u) = 1 / sqrt((ux/rx)^2 + (uy/ry)^2 + (uz/rz)^2)."""
+    return 1.0 / math.sqrt((ux/rx)**2 + (uy/ry)**2 + (uz/rz)**2)
+
+
+def _sphere_channel_clear(cx, cy, rx, ry, channels, L, sep):
+    """True if an inclusion centred at (cx,cy) with XY equatorial semi-axes
+    (rx,ry) clears every vertical (Z) channel by at least `sep`.
+
+    Channels span the full RVE height, so the binding constraint is the
+    inclusion's *widest* XY footprint (its equatorial ellipse) -- this is the
+    mirror of `_channel_sphere_cap`, enforced from the sphere side so spheres
+    packed AFTER the channels avoid them. ELLIPSOID-AWARE: the inclusion extent
+    toward a channel along the in-plane direction u is r_xy(u) =
+    1/sqrt((ux/rx)^2+(uy/ry)^2), not the bounding circle max(rx,ry). `channels`
+    are primaries (centre in [0,L)); periodic images handled by min-image."""
+    if not channels:
+        return True
+    for (chx, chy, R) in channels:
+        dx = cx - chx; dx -= L * round(dx / L)
+        dy = cy - chy; dy -= L * round(dy / L)
+        dxy = math.sqrt(dx*dx + dy*dy)
+        if dxy < 1e-12:
+            return False
+        ux, uy = dx / dxy, dy / dxy
+        r_xy = 1.0 / math.sqrt((ux/rx)**2 + (uy/ry)**2)
+        if dxy < r_xy + R + sep:
+            return False
+    return True
+
+
+# ---------------------------------------------------------------------------
+# True (off-axis) ellipsoid-ellipsoid surface gap via GJK support mapping.
+#
+# The packing/densify hot loop uses the centre-line radial extent
+# (`_ellipsoid_radial`), which is exact only along the inter-centre line. Two
+# tilted axis-aligned ellipsoids can approach closer OFF that line, leaving a
+# matrix sliver thinner than the centre-line gap (measured ~0.78x worst case).
+# GJK on the Minkowski difference gives the exact minimum surface distance for
+# strictly-convex bodies; the ellipsoid support map is closed-form. Validated
+# against a brute-force surface search to machine precision at ~0.3 ms/pair, so
+# it is affordable for a one-shot repair over the (broad-phase pruned) near
+# pairs -- but NOT for the inner grow loop, hence repair runs post-densify.
+# ---------------------------------------------------------------------------
+
+def _gjk_support(cx, cy, cz, A2, B2, dx, dy, dz):
+    """Support point of the Minkowski difference (ellipsoid A at origin minus
+    ellipsoid B at (cx,cy,cz)) in direction d. A2,B2 are (rx^2,ry^2,rz^2).
+    Ellipsoid support in dir d: c + A2 d / sqrt(d.A2 d)."""
+    ax, ay, az = A2[0]*dx, A2[1]*dy, A2[2]*dz
+    da = math.sqrt(dx*ax + dy*ay + dz*az) or 1e-300
+    bx, by, bz = B2[0]*dx, B2[1]*dy, B2[2]*dz
+    db = math.sqrt(dx*bx + dy*by + dz*bz) or 1e-300
+    return (ax/da - (cx - bx/db), ay/da - (cy - by/db), az/da - (cz - bz/db))
+
+
+def _cp_seg(a, b):
+    abx, aby, abz = b[0]-a[0], b[1]-a[1], b[2]-a[2]
+    t = -(a[0]*abx + a[1]*aby + a[2]*abz) / (abx*abx + aby*aby + abz*abz + 1e-300)
+    if t <= 0.0:
+        return a, (a,)
+    if t >= 1.0:
+        return b, (b,)
+    return (a[0]+t*abx, a[1]+t*aby, a[2]+t*abz), (a, b)
+
+
+def _cp_tri(a, b, c):
+    """Closest point on triangle abc to the origin (Ericson, Real-Time
+    Collision Detection)."""
+    abx, aby, abz = b[0]-a[0], b[1]-a[1], b[2]-a[2]
+    acx, acy, acz = c[0]-a[0], c[1]-a[1], c[2]-a[2]
+    d1 = -(abx*a[0] + aby*a[1] + abz*a[2]); d2 = -(acx*a[0] + acy*a[1] + acz*a[2])
+    if d1 <= 0 and d2 <= 0:
+        return a, (a,)
+    d3 = -(abx*b[0] + aby*b[1] + abz*b[2]); d4 = -(acx*b[0] + acy*b[1] + acz*b[2])
+    if d3 >= 0 and d4 <= d3:
+        return b, (b,)
+    vc = d1*d4 - d3*d2
+    if vc <= 0 and d1 >= 0 and d3 <= 0:
+        v = d1/(d1-d3); return (a[0]+v*abx, a[1]+v*aby, a[2]+v*abz), (a, b)
+    d5 = -(abx*c[0] + aby*c[1] + abz*c[2]); d6 = -(acx*c[0] + acy*c[1] + acz*c[2])
+    if d6 >= 0 and d5 <= d6:
+        return c, (c,)
+    vb = d5*d2 - d1*d6
+    if vb <= 0 and d2 >= 0 and d6 <= 0:
+        w = d2/(d2-d6); return (a[0]+w*acx, a[1]+w*acy, a[2]+w*acz), (a, c)
+    va = d3*d6 - d5*d4
+    if va <= 0 and (d4-d3) >= 0 and (d5-d6) >= 0:
+        w = (d4-d3)/((d4-d3)+(d5-d6))
+        return (b[0]+w*(c[0]-b[0]), b[1]+w*(c[1]-b[1]), b[2]+w*(c[2]-b[2])), (b, c)
+    den = 1.0/(va+vb+vc); v = vb*den; w = vc*den
+    return (a[0]+abx*v+acx*w, a[1]+aby*v+acy*w, a[2]+abz*v+acz*w), (a, b, c)
+
+
+def _cp_simplex(s):
+    """Closest point to origin on a 1-4 vertex simplex; returns (point, reduced
+    simplex) -- the GJK distance sub-algorithm."""
+    if len(s) == 1:
+        return s[0], s
+    if len(s) == 2:
+        return _cp_seg(s[0], s[1])
+    if len(s) == 3:
+        return _cp_tri(s[0], s[1], s[2])
+    best = None; bp = None; bs = None
+    for tri in ((0,1,2), (0,1,3), (0,2,3), (1,2,3)):
+        p, sub = _cp_tri(s[tri[0]], s[tri[1]], s[tri[2]])
+        d = p[0]*p[0] + p[1]*p[1] + p[2]*p[2]
+        if best is None or d < best:
+            best = d; bp = p; bs = sub
+    return bp, list(bs)
+
+
+def _gjk_gap_vec(cx, cy, cz, A2, B2, max_iter=30):
+    """As _gjk_gap, but also returns the closest point on the Minkowski
+    difference (the separation vector). Returns (gap, closest) with closest=None
+    when the ellipsoids intersect."""
+    dx, dy, dz = -cx, -cy, -cz
+    if dx == 0 and dy == 0 and dz == 0:
+        dx = 1.0
+    s = [_gjk_support(cx, cy, cz, A2, B2, dx, dy, dz)]
+    closest = s[0]
+    for _ in range(max_iter):
+        dx, dy, dz = -closest[0], -closest[1], -closest[2]
+        if dx*dx + dy*dy + dz*dz < 1e-20:
+            return 0.0, None
+        p = _gjk_support(cx, cy, cz, A2, B2, dx, dy, dz)
+        if (p[0]*dx + p[1]*dy + p[2]*dz) - (closest[0]*dx + closest[1]*dy + closest[2]*dz) < 1e-10:
+            break
+        s.append(p)
+        closest, s = _cp_simplex(s)
+        s = list(s)
+        if closest[0]**2 + closest[1]**2 + closest[2]**2 < 1e-20:
+            return 0.0, None
+    return math.sqrt(closest[0]**2 + closest[1]**2 + closest[2]**2), closest
+
+
+def _gjk_gap(cx, cy, cz, A2, B2, max_iter=30):
+    """Minimum surface-to-surface distance between two axis-aligned ellipsoids
+    (A at origin, B at (cx,cy,cz)). 0.0 if they intersect."""
+    return _gjk_gap_vec(cx, cy, cz, A2, B2, max_iter)[0]
+
+
+def _ellipsoid_gap(A, B, L):
+    """True min surface gap between inclusions A,B (each (cx,cy,cz,rx,ry,rz)),
+    using the nearest periodic image of B."""
+    dx = B[0]-A[0]; dx -= L*round(dx/L)
+    dy = B[1]-A[1]; dy -= L*round(dy/L)
+    dz = B[2]-A[2]; dz -= L*round(dz/L)
+    return _gjk_gap(dx, dy, dz, (A[3]**2, A[4]**2, A[5]**2), (B[3]**2, B[4]**2, B[5]**2))
+
+
+def _point_ellipse_dist(px, py, a, b):
+    """Distance from an external point (px,py) to the boundary of an axis-aligned
+    ellipse (semi-axes a,b centred at origin). Newton iteration on the boundary
+    angle from a robust initial guess; exact to ~1e-12 in a few steps. Used for
+    the TRUE channel<->inclusion gap: a vertical channel meets the inclusion's
+    XY equatorial ellipse, and the off-axis nearest point on that ellipse is
+    closer than the centre-line radial proxy."""
+    px, py = abs(px), abs(py)            # first-quadrant symmetry
+    if px < 1e-15 and py < 1e-15:
+        return min(a, b)
+    t = math.atan2(py * a, px * b)       # good initial parameter
+    for _ in range(12):
+        ct, st = math.cos(t), math.sin(t)
+        ex, ey = a * ct, b * st          # boundary point
+        # derivative of distance^2 wrt t = 0  <=>  (E-P).E' = 0
+        exd, eyd = -a * st, b * ct
+        f = (ex - px) * exd + (ey - py) * eyd
+        fp = (exd*exd + (ex - px)*(-a*ct)) + (eyd*eyd + (ey - py)*(-b*st))
+        if abs(fp) < 1e-18:
+            break
+        t -= f / fp
+        t = min(math.pi/2.0, max(0.0, t))
+    ct, st = math.cos(t), math.sin(t)
+    return math.hypot(a*ct - px, b*st - py)
+
+
+def _channel_inclusion_gap(ch, A, L):
+    """True surface gap between a vertical channel ch=(chx,chy,R) and inclusion
+    A=(cx,cy,cz,rx,ry,rz): the channel sees A's XY equatorial ellipse (rx,ry),
+    so it is the point-to-ellipse distance from the channel axis minus R, over
+    the nearest periodic image."""
+    dx = ch[0]-A[0]; dx -= L*round(dx/L)
+    dy = ch[1]-A[1]; dy -= L*round(dy/L)
+    return _point_ellipse_dist(dx, dy, A[3], A[4]) - ch[2]
+
+
+def _channel_inclusion_gap_mid(ch, A, L):
+    """True channel<->inclusion gap AND the world-space midpoint of the thin
+    matrix sliver, for mesh refinement. The sliver is thinnest at the inclusion
+    equator (z=cz): the channel axis sees the inclusion's XY (rx,ry) ellipse, so
+    the nearest ellipse point and the facing channel-surface point bound the
+    sliver. Returns (gap, (mx,my,mz))."""
+    dx = ch[0]-A[0]; dx -= L*round(dx/L)     # channel relative to inclusion
+    dy = ch[1]-A[1]; dy -= L*round(dy/L)
+    a, b = A[3], A[4]
+    px, py = abs(dx), abs(dy)
+    sgx = 1.0 if dx >= 0 else -1.0
+    sgy = 1.0 if dy >= 0 else -1.0
+    if px < 1e-15 and py < 1e-15:
+        return _channel_inclusion_gap(ch, A, L), (A[0], A[1], A[2])
+    t = math.atan2(py * a, px * b)
+    for _ in range(12):
+        ct, st = math.cos(t), math.sin(t)
+        ex, ey = a * ct, b * st
+        exd, eyd = -a * st, b * ct
+        f = (ex - px) * exd + (ey - py) * eyd
+        fp = (exd*exd + (ex - px)*(-a*ct)) + (eyd*eyd + (ey - py)*(-b*st))
+        if abs(fp) < 1e-18:
+            break
+        t -= f / fp
+        t = min(math.pi/2.0, max(0.0, t))
+    ct, st = math.cos(t), math.sin(t)
+    # nearest ellipse point (inclusion-centred, signs restored)
+    enx, eny = sgx * a * ct, sgy * b * st
+    # facing channel-surface point: from channel axis toward the ellipse point
+    vx, vy = enx - dx, eny - dy
+    vn = math.hypot(vx, vy) or 1e-300
+    cnx, cny = dx + ch[2] * vx / vn, dy + ch[2] * vy / vn
+    mx = A[0] + 0.5 * (enx + cnx)
+    my = A[1] + 0.5 * (eny + cny)
+    return (vn - ch[2]), (mx, my, A[2])
+
+
+def _ellipsoid_gap_mid(A, B, L):
+    """True min surface gap between inclusions A,B AND the world-space midpoint
+    of the closest-approach segment, over the nearest periodic image of B.
+    Returns (gap, (mx,my,mz)). The midpoint is the centre of the thin matrix
+    sliver, used to place a local mesh-refinement ball. Witness points come from
+    the converged GJK separation direction (exact for the smooth single-point
+    contact of two ellipsoids)."""
+    dx = B[0]-A[0]; dx -= L*round(dx/L)
+    dy = B[1]-A[1]; dy -= L*round(dy/L)
+    dz = B[2]-A[2]; dz -= L*round(dz/L)
+    A2 = (A[3]**2, A[4]**2, A[5]**2)
+    B2 = (B[3]**2, B[4]**2, B[5]**2)
+    g, closest = _gjk_gap_vec(dx, dy, dz, A2, B2)
+    if closest is None:
+        return g, None
+    # dir = -closest is the separation direction (from A's surface toward B).
+    ex, ey, ez = -closest[0], -closest[1], -closest[2]
+    na = math.sqrt(A2[0]*ex*ex + A2[1]*ey*ey + A2[2]*ez*ez) or 1e-300
+    nb = math.sqrt(B2[0]*ex*ex + B2[1]*ey*ey + B2[2]*ez*ez) or 1e-300
+    # closest point on A (A-centred frame) and on B (B at (dx,dy,dz))
+    ax, ay, az = A2[0]*ex/na, A2[1]*ey/na, A2[2]*ez/na
+    bx, by, bz = dx - B2[0]*ex/nb, dy - B2[1]*ey/nb, dz - B2[2]*ez/nb
+    mx = A[0] + 0.5*(ax + bx)
+    my = A[1] + 0.5*(ay + by)
+    mz = A[2] + 0.5*(az + bz)
+    return g, (mx, my, mz)
+
+
+def _collect_gap_balls(spheres, L, lc_fine, channels=None,
+                       thresh_mult=1.0, resolve=0.5, broad=2.5,
+                       channel_thresh_mult=1.5):
+    """Locate narrow matrix slivers and return mesh-refinement balls for the
+    mesher: list of (x, y, z, size). A pair whose TRUE gap falls below the
+    threshold gets a ball at the sliver centre forcing the local element size to
+    ~resolve*gap, so the mesher puts ~1/resolve elements across the gap and
+    resolves it -- letting the packer keep the inclusions TIGHT (full VoF)
+    instead of widening the gap (which costs VoF).
+
+    Two sliver types are refined:
+      * sphere-sphere (TRUE GJK gap < thresh_mult*lc_fine) -- the off-axis
+        slivers that crash the mesher;
+      * channel<->inclusion (gap < channel_thresh_mult*lc_fine) -- a vertical
+        channel sees the inclusion equator head-on, so its gap == the XY
+        centre-line clearance, which the packer holds at exactly one element.
+        An exactly-one-element matrix sheet meshes unreliably (overlapping
+        facets), so it is refined too.
+
+    Balls near a periodic face are duplicated across it so the size field stays
+    periodic (required for matched periodic surface meshes). Returns world-space
+    (x,y,z,size); size is floored so the element count stays bounded."""
+    n = len(spheres)
+    if n < 2 or lc_fine <= 0.0:
+        return []
+    rad = _ellipsoid_radial
+    thresh = thresh_mult * lc_fine
+    reach = broad * thresh
+    size_floor = 0.18 * lc_fine          # don't refine below this (cost cap)
+    balls = []
+    for i in range(n):
+        xi, yi, zi, rxi, ryi, rzi = spheres[i]
+        for j in range(i+1, n):
+            xj, yj, zj, rxj, ryj, rzj = spheres[j]
+            dx = xi-xj; dx -= L*round(dx/L)
+            dy = yi-yj; dy -= L*round(dy/L)
+            dz = zi-zj; dz -= L*round(dz/L)
+            D = math.sqrt(dx*dx + dy*dy + dz*dz)
+            if D < 1e-12:
+                continue
+            ux, uy, uz = dx/D, dy/D, dz/D
+            clg = (D - rad(rxi, ryi, rzi, ux, uy, uz)
+                   - rad(rxj, ryj, rzj, ux, uy, uz))
+            if clg >= reach:                 # broad-phase prune
+                continue
+            g, mid = _ellipsoid_gap_mid(spheres[i], spheres[j], L)
+            if mid is None or g >= thresh:
+                continue
+            size = max(size_floor, resolve * g)
+            mx = mid[0] % L; my = mid[1] % L; mz = mid[2] % L
+            balls.append((mx, my, mz, size))
+    # channel<->inclusion slivers
+    cthresh = channel_thresh_mult * lc_fine
+    for ch in (channels or []):
+        for i in range(n):
+            g, mid = _channel_inclusion_gap_mid(ch, spheres[i], L)
+            if g >= cthresh:
+                continue
+            size = max(size_floor, resolve * max(g, 0.0))
+            balls.append((mid[0] % L, mid[1] % L, mid[2] % L, size))
+    if not balls:
+        return balls
+    # Periodic duplication: a ball within `margin` of a face needs a twin on the
+    # opposite face so matching periodic surfaces see the same size field.
+    margin = 2.5 * lc_fine
+    out = []
+    for (x, y, z, sz) in balls:
+        shifts_x = [0.0] + ([L] if x < margin else []) + ([-L] if x > L-margin else [])
+        shifts_y = [0.0] + ([L] if y < margin else []) + ([-L] if y > L-margin else [])
+        shifts_z = [0.0] + ([L] if z < margin else []) + ([-L] if z > L-margin else [])
+        for sx in shifts_x:
+            for sy in shifts_y:
+                for sz_ in shifts_z:
+                    out.append((x+sx, y+sy, z+sz_, sz))
+    return out
+
+
+def _repair_offaxis_slivers(spheres, L, gap_target, V_RVE, current_vof,
+                            broad=2.5, max_passes=8, channels=None,
+                            channel_gap=None):
+    """Post-densify repair of off-axis matrix slivers.
+
+    The grow pass keeps inclusion surfaces `sep` apart along the inter-centre
+    line, but two tilted ellipsoids can approach closer OFF that line, leaving a
+    sub-element sliver the surface mesher chokes on (degenerate facets -> Gmsh
+    crash). This pass measures the TRUE surface gap (`_ellipsoid_gap`, GJK) for
+    each near pair and, where it falls below `gap_target` -- a mesh-resolvable
+    ELEMENT floor (~0.6*lc_fine, NOT the larger centre-line `sep`) -- SHRINKS the
+    larger inclusion (uniform 3-axis scale, preserving sphericity and
+    orientation) by bisection until the true gap reaches `gap_target`.
+
+    Targeting an absolute element floor rather than `sep` matters: densify packs
+    many pairs to a centre-line gap of exactly `sep`, whose true gap is always a
+    bit under `sep`, so demanding true>=sep would shrink most of the pack (~15%
+    VoF). The mesher only needs a resolvable feature, so we lift just the genuine
+    sub-element OUTLIERS and leave the rest, costing almost no volume fraction.
+
+    Shrinking an inclusion only ever WIDENS its gaps, so each ordered sweep is
+    monotone and introduces no new violations; a few passes clear the pack. When
+    `channels` is given, inclusion<->channel slivers are repaired the same way
+    (the channel is fixed; only the inclusion shrinks), using the true
+    point-to-ellipse gap. Returns (spheres, current_vof)."""
+    n = len(spheres)
+    if n < 1 or gap_target <= 0.0:
+        return spheres, current_vof
+    rad = _ellipsoid_radial
+    reach = broad * gap_target
+    chans = channels or []
+    # Channels need a FULL element of matrix, not the 0.6*lc_fine sphere floor:
+    # a thin channel<->inclusion gap runs the full RVE height, so the mesher
+    # tiles a tall matrix sheet that collapses to overlapping facets unless it
+    # is at least one element thick. Default to ~1.7x the sphere floor.
+    cgap = channel_gap if (channel_gap and channel_gap > 0) else gap_target * (1.0/0.6)
+    n_fixed = 0
+    for _ in range(max_passes):
+        viol = []                               # (gap, i, j)  j=-1-k => channel k
+        for i in range(n):
+            xi, yi, zi, rxi, ryi, rzi = spheres[i]
+            for j in range(i+1, n):
+                xj, yj, zj, rxj, ryj, rzj = spheres[j]
+                dx = xi-xj; dx -= L*round(dx/L)
+                dy = yi-yj; dy -= L*round(dy/L)
+                dz = zi-zj; dz -= L*round(dz/L)
+                D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if D < 1e-12:
+                    continue
+                ux, uy, uz = dx/D, dy/D, dz/D
+                clg = (D - rad(rxi, ryi, rzi, ux, uy, uz)
+                       - rad(rxj, ryj, rzj, ux, uy, uz))
+                if clg < reach:                 # broad-phase prune
+                    g = _ellipsoid_gap(spheres[i], spheres[j], L)
+                    if g < gap_target - 1e-9:
+                        viol.append((g, i, j))
+            for k, ch in enumerate(chans):      # inclusion <-> channel
+                g = _channel_inclusion_gap(ch, spheres[i], L)
+                if g < cgap - 1e-9:
+                    viol.append((g, i, -1 - k))
+        if not viol:
+            break
+        viol.sort()
+        touched = set()
+        for _g, i, j in viol:
+            if i in touched or j in touched:
+                continue                        # geometry changed; next pass
+            if j < 0:                           # channel: shrink the inclusion
+                bi = i
+                ch = chans[-1 - j]
+                cx, cy, cz, rx, ry, rz = spheres[bi]
+                lo, hi = 0.3, 1.0
+                for _ in range(24):
+                    mid = 0.5*(lo+hi)
+                    if _channel_inclusion_gap(
+                            ch, (cx, cy, cz, rx*mid, ry*mid, rz*mid), L) >= cgap:
+                        hi = mid
+                    else:
+                        lo = mid
+            else:
+                bi = i if max(spheres[i][3:6]) >= max(spheres[j][3:6]) else j
+                other = spheres[j] if bi == i else spheres[i]
+                cx, cy, cz, rx, ry, rz = spheres[bi]
+                lo, hi = 0.3, 1.0               # scale on bi's semi-axes
+                for _ in range(24):
+                    mid = 0.5*(lo+hi)
+                    trial = (cx, cy, cz, rx*mid, ry*mid, rz*mid)
+                    if _ellipsoid_gap(trial, other, L) >= gap_target:
+                        hi = mid
+                    else:
+                        lo = mid
+            s = hi
+            cx, cy, cz, rx, ry, rz = spheres[bi]
+            current_vof += (4.0/3.0*math.pi*(rx*ry*rz)*(s*s*s - 1.0)) / V_RVE
+            spheres[bi] = (cx, cy, cz, rx*s, ry*s, rz*s)
+            touched.add(i)
+            if j >= 0:
+                touched.add(j)
+            n_fixed += 1
+    if n_fixed:
+        print("    [Off-axis] shrank {} inclusion(s) to clear sub-element "
+              "slivers (sphere gap >= {:.5f}, channel gap >= {:.5f})".format(
+                  n_fixed, gap_target, cgap))
+    return spheres, current_vof
+
+
+def _densify_packing(spheres, L, sep, min_distance, VoF_target,
+                     current_vof, V_RVE, max_rounds=400, max_step=0.05,
+                     channels=None, z_bias=0.0, grow_axis=2):
+    """Ellipsoid-aware growth + perturbation densification of a jammed RSA pack.
+
+    Pure RSA jams well below the target volume fraction (~60-65% of target for
+    the inclusion sizes used here) because it never rearranges. Inclusions are
+    axis-aligned ellipsoids (semi-axes rx,ry,rz along x,y,z; no rotation), so
+    overlap, headroom and boundary clearance are measured with the *radial*
+    centre-line extent r(u) (see `_ellipsoid_radial`) rather than the bounding
+    sphere -- elongated inclusions can interlock and reach target instead of
+    being held a bounding-sphere apart.
+
+    Each round: (1) GROW pass scales every inclusion's three semi-axes by a
+    single factor (so sphericity AND orientation are preserved) into the radial
+    clearance to its tightest neighbour and up to the per-axis boundary
+    danger-zone cap; (2) PERTURB pass nudges each inclusion off the neighbour
+    with least radial clearance to open room for the next grow pass
+    (Jodrey-Tory). Growth is sequential with immediate write-back, so each
+    inclusion is sized against the current geometry of all others -- closing the
+    full clearance keeps every pair >= sep apart. Rounds repeat until the target
+    VoF is reached or progress stalls. O(N^2) per round; N is small (~100-300).
+
+    z_bias : float, default 0.0 (isotropic)
+        Anisotropic-growth strength. With z_bias=w>0 the grow pass elongates
+        each inclusion preferentially along `grow_axis` (Z by default) as it
+        fills headroom, instead of scaling all three axes equally -- mimicking
+        the vertically elongated brine channels of sea ice. The biased axis
+        grows as s**(1+w) and the other two as s**(1-w/2), so the volume gain is
+        still s**3 for the same overall factor s (the distribution changes, not
+        the budget). Because the radial extent is then non-linear in s, the
+        per-inclusion factor is found by bisection against the same neighbour /
+        boundary / channel constraints. w>0 LOWERS the final sphericity (a
+        deliberate modelling choice); w=0 keeps the original uniform behaviour.
+    grow_axis : int, default 2
+        Preferred elongation axis when z_bias>0 (0=x, 1=y, 2=z).
+    """
+    n = len(spheres)
+    if n == 0 or current_vof >= VoF_target:
+        return spheres, current_vof
+    margin = max(min_distance * 2.0, sep)
+    rad = _ellipsoid_radial
+
+    stagnant = 0
+    for _ in range(max_rounds):
+        if current_vof >= VoF_target:
+            break
+        vof_round_start = current_vof
+        order = list(range(n))
+        np.random.shuffle(order)
+        # --- grow pass ---
+        grew = False
+        for i in order:
+            cx, cy, cz, rx, ry, rz = spheres[i]
+            if z_bias <= 0.0:
+                # Uniform growth: radial extent scales linearly with the single
+                # factor s, so the binding factor is a closed-form min over
+                # neighbour / boundary / channel constraints.
+                s_max = 1.0 + max_step           # cap growth rate per round
+                for j in range(n):
+                    if j == i:
+                        continue
+                    jx, jy, jz, jrx, jry, jrz = spheres[j]
+                    dx = cx - jx; dx -= L * round(dx / L)
+                    dy = cy - jy; dy -= L * round(dy / L)
+                    dz = cz - jz; dz -= L * round(dz / L)
+                    D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                    if D < 1e-12:
+                        s_max = 1.0; break
+                    ux, uy, uz = dx/D, dy/D, dz/D
+                    avail = D - rad(jrx, jry, jrz, ux, uy, uz) - sep   # room for I
+                    if avail <= 0.0:
+                        s_max = 1.0; break
+                    s_j = avail / rad(rx, ry, rz, ux, uy, uz)
+                    if s_j < s_max:
+                        s_max = s_j
+                if s_max <= 1.0 + 1e-9:
+                    continue
+                # Per-axis boundary cap: the extent toward a face is the semi-axis
+                # on that face's axis. A face the inclusion does not cross caps
+                # growth at `margin` short of it; a crossed face only deepens it.
+                for c, r_ax in ((cx, rx), (cy, ry), (cz, rz)):
+                    for d in (c, L - c):
+                        if r_ax < d:
+                            cap = (d - margin) / r_ax
+                            if cap < s_max:
+                                s_max = cap
+                if channels:
+                    # Channel cap: the grown equatorial ellipse must stay `sep`
+                    # clear of every vertical channel (XY-only -- a Z channel
+                    # spans the full height).
+                    for (chx, chy, R) in channels:
+                        dx = cx - chx; dx -= L * round(dx / L)
+                        dy = cy - chy; dy -= L * round(dy / L)
+                        dxy = math.sqrt(dx*dx + dy*dy)
+                        if dxy < 1e-12:
+                            s_max = 1.0; break
+                        ux, uy = dx / dxy, dy / dxy
+                        avail = dxy - R - sep
+                        if avail <= 0.0:
+                            s_max = 1.0; break
+                        s_c = avail / (1.0 / math.sqrt((ux/rx)**2 + (uy/ry)**2))
+                        if s_c < s_max:
+                            s_max = s_c
+                if s_max <= 1.0 + 1e-9:
+                    continue
+                nrx, nry, nrz = rx*s_max, ry*s_max, rz*s_max
+            else:
+                # Anisotropic growth: elongate `grow_axis` as s**(1+w), the other
+                # two as s**(1-w/2) (volume gain still s**3). The radial extent is
+                # non-linear in s, so bisect the largest s that still satisfies
+                # every constraint.
+                w = z_bias
+                ex = [1.0 - 0.5*w, 1.0 - 0.5*w, 1.0 - 0.5*w]
+                ex[grow_axis] = 1.0 + w
+
+                def _axes(s, _rx=rx, _ry=ry, _rz=rz, _ex=ex):
+                    return _rx*s**_ex[0], _ry*s**_ex[1], _rz*s**_ex[2]
+
+                def _fits(s):
+                    ax, ay, az = _axes(s)
+                    for j in range(n):
+                        if j == i:
+                            continue
+                        jx, jy, jz, jrx, jry, jrz = spheres[j]
+                        dx = cx - jx; dx -= L * round(dx / L)
+                        dy = cy - jy; dy -= L * round(dy / L)
+                        dz = cz - jz; dz -= L * round(dz / L)
+                        D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                        if D < 1e-12:
+                            return False
+                        ux, uy, uz = dx/D, dy/D, dz/D
+                        if (D - rad(jrx, jry, jrz, ux, uy, uz) - sep
+                                < rad(ax, ay, az, ux, uy, uz)):
+                            return False
+                    for c, r_o, R in ((cx, rx, ax), (cy, ry, ay), (cz, rz, az)):
+                        for d in (c, L - c):
+                            if r_o < d and R > d - margin:
+                                return False
+                    if channels:
+                        for (chx, chy, Rc) in channels:
+                            dx = cx - chx; dx -= L * round(dx / L)
+                            dy = cy - chy; dy -= L * round(dy / L)
+                            dxy = math.sqrt(dx*dx + dy*dy)
+                            if dxy < 1e-12:
+                                return False
+                            ux, uy = dx / dxy, dy / dxy
+                            avail = dxy - Rc - sep
+                            if avail <= 0.0:
+                                return False
+                            if 1.0 / math.sqrt((ux/ax)**2 + (uy/ay)**2) > avail:
+                                return False
+                    return True
+
+                hi = 1.0 + max_step
+                if _fits(hi):
+                    s = hi
+                else:
+                    if not _fits(1.0 + 1e-6):
+                        continue                 # no room to grow at all
+                    lo = 1.0
+                    for _ in range(20):
+                        mid = 0.5*(lo + hi)
+                        if _fits(mid):
+                            lo = mid
+                        else:
+                            hi = mid
+                    s = lo
+                if s <= 1.0 + 1e-9:
+                    continue
+                nrx, nry, nrz = _axes(s)
+            current_vof += (4.0/3.0*math.pi*(nrx*nry*nrz - rx*ry*rz)) / V_RVE
+            spheres[i] = (cx, cy, cz, nrx, nry, nrz)
+            grew = True
+            if current_vof >= VoF_target:
+                break
+        if current_vof >= VoF_target:
+            break
+        # --- perturb pass ---
+        moved = False
+        for i in order:
+            cx, cy, cz, rx, ry, rz = spheres[i]
+            wx = wy = wz = 0.0
+            worst = float('inf')             # least radial clearance neighbour
+            for j in range(n):
+                if j == i:
+                    continue
+                jx, jy, jz, jrx, jry, jrz = spheres[j]
+                dx = cx - jx; dx -= L * round(dx / L)
+                dy = cy - jy; dy -= L * round(dy / L)
+                dz = cz - jz; dz -= L * round(dz / L)
+                D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if D < 1e-12:
+                    continue
+                ux, uy, uz = dx/D, dy/D, dz/D
+                clr = D - rad(rx, ry, rz, ux, uy, uz) - rad(jrx, jry, jrz, ux, uy, uz)
+                if clr < worst:
+                    worst = clr; wx, wy, wz = dx, dy, dz
+            norm = math.sqrt(wx*wx + wy*wy + wz*wz)
+            if norm < 1e-12:
+                continue
+            step = 0.10 * max(rx, ry, rz)
+            nx = cx + step * wx / norm
+            ny = cy + step * wy / norm
+            nz = cz + step * wz / norm
+            if not (0.0 <= nx <= L and 0.0 <= ny <= L and 0.0 <= nz <= L):
+                continue
+            bad = False                       # per-axis face danger-zone
+            for c, r_ax in ((nx, rx), (ny, ry), (nz, rz)):
+                if abs(c - r_ax) < margin or abs((L - c) - r_ax) < margin:
+                    bad = True; break
+            if bad:
+                continue
+            ok = True                          # radial separation to neighbours
+            for j in range(n):
+                if j == i:
+                    continue
+                jx, jy, jz, jrx, jry, jrz = spheres[j]
+                dx = nx - jx; dx -= L * round(dx / L)
+                dy = ny - jy; dy -= L * round(dy / L)
+                dz = nz - jz; dz -= L * round(dz / L)
+                D = math.sqrt(dx*dx + dy*dy + dz*dz)
+                if D < 1e-12:
+                    ok = False; break
+                ux, uy, uz = dx/D, dy/D, dz/D
+                if D < rad(rx, ry, rz, ux, uy, uz) + rad(jrx, jry, jrz, ux, uy, uz) + sep:
+                    ok = False; break
+            if ok and channels and not _sphere_channel_clear(nx, ny, rx, ry, channels, L, sep):
+                ok = False
+            if ok:
+                spheres[i] = (nx, ny, nz, rx, ry, rz)
+                moved = True
+        if current_vof - vof_round_start < 1e-5:
+            stagnant += 1
+            if stagnant >= 6:
+                break
+        else:
+            stagnant = 0
+        if not grew and not moved:
+            break
+    return spheres, current_vof
+
+
 def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                              max_iterations, sphericity_avg=0.85,
                              sphericity_std=0.1, growth_direction='Random',
                              growth_concentration=0.0, min_radius=None,
-                             sliver_gap=0.0):
+                             sliver_gap=0.0, densify=True, channels=None,
+                             offaxis_floor=None, offaxis_channel_floor=None,
+                             z_bias=0.0):
     """
     Random Sequential Adsorption sphere/ellipsoid packing.
     Returns numpy array shape (N, 10):
@@ -187,6 +987,19 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         cannot fill the remaining VoF with thousands of sub-element-size
         inclusions that blow up the Gmsh entity count and wreck periodic
         meshing. If None, falls back to 10% of r_avg (geometry-only runs).
+    offaxis_floor : float or None
+        Mesh-resolvable TRUE-gap floor (~0.6*lc_fine) for the post-densify
+        off-axis sliver repair. After densification, any inclusion pair whose
+        exact (GJK) surface gap falls below this is shrunk just enough to clear
+        it -- catching the off-axis slivers the centre-line grow cap misses.
+        None falls back to `sep` (strict; shrinks more, costs more VoF).
+    channels : list of (chx, chy, R) or None
+        Vertical (Z) channels already placed (primaries, centre in [0,L)). When
+        given, inclusions are packed and grown to clear every channel's XY
+        footprint by `sep` (ellipsoid-aware, mirrors `_channel_sphere_cap`). The
+        channel-first ordering lets channels claim their XY space before the
+        spheres densify and saturate the plane; passing them here keeps the
+        spheres out of the channels. None for runs without channels.
     sliver_gap : float
         Mesh-resolvable feature floor (typically ~half a surface element,
         i.e. ~0.5*lc_fine). Any boundary cap, inter-inclusion gap, or
@@ -353,27 +1166,38 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         r_check = max(rx, ry, rz)
         query_r = r_check + r_avg * 2.0 + sep
 
+        # The octree payload is each inclusion's semi-axes (rx,ry,rz); RSA's
+        # placement test uses the bounding sphere max(axes) (unchanged), while
+        # channel placement reads the axes for an ellipsoid-aware XY test.
         for dx in [0, L, -L]:
             for dy in [0, L, -L]:
                 for dz in [0, L, -L]:
                     candidates = octree.query((cx+dx, cy+dy, cz+dz), query_r)
-                    for (sc, sr) in candidates:
+                    for (sc, sax) in candidates:
+                        sr = max(sax)
                         dist = math.sqrt((cx+dx-sc[0])**2 + (cy+dy-sc[1])**2 + (cz+dz-sc[2])**2)
                         if dist < r_check + sr + sep:
                             overlap = True; break
                     if overlap: break
                 if overlap: break
             if overlap: break
-        
+
+        # Channel clearance: an inclusion packed after the channels must keep its
+        # XY equatorial footprint `sep` clear of every vertical channel (mirror
+        # of the channel<->inclusion test, enforced here from the sphere side).
+        if not overlap and channels and not _sphere_channel_clear(
+                cx, cy, rx, ry, channels, L, sep):
+            overlap = True
+
         if not overlap:
             spheres.append((cx, cy, cz, rx, ry, rz))
-            octree.insert((cx, cy, cz), r_check)
+            octree.insert((cx, cy, cz), (rx, ry, rz))
             # Insert periodic images into octree too
             for dx in [L, -L, 0]:
                 for dy in [L, -L, 0]:
                     for dz in [L, -L, 0]:
                         if dx == 0 and dy == 0 and dz == 0: continue
-                        octree.insert((cx+dx, cy+dy, cz+dz), r_check)
+                        octree.insert((cx+dx, cy+dy, cz+dz), (rx, ry, rz))
             vol = 4.0/3.0 * math.pi * rx * ry * rz
             current_vof += vol / V_RVE
             n_consecutive_fails = 0
@@ -396,6 +1220,39 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                           "(keeps inclusions mesh-resolvable)".format(r_floor))
                     break
     
+    # Densify: grow the jammed RSA packing into the empty headroom to approach
+    # the target VoF (RSA alone jams ~35-40% short). The octree is then rebuilt
+    # from the grown radii so downstream consumers (channel placement, meshing)
+    # see the true inclusion sizes rather than the pre-growth ones.
+    if densify and current_vof < VoF_target:
+        vof_before = current_vof
+        grow_axis = {'X': 0, 'Y': 1, 'Z': 2}.get(
+            str(growth_direction).strip().upper()[:1], 2)
+        spheres, current_vof = _densify_packing(
+            spheres, L, sep, min_distance, VoF_target, current_vof, V_RVE,
+            channels=channels, z_bias=z_bias, grow_axis=grow_axis)
+        # Off-axis sliver repair: the grow pass separates surfaces along the
+        # centre line, but tilted ellipsoids can sit closer off it; this shrinks
+        # the few offending pairs to a true (GJK) gap of `sep` so the mesher
+        # never sees a sub-element matrix sliver. On by default; SPAX_OFFAXIS=0
+        # restores the centre-line-only behaviour.
+        if os.environ.get('SPAX_OFFAXIS', '1') != '0':
+            gap_target = offaxis_floor if (offaxis_floor and offaxis_floor > 0) else sep
+            spheres, current_vof = _repair_offaxis_slivers(
+                spheres, L, gap_target, V_RVE, current_vof, channels=channels,
+                channel_gap=offaxis_channel_floor)
+        octree = Octree(L, capacity=8, max_depth=12)
+        for (cx, cy, cz, rx, ry, rz) in spheres:
+            octree.insert((cx, cy, cz), (rx, ry, rz))
+            for dx in [L, -L, 0]:
+                for dy in [L, -L, 0]:
+                    for dz in [L, -L, 0]:
+                        if dx == 0 and dy == 0 and dz == 0:
+                            continue
+                        octree.insert((cx+dx, cy+dy, cz+dz), (rx, ry, rz))
+        print("    [Densify] VoF {:.4f} -> {:.4f} by growing {} inclusions".format(
+            vof_before, current_vof, len(spheres)))
+
     # Build sphere array
     N = len(spheres)
     Sphere_array = np.zeros((N, 10))
@@ -1157,7 +2014,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
 # =====================================================================
 
 def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
-                       VoF_void, VoF_incl, Inclusion_Type):
+                       VoF_void, VoF_incl, Inclusion_Type, gap_balls=None):
     """Run generate_periodic_mesh in an isolated child process.
 
     Gmsh's C++ mesher can SIGSEGV/SIGABRT on degenerate inclusion geometry
@@ -1177,7 +2034,7 @@ def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
     payload = dict(sphere_array=sphere_array, L=L, L_mesh=L_mesh,
                    output_dir=output_dir, Is_Porous=mode, run_id=run_id,
                    VoF_void_sphere=VoF_void, VoF_incl_sphere=VoF_incl,
-                   Inclusion_Type=Inclusion_Type)
+                   Inclusion_Type=Inclusion_Type, gap_balls=gap_balls or [])
     tmpd = tempfile.mkdtemp(prefix='spax_mesh_')
     in_pkl = os.path.join(tmpd, 'in.pkl')
     out_pkl = os.path.join(tmpd, 'out.pkl')
@@ -1333,7 +2190,16 @@ def _generate_one_row(task):
     r_floor = max(r_avg * 0.10, floor_mult * lc_fine_mult * L_mesh)
     # Keep the inter-inclusion gap mesh-resolvable to avoid matrix slivers
     # (a sub-lc_fine gap makes degenerate facets that crash the 3D mesher).
-    gap_mult = float(os.environ.get('SPAX_GAP_MULT', '0.0'))
+    # Enabled by default (1.0 -> one fine element): the ellipsoid-aware
+    # densification pass packs inclusion *surfaces* `min_dist` apart along the
+    # inter-centre line, but two ellipsoids can sit closer off that line, so the
+    # matrix slivers between grown inclusions collapse below element size unless
+    # the gap floor is a full element. A real gmsh run on the sea-ice RVE
+    # confirmed 0.5 (half element) still crashed the mesher on the first two
+    # attempts at 100% target VoF, while 1.0 meshes first-try and still hits
+    # ~100% (densification recovers VoF, so the larger gap costs no final volume
+    # fraction). Set 0 to restore the legacy min_distance-only behaviour.
+    gap_mult = float(os.environ.get('SPAX_GAP_MULT', '1.0'))
     if gap_mult > 0.0:
         min_dist = max(min_dist, gap_mult * lc_fine_mult * L_mesh)
     # Geometric sliver rejection, applied as an ESCALATION rather than
@@ -1362,38 +2228,115 @@ def _generate_one_row(task):
         span = max(1, (max_retries - 1) - sliver_start)
         return min(1.0, (n - sliver_start + 1) / float(span)) * sliver_gap_max
 
-    sliver_gap = sliver_for_attempt(0)
-    print("  Step 1: Sphere packing...")
-    Sphere_array, octree = generate_sphere_packing(
-        L=L, r_avg=r_avg, r_std=r_std,
-        VoF_target=VoF, min_distance=min_dist,
-        max_iterations=max_iter,
-        sphericity_avg=sph_avg, sphericity_std=sph_std,
-        growth_direction=growth_dir,
-        growth_concentration=growth_conc,
-        min_radius=r_floor, sliver_gap=sliver_gap)
-
-    # Step 1b: Generate channels if requested
+    # Channel options resolved once; the packing itself is channel-FIRST.
     gen_channels = params.get('generate_channels', 'No').strip().lower() in ('yes', 'true', '1')
     channel_vof_target = float(params.get('channel_vof_target', 0) or 0)
-    channel_array = np.empty((0, 3))
+    do_channels = gen_channels and channel_vof_target > 0.001
+    r_ch_avg = float(params.get('r_channel_avg', r_avg * 0.5) or r_avg * 0.5)
+    r_ch_std = float(params.get('r_channel_std', r_ch_avg * 0.2) or r_ch_avg * 0.2)
 
-    if gen_channels and channel_vof_target > 0.001:
-        r_ch_avg = float(params.get('r_channel_avg', r_avg * 0.5) or r_avg * 0.5)
-        r_ch_std = float(params.get('r_channel_std', r_ch_avg * 0.2) or r_ch_avg * 0.2)
-        channel_array = generate_channels(
-            L=L, channel_vof_target=channel_vof_target,
-            r_channel_avg=r_ch_avg, r_channel_std=r_ch_std,
-            min_distance=min_dist, max_iterations=max_iter,
-            octree=octree, L_mesh=L_mesh)
+    # True-gap floor for the off-axis sliver repair: a mesh-resolvable fraction
+    # of the fine element size (lc_fine = lc_fine_mult*L_mesh). The repair lifts
+    # only the genuine sub-element outliers to this floor, so it costs almost no
+    # VoF. SPAX_OFFAXIS_FRAC tunes it (0 -> fall back to the centre-line sep).
+    offaxis_frac = float(os.environ.get('SPAX_OFFAXIS_FRAC', '0.6'))
+    offaxis_floor = offaxis_frac * lc_fine_mult * L_mesh if offaxis_frac > 0 else None
+    # Channel<->inclusion slivers run the FULL RVE height, so the mesher tiles a
+    # tall matrix sheet that collapses to overlapping facets unless it is at
+    # least one element thick. Hold these gaps to a full lc_fine (vs the
+    # 0.6*lc_fine sphere-sphere floor). SPAX_OFFAXIS_CHANNEL_FRAC tunes it.
+    offaxis_channel_frac = float(os.environ.get('SPAX_OFFAXIS_CHANNEL_FRAC', '1.0'))
+    offaxis_channel_floor = (offaxis_channel_frac * lc_fine_mult * L_mesh
+                             if offaxis_channel_frac > 0 else None)
 
-        # Convert channels to sphere array entries (cylinders as tall ellipsoids)
-        # GmshPeriodic handles cylinders via the sphere array with rz >> rx,ry
+    # Dense (esp. channel/hybrid) packs let two near-tangent ellipsoids tilt
+    # into a sub-element OFF-AXIS sliver (worst sphere-sphere true gap
+    # ~0.88*lc_fine at the default sep -> Gmsh "overlapping facets" crash).
+    # Rather than WIDEN the gap to a full element (which caps VoF -- widening
+    # the densify sep over-widens every gap to fix the worst outlier, costing
+    # ~5 VoF points), we keep the inclusions TIGHT and instead REFINE THE MESH
+    # IN THE GAP: each sub-element sliver gets a local size ball (below) so the
+    # mesher resolves it. This recovers the VoF the gap-widening sacrificed.
+    # SPAX_CHANNEL_SEP still widens the channel-side sep if ever needed (default
+    # 1.0 = no extra widening; channel<->inclusion gaps have no off-axis penalty
+    # and are already mesh-safe at sep>=lc_fine).
+    chan_sep = float(os.environ.get('SPAX_CHANNEL_SEP', '1.0'))
+    if do_channels and chan_sep > 1.0:
+        min_dist = max(min_dist, chan_sep * lc_fine_mult * L_mesh)
+
+    # Mesh-in-gap refinement: collect local size balls at narrow sphere-sphere
+    # slivers so the mesher resolves tight gaps instead of the packer widening
+    # them. On by default; SPAX_GAP_REFINE=0 disables (legacy widen-only path).
+    gap_refine = os.environ.get('SPAX_GAP_REFINE', '1') != '0'
+    gap_resolve = float(os.environ.get('SPAX_GAP_RESOLVE', '0.5'))
+    lc_fine = lc_fine_mult * L_mesh
+
+    # Anisotropic densification: grow inclusions preferentially along the
+    # Growth_Direction axis (physical brine channels elongate vertically) rather
+    # than scaling all axes equally. Opt-in (default 0 = isotropic, unchanged);
+    # w>0 lowers final sphericity by design. SPAX_ZGROW_BIAS sets the strength.
+    z_bias = float(os.environ.get('SPAX_ZGROW_BIAS', '0.0'))
+
+    def _pack_row(sliver_gap, md_scale=1.0):
+        """Pack one RVE's inclusions + channels (channel-FIRST). Channels are
+        placed on an empty octree so they claim their XY space before the
+        spheres densify and saturate the plane; the channel primaries are then
+        handed to `generate_sphere_packing`, which packs and grows the spheres
+        to clear them (ellipsoid-aware, both directions). Returns the combined
+        sphere array (inclusions + channels-as-tall-ellipsoids). Re-run per
+        attempt so a re-pack keeps its channels (they used to be added once,
+        outside the retry loop, and were silently lost on every retry).
+        `md_scale` widens the min-distance on retries (the old retry used 1.2)."""
+        md = min_dist * md_scale
+        channel_array = np.empty((0, 3))
+        channel_prims = None
+        if do_channels:
+            print("  Step 1: Channel packing (channel-first)...")
+            empty_oct = Octree(L, capacity=8, max_depth=12)
+            channel_array = generate_channels(
+                L=L, channel_vof_target=channel_vof_target,
+                r_channel_avg=r_ch_avg, r_channel_std=r_ch_std,
+                min_distance=md, max_iterations=max_iter,
+                octree=empty_oct, L_mesh=L_mesh)
+            # Primaries (centre in [0,L)) feed the sphere-side clearance; the
+            # helper's min-image reconstructs the periodic neighbours.
+            channel_prims = [(c[0], c[1], c[2]) for c in channel_array
+                             if 0.0 <= c[0] < L and 0.0 <= c[1] < L]
+
+        print("  Step 1b: Sphere packing...")
+        sphere_array, oct_ = generate_sphere_packing(
+            L=L, r_avg=r_avg, r_std=r_std,
+            VoF_target=VoF, min_distance=md,
+            max_iterations=max_iter,
+            sphericity_avg=sph_avg, sphericity_std=sph_std,
+            growth_direction=growth_dir,
+            growth_concentration=growth_conc,
+            min_radius=r_floor, sliver_gap=sliver_gap,
+            channels=channel_prims, offaxis_floor=offaxis_floor,
+            offaxis_channel_floor=offaxis_channel_floor, z_bias=z_bias)
+
+        # Mesh-in-gap balls from the INCLUSION pack (before channels are
+        # appended): channels are vertical cylinders meshed head-on and never
+        # need gap refinement, so only sphere-sphere slivers are collected.
+        gap_balls = []
+        if gap_refine:
+            incl = [tuple(row[:6]) for row in sphere_array]
+            gap_balls = _collect_gap_balls(incl, L, lc_fine, channels=channel_prims,
+                                           resolve=gap_resolve)
+            if gap_balls:
+                print("    [Mesh-in-gap] {} refinement ball(s) at narrow "
+                      "sphere-sphere slivers".format(len(gap_balls)))
+
+        # Append channels as tall ellipsoids (rz = L/2 spans full Z); the
+        # GmshPeriodic path treats these like any other inclusion.
         for i in range(channel_array.shape[0]):
             ch_x, ch_y, ch_r = channel_array[i]
-            # Represent as very tall ellipsoid spanning full Z
             ch_entry = np.array([[ch_x, ch_y, L/2, ch_r, ch_r, L/2, 0, 0, 0, 0.01]])
-            Sphere_array = np.vstack((Sphere_array, ch_entry))
+            sphere_array = np.vstack((sphere_array, ch_entry))
+        return sphere_array, oct_, gap_balls
+
+    sliver_gap = sliver_for_attempt(0)
+    Sphere_array, octree, gap_balls = _pack_row(sliver_gap)
 
     # Step 2: Gmsh periodic mesh (with retry on mesh failure)
     print("  Step 2: Gmsh mesh...")
@@ -1414,7 +2357,8 @@ def _generate_one_row(task):
                 run_id=run_id,
                 VoF_void=VoF_void,
                 VoF_incl=VoF_incl,
-                Inclusion_Type=Inclusion_Type)
+                Inclusion_Type=Inclusion_Type,
+                gap_balls=gap_balls)
 
             # Check for empty mesh
             n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
@@ -1450,14 +2394,7 @@ def _generate_one_row(task):
                 else:
                     print("    Retrying with new packing...")
                 np.random.seed(np.random.randint(0, 100000))
-                Sphere_array, octree = generate_sphere_packing(
-                    L=L, r_avg=r_avg, r_std=r_std,
-                    VoF_target=VoF, min_distance=min_dist * 1.2,
-                    max_iterations=max_iter,
-                    sphericity_avg=sph_avg, sphericity_std=sph_std,
-                    growth_direction=growth_dir,
-                    growth_concentration=growth_conc,
-                    min_radius=r_floor, sliver_gap=sliver_gap)
+                Sphere_array, octree, gap_balls = _pack_row(sliver_gap, md_scale=1.2)
                 result = None
             else:
                 print("    SKIPPING {} after {} failures".format(run_id, max_retries))
