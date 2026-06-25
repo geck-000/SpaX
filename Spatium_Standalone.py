@@ -1603,6 +1603,19 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
     n_nodes = len(nodes)
     n_elements = len(elements)
     print("    Read {} nodes, {} elements from Gmsh .inp".format(n_nodes, n_elements))
+
+    # Gmsh -> Abaqus C3D10 mid-edge node remap. Gmsh's 10-node tet orders its
+    # last two mid-edge nodes as [..., m03, m23, m13] whereas Abaqus C3D10 wants
+    # [..., m03, m13, m23] (nodes 9 and 10 swapped). Without this every element
+    # reads as a near-planar, zero/negative-volume tet and the input processor
+    # aborts. Linear (4-node) elements are untouched.
+    _n_remapped = 0
+    for label, (etype, elset, conn) in elements.items():
+        if len(conn) == 10:
+            conn[8], conn[9] = conn[9], conn[8]
+            _n_remapped += 1
+    if _n_remapped:
+        print("    Remapped {} C3D10 elements to Abaqus mid-node order".format(_n_remapped))
     
     # ---- Read periodic pairs ----
     pairs = {'X': [], 'Y': [], 'Z': []}
@@ -1649,7 +1662,11 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
     # in bending; the hybrid formulation adds an internal pressure DOF that
     # relieves that locking at the same node count, giving a far better
     # second-order (bending) response.
-    elem_type = 'C3D4H'
+    # Detect element ORDER from the mesh actually read: SPAX_MESH_ORDER=2 emits
+    # quadratic 10-node tets (Gmsh "Tetrahedron 10"), which are essentially
+    # locking-free in bending. Keep the hybrid (H) suffix the code intends.
+    _max_conn = max((len(c) for (_t, _e, c) in elements.values()), default=4)
+    elem_type = 'C3D10H' if _max_conn >= 10 else 'C3D4H'
     
     # ---- Determine loading ----
     # step_name is consumed at the *Step card below; step_desc only labels the
@@ -2034,7 +2051,10 @@ def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
     payload = dict(sphere_array=sphere_array, L=L, L_mesh=L_mesh,
                    output_dir=output_dir, Is_Porous=mode, run_id=run_id,
                    VoF_void_sphere=VoF_void, VoF_incl_sphere=VoF_incl,
-                   Inclusion_Type=Inclusion_Type, gap_balls=gap_balls or [])
+                   Inclusion_Type=Inclusion_Type, gap_balls=gap_balls or [],
+                   # SPAX_MESH_ORDER=2 -> quadratic C3D10 (locking-free in
+                   # bending). Default 1 (C3D4) keeps existing runs unchanged.
+                   mesh_order=int(os.environ.get('SPAX_MESH_ORDER', '1')))
     tmpd = tempfile.mkdtemp(prefix='spax_mesh_')
     in_pkl = os.path.join(tmpd, 'in.pkl')
     out_pkl = os.path.join(tmpd, 'out.pkl')
@@ -2220,13 +2240,27 @@ def _generate_one_row(task):
     sliver_gap_max = sliver_mult * lc_fine_mult * L_mesh
     max_retries = int(os.environ.get('SPAX_MAX_RETRIES', '6'))
 
+    # Quadratic (C3D10) needs a THICKER minimum boundary cap than linear: a thin
+    # face triangle that meshes fine and is positive-volume as a linear C3D4
+    # becomes a negative-Jacobian quadratic element (Abaqus then aborts). The
+    # escalation below never rescues this because Gmsh succeeds at attempt 0 (the
+    # sliver only fails downstream in Abaqus, so the retry loop is never entered).
+    # So for order-2 we reject grazing caps from attempt 0 with a constant floor
+    # of SPAX_SLIVER_MULT_Q * lc_fine (default 1.0, vs the linear 0.5). Costs a
+    # little VoF; eliminates the face slivers at the DEFAULT element size.
+    _mesh_order = int(os.environ.get('SPAX_MESH_ORDER', '1'))
+    sliver_floor_q = (float(os.environ.get('SPAX_SLIVER_MULT_Q', '1.0'))
+                      * lc_fine_mult * L_mesh) if _mesh_order == 2 else 0.0
+
     def sliver_for_attempt(n):
-        # n = 0-based attempt index. 0 until sliver_start, then ramp
-        # linearly to sliver_gap_max on the final attempt.
-        if sliver_gap_max <= 0.0 or n < sliver_start:
-            return 0.0
-        span = max(1, (max_retries - 1) - sliver_start)
-        return min(1.0, (n - sliver_start + 1) / float(span)) * sliver_gap_max
+        # n = 0-based attempt index. Quadratic carries a constant cap-rejection
+        # floor from attempt 0; on top of that the linear escalation ramps from
+        # sliver_start to sliver_gap_max on the final attempt.
+        ramp = 0.0
+        if sliver_gap_max > 0.0 and n >= sliver_start:
+            span = max(1, (max_retries - 1) - sliver_start)
+            ramp = min(1.0, (n - sliver_start + 1) / float(span)) * sliver_gap_max
+        return max(ramp, sliver_floor_q)
 
     # Channel options resolved once; the packing itself is channel-FIRST.
     gen_channels = params.get('generate_channels', 'No').strip().lower() in ('yes', 'true', '1')

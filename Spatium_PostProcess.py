@@ -75,10 +75,12 @@ def _field_by_label(field, region):
     post-processing, so the bulk read is ~10-100x faster. Falls back to .values
     if bulkDataBlocks is unavailable or empty (older releases / odd fields).
 
-    Returns (labels: int ndarray (n,), data: float ndarray (n, ncomp)).
-    Assumes one value per element (1 integration point, as for C3D4/C3D4H);
-    that matches the volume-weighting the callers already do with whole-element
-    EVOL.
+    Returns (labels: int ndarray (n,), data: float ndarray (n, ncomp)), with
+    exactly ONE row per element: integration-point fields (C3D10/C3D10H have 4
+    IPs/element) are collapsed to their per-element MEAN. This is essential for
+    the whole-element EVOL volume-weighting the callers do — without it each of
+    a quadratic element's 4 IP rows would be weighted by the FULL element volume
+    (a 4x over-count of moments/volumes). For C3D4/C3D4H (1 IP) it is a no-op.
     """
     sub = field.getSubset(region=region)
     try:
@@ -102,7 +104,8 @@ def _field_by_label(field, region):
             labs.append(np.asarray(el).ravel())
             dats.append(d)
         if ok and labs:
-            return np.concatenate(labs), np.concatenate(dats, axis=0)
+            return _mean_per_element(np.concatenate(labs),
+                                     np.concatenate(dats, axis=0))
 
     # Fallback: per-element .values (slow path).
     labs, dats = [], []
@@ -111,7 +114,20 @@ def _field_by_label(field, region):
         dats.append(np.asarray(_get_data(v), dtype=float).reshape(-1))
     if not labs:
         return np.array([], dtype=int), np.zeros((0, 1))
-    return np.asarray(labs, dtype=int), np.vstack(dats)
+    return _mean_per_element(np.asarray(labs, dtype=int), np.vstack(dats))
+
+
+def _mean_per_element(labels, data):
+    """Collapse repeated-label rows (one per integration point) to one row per
+    element, taking the mean over integration points. No-op when every label is
+    already unique (1-IP elements)."""
+    ulab, inv = np.unique(labels, return_inverse=True)
+    if len(ulab) == len(labels):
+        return labels, data
+    sums = np.zeros((len(ulab), data.shape[1]), dtype=float)
+    np.add.at(sums, inv, data)
+    counts = np.bincount(inv).astype(float)
+    return ulab, sums / counts[:, None]
 
 
 def _aligned(values_map, labels):

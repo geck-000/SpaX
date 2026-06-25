@@ -466,12 +466,27 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     gmsh.option.setNumber("Geometry.OCCFixSmallFaces", 1)
     gmsh.option.setNumber("Geometry.OCCSewFaces", 1)
     
+    # Optional 2D mesher override (SPAX_MESH_ALGO2D, e.g. 6=Frontal-Delaunay).
+    # Left at the Gmsh default unless set — forcing it changed element counts
+    # without reducing face slivers (those are handled by cap rejection in the
+    # packer for the quadratic path).
+    _algo2d = os.environ.get('SPAX_MESH_ALGO2D', '')
+    if _algo2d:
+        gmsh.option.setNumber("Mesh.Algorithm", int(_algo2d))
+
     # Global mesh size bounds will be set by the adaptive field below
     gmsh.option.setNumber("Mesh.CharacteristicLengthMax", L_mesh * 3.0)
     gmsh.option.setNumber("Mesh.CharacteristicLengthMin", L_mesh * 0.15)
     
-    if mesh_order == 2:
-        gmsh.option.setNumber("Mesh.ElementOrder", 2)
+    # NOTE: order-2 (C3D10) is NOT requested here. Setting Mesh.ElementOrder=2
+    # before the custom periodic workflow makes generate(2)/(3) emit quadratic
+    # surface/volume meshes whose mid-edge nodes the manual master->slave face
+    # copy does not reproduce, leaving the boundary inconsistent and crashing
+    # the 3D mesher. Instead we mesh LINEARLY through the whole periodic
+    # workflow and promote to quadratic with setOrder(2) AFTER generate(3): the
+    # boundary faces are planar, so the added mid-edge nodes land at edge
+    # midpoints of already-periodic linear edges and are themselves exact
+    # periodic translates (the coordinate-based pair matcher then pairs them).
 
     # ROOT-CAUSE FIX for non-conforming periodic faces.
     # By default (=1) Gmsh extends/interpolates element sizes inward from each
@@ -943,7 +958,69 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     if optimise:
         print("  Optimising mesh...")
         gmsh.model.mesh.optimize("", force=True)
-    
+
+    # Promote linear -> quadratic AFTER the periodic linear mesh is complete.
+    # Straight-sided (mid-nodes at edge midpoints, the default) so the boundary
+    # mid-edge nodes stay exact periodic translates. Interior inclusion surfaces
+    # are not on the periodic boundary, so leaving them straight-sided does not
+    # affect periodicity (it is a minor geometric-accuracy trade we accept for
+    # strict periodicity). Done before all node harvesting below so the new
+    # mid-edge nodes are exported and PBC-paired.
+    if mesh_order == 2:
+        # A few skewed sliver tets near curved inclusion surfaces are
+        # positive-VOLUME as linear C3D4 but go negative-JACOBIAN at the
+        # quadratic Gauss points once midpoint nodes are added (Abaqus then
+        # aborts: "volume zero/small/negative"). Fix the QUALITY of the LINEAR
+        # mesh first (Netgen de-slivers by moving interior nodes; like the
+        # default optimiser it respects the fixed periodic boundary, so the
+        # 0-skipped pairing is preserved), THEN promote straight-sided so the
+        # planar-boundary mid-nodes stay exact periodic translates. We do NOT
+        # use optimize("HighOrder"): it slides boundary mid-nodes in-plane and
+        # breaks periodicity.
+        try:
+            # Aggressive: optimise every element below 0.5 quality, repeat so
+            # edge-swaps/relocations cascade through clustered slivers.
+            gmsh.option.setNumber("Mesh.OptimizeThreshold", 0.5)
+            for _ in range(int(os.environ.get('SPAX_OPT_PASSES', '3'))):
+                gmsh.model.mesh.optimize("Netgen")
+        except Exception as _e:
+            print("    [Netgen optimise] skipped: {}".format(_e))
+        print("  Promoting to quadratic (C3D10) via setOrder(2)...")
+        # STRAIGHT-SIDED second order: place every mid-edge node at the edge
+        # midpoint instead of projecting it onto the CAD surface. Two reasons:
+        # (1) projecting inclusion-surface mid-nodes onto the spheres curves the
+        #     elements and INVERTS the coarse ones on high curvature (minSICN<0);
+        # (2) straight outer-boundary mid-nodes stay exact periodic translates.
+        # The geometric cost (faceted inclusion surfaces) is small at this element
+        # size and is the same approximation the linear mesh already makes.
+        gmsh.option.setNumber("Mesh.SecondOrderLinear", 1)
+        gmsh.model.mesh.setOrder(2)
+
+        # Validity GATE: any straight-sided C3D10 built on a too-distorted linear
+        # tet has a negative Jacobian at its Gauss points and Abaqus aborts on
+        # input ("volume zero/small/negative"). These slivers are STOCHASTIC
+        # (a function of the random packing), so rather than chase them with
+        # global refinement we reject the whole mesh and let the parent retry
+        # loop RE-PACK (with escalated cap/sliver rejection) until a packing
+        # meshes cleanly. minSICN < 0 == inverted; require a small positive
+        # margin so Abaqus' stricter check also passes. Tunable via SPAX_MIN_SICN.
+        try:
+            etags3 = gmsh.model.mesh.getElements(3)[1]
+            etags3 = np.concatenate(etags3) if len(etags3) else np.array([])
+            q = gmsh.model.mesh.getElementQualities(etags3.astype('uint64'), "minSICN")
+            min_sicn = float(np.min(q)) if len(q) else 1.0
+            n_bad = int(np.sum(np.asarray(q) < float(os.environ.get('SPAX_MIN_SICN', '0.01'))))
+            print("  Quadratic quality: min(minSICN)={:.4f}, {} element(s) below tol".format(
+                min_sicn, n_bad))
+            if n_bad > 0:
+                raise RuntimeError(
+                    "quadratic mesh has {} inverted/degenerate C3D10 element(s) "
+                    "(min minSICN={:.4f}) — re-pack".format(n_bad, min_sicn))
+        except RuntimeError:
+            raise
+        except Exception as _e:
+            print("    [Jacobian gate] quality query unavailable: {}".format(_e))
+
     # ---- Get mesh statistics ----
     node_tags, node_coords, _ = gmsh.model.mesh.getNodes()
     n_nodes = len(node_tags)
@@ -1657,7 +1734,8 @@ if __name__ == '__main__':
             run_id=_p['run_id'], VoF_void_sphere=_p['VoF_void_sphere'],
             VoF_incl_sphere=_p['VoF_incl_sphere'],
             Inclusion_Type=_p['Inclusion_Type'],
-            gap_balls=_p.get('gap_balls'))
+            gap_balls=_p.get('gap_balls'),
+            mesh_order=_p.get('mesh_order', 1))
         with open(out_pkl, 'wb') as _f:
             pickle.dump(_res, _f)
         sys.exit(0)
