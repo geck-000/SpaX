@@ -47,9 +47,17 @@ def main():
     print("First-order (linear, converged): E*=%.3g GPa  nu*=%.3f  G*=%.3g GPa"%(
         Estar/1e9, nustar, Gstar/1e9))
 
-    # quadratic homogeneous baseline f_quad(L)
+    # quadratic homogeneous baseline f_quad(L). Default to the xz homogeneous
+    # runs; override with one or more CSVs as extra args (e.g. an xy baseline
+    # for an xy-bending study — equal to xz for an isotropic cube, but pass it
+    # explicitly to verify rather than assume).
+    base_files = sys.argv[2:] if len(sys.argv) > 2 else [
+        "results_homog_q_small.csv", "results_homog_q.csv"]
     fq = {}
-    for r in load("results_homog_q_small.csv") + load("results_homog_q.csv"):
+    base_rows = []
+    for bf in base_files:
+        base_rows += load(bf)
+    for r in base_rows:
         D=fnum(r['D_rve']); E=fnum(r['E_eff']); nu=fnum(r['nu_eff']); L=fnum(r['L'])
         if D>0 and E>0:
             fq[round(L,3)] = D/(E/(1-nu**2)*L**4/12.0)

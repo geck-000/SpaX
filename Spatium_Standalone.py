@@ -1656,17 +1656,26 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         'RP-4': (rp_base + 4, L/2, L/2, L/2),
     }
     
-    # ---- Determine element type ----
-    # C3D4H (hybrid linear tet) for BOTH matrix and inclusion, regardless of
-    # Inclusion_Type. Plain C3D4 locks volumetrically and is excessively stiff
-    # in bending; the hybrid formulation adds an internal pressure DOF that
-    # relieves that locking at the same node count, giving a far better
-    # second-order (bending) response.
-    # Detect element ORDER from the mesh actually read: SPAX_MESH_ORDER=2 emits
-    # quadratic 10-node tets (Gmsh "Tetrahedron 10"), which are essentially
-    # locking-free in bending. Keep the hybrid (H) suffix the code intends.
+    # ---- Determine element type (per phase) ----
+    # Order from the mesh actually read: SPAX_MESH_ORDER=2 emits quadratic
+    # 10-node tets (Gmsh "Tetrahedron 10"), locking-free in bending; else linear.
+    # HYBRID (the 'H' suffix, an internal pressure DOF) is only needed for a
+    # (near-)INCOMPRESSIBLE phase -- it prevents volumetric locking but ADDS a
+    # variable per element and so enlarges/slows the solve. The brine inclusions
+    # (nu~0.49) need it; the compressible MATRIX (nu~0.33) does NOT, and it is
+    # the majority of elements, so making the matrix non-hybrid shrinks the
+    # system with no accuracy loss. Key the suffix on each phase's nu; force
+    # all-hybrid (legacy) with SPAX_FORCE_HYBRID=1.
     _max_conn = max((len(c) for (_t, _e, c) in elements.values()), default=4)
-    elem_type = 'C3D10H' if _max_conn >= 10 else 'C3D4H'
+    _base = 'C3D10' if _max_conn >= 10 else 'C3D4'
+    _force_hyb = os.environ.get('SPAX_FORCE_HYBRID', '0') == '1'
+    _NU_HYB = float(os.environ.get('SPAX_HYBRID_NU', '0.45'))
+    def _etype(nu):
+        return _base + ('H' if (_force_hyb or nu >= _NU_HYB) else '')
+    elem_type_matrix = _etype(nu_matrix)
+    elem_type_sphere = _etype(nu_incl)
+    print("    Element types: matrix={} (nu={:.3f}), inclusion={} (nu={:.3f})".format(
+        elem_type_matrix, nu_matrix, elem_type_sphere, nu_incl))
     
     # ---- Determine loading ----
     # step_name is consumed at the *Step card below; step_desc only labels the
@@ -1736,7 +1745,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             f.write('{}, {}, {}, {}\n'.format(label, x, y, z))
         
         m_start, m_end = matrix_label_range
-        f.write('*Element, type={}, elset=Matrix_Only\n'.format(elem_type))
+        f.write('*Element, type={}, elset=Matrix_Only\n'.format(elem_type_matrix))
         for label in sorted(elements.keys()):
             etype, elset, conn = elements[label]
             if elset == 'Matrix_Only' or (m_start <= label <= m_end):
@@ -1746,7 +1755,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         s_start, s_end = sphere_label_range
         has_spheres = s_start > 0 and s_end >= s_start
         if has_spheres:
-            f.write('*Element, type={}, elset=Sphere_Only\n'.format(elem_type))
+            f.write('*Element, type={}, elset=Sphere_Only\n'.format(elem_type_sphere))
             for label in sorted(elements.keys()):
                 etype, elset, conn = elements[label]
                 if elset == 'Sphere_Only' or (s_start <= label <= s_end):
