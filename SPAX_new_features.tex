@@ -1,0 +1,276 @@
+\documentclass[11pt]{article}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{array}
+\usepackage{xcolor}
+\usepackage[colorlinks=true,linkcolor=blue,urlcolor=blue]{hyperref}
+\usepackage{enumitem}
+
+\newcommand{\code}[1]{\texttt{\small #1}}
+\newcommand{\env}[1]{\texttt{\small #1}}
+
+\title{\textbf{SPAX RVE Toolkit --- New Features}\\[2pt]
+\large Quadratic couple-stress homogenization, anisotropy reporting,\\
+and tool consolidation}
+\author{Spatium development notes}
+\date{June 2026}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+This note documents the features added to the SPAX representative-volume-element
+(RVE) homogenization toolkit. The headline additions are: a second-order
+(quadratic, \code{C3D10H}) periodic bending pipeline that removes the linear-tet
+shear-locking that previously contaminated the apparent couple-stress response;
+a per-phase element formulation that keeps hybrid elements only where they are
+needed; corrected volume-weighted post-processing for multi-integration-point
+elements; full effective-anisotropy reporting including the $6{\times}6$
+elasticity tensor; a permanent implementation of the Choi et al. (2022) Eq.~(19)
+modified-couple-stress (MCST) length-scale extraction; and consolidation of the
+entire workflow into three Python files.
+\end{abstract}
+
+\tableofcontents
+
+%==============================================================
+\section{Overview}
+The toolkit is now contained in three files:
+\begin{itemize}[nosep]
+  \item \code{Spatium\_Standalone.py} --- packing, periodic meshing driver,
+        Abaqus input-deck (\code{.inp}) generation;
+  \item \code{Spatium\_GmshPeriodic.py} --- the periodic Gmsh mesher;
+  \item \code{Spatium\_PostProcess.py} --- ODB extraction, effective properties,
+        anisotropy, and all study-level analyzers.
+\end{itemize}
+All new behaviour is opt-in through environment variables (Table~\ref{tab:env});
+defaults reproduce the previous (linear, isotropic-report) pipeline exactly.
+
+%==============================================================
+\section{Second-order (quadratic) bending elements}
+\label{sec:quad}
+
+\subsection{Motivation}
+Linear tetrahedra (\code{C3D4H}) reproduce a uniform strain field exactly but
+shear-lock severely in bending. On a homogeneous cube (which has, by
+construction, \emph{no} intrinsic length scale) the apparent bending stiffness
+ratio
+\begin{equation}
+  f(L)=\frac{D_\text{rve}}{E_\text{plate}\,L^4/12},
+  \qquad E_\text{plate}=\frac{E}{1-\nu^2},
+\end{equation}
+should equal a size-independent constant. With linear elements $f$ ranged from
+$1.12$ to $1.28$ (worse for coarse, bending-starved meshes); with quadratic
+\code{C3D10H} elements $f\!\approx\!1.0$--$1.08$. The spurious $+12$ to $+28\%$
+was therefore element shear-locking, not physics.
+
+\subsection{The \code{SPAX\_MESH\_ORDER=2} pipeline}
+Setting \env{SPAX\_MESH\_ORDER=2} activates a quadratic mesh. Because the custom
+periodic mesher enforces conformity by copying master face meshes onto slaves,
+order promotion is performed \emph{after} the linear periodic volume mesh is
+complete:
+\begin{enumerate}[nosep]
+  \item generate the conforming linear periodic tetrahedral mesh as usual;
+  \item \code{gmsh.option Mesh.SecondOrderLinear=1} --- keep elements
+        \emph{straight-sided} (mid-edge nodes at edge midpoints). This avoids
+        inverting coarse elements on curved inclusion surfaces and keeps the
+        outer-face mid-edge nodes exact periodic translates;
+  \item \code{gmsh.model.mesh.setOrder(2)};
+  \item a \emph{validity gate}: the minimum scaled-inverse-condition-number
+        (\code{minSICN}) of all 3-D elements is checked; any inverted/degenerate
+        element raises an exception that triggers a re-pack of the
+        microstructure (slivers are stochastic), repeating until a clean mesh is
+        obtained (\env{SPAX\_MIN\_SICN}, default $0.01$).
+\end{enumerate}
+The coordinate-based periodic-pair matcher then pairs the new mid-edge boundary
+nodes automatically (zero skipped pairs).
+
+\subsection{Gmsh\,$\rightarrow$\,Abaqus C3D10 node remap}
+Gmsh orders the last two mid-edge nodes of a ten-node tetrahedron opposite to
+the Abaqus \code{C3D10} convention. Without correction every element is read as
+zero/negative volume and the input processor aborts. The deck writer swaps the
+9th and 10th connectivity entries,
+\[
+\underbrace{[c_0,c_1,c_2,c_3,\,m_{01},m_{12},m_{20},m_{03},\,m_{23},m_{13}]}_{\text{Gmsh}}
+\;\longrightarrow\;
+\underbrace{[c_0,c_1,c_2,c_3,\,m_{01},m_{12},m_{20},m_{03},\,m_{13},m_{23}]}_{\text{Abaqus C3D10}} .
+\]
+
+\subsection{Cap rejection for clean quadratic meshes}
+For order-2 runs the packer rejects inclusion placements that only graze a
+periodic face (thin caps that mesh as positive-volume linear tets but invert as
+quadratic ones). A constant cap-rejection floor of
+$\env{SPAX\_SLIVER\_MULT\_Q}\times\code{lc\_fine}$ (default $1.0$) is enforced
+from the first attempt, eliminating the face slivers at the default element size
+($\sim 16$\,k elements for an $L/d{=}3$ box, versus $\sim 40$\,k from brute-force
+global refinement).
+
+%==============================================================
+\section{Per-phase (heterogeneous) element formulation}
+\label{sec:hybrid}
+The hybrid (\code{H}) formulation adds an internal pressure degree of freedom
+that prevents volumetric locking of (near-)incompressible material, at the cost
+of a larger linear system. Only the brine inclusions ($\nu\!\approx\!0.49$)
+require it; the compressible ice matrix ($\nu\!\approx\!0.33$) does not, and the
+matrix is the majority of elements. The deck writer now selects the element type
+\emph{per phase}, keyed on Poisson's ratio:
+\begin{equation}
+  \text{type}(\nu)=
+  \begin{cases}
+     \code{C3D10H}/\code{C3D4H} & \nu \ge \nu_{H}\ (\text{inclusions}),\\[2pt]
+     \code{C3D10}/\code{C3D4}   & \nu < \nu_{H}\ (\text{matrix}),
+  \end{cases}
+  \qquad \nu_H=\env{SPAX\_HYBRID\_NU}\ (\text{default }0.45).
+\end{equation}
+On a representative $L/d{=}4$ porous bending solve this reduced the system from
+$247{,}549$ to $222{,}640$ variables ($-10\%$) and the wall-clock solve time by
+$13\%$, changing $D_\text{rve}$ by $<\!1\%$ (which cancels in the
+homogeneous-calibrated ratio). \env{SPAX\_FORCE\_HYBRID=1} restores the legacy
+all-hybrid behaviour.
+
+%==============================================================
+\section{Post-processing correction for multi-IP elements}
+\label{sec:multiip}
+A quadratic tetrahedron carries four integration points (IPs); a linear one
+carries a single whole-element value. The volume-weighted averages
+$\langle\sigma\rangle = \sum_e \sigma_e V_e / V_\text{RVE}$ and the bending
+moment were written for one value per element. Read na\"ively for \code{C3D10},
+each of an element's four IP rows was weighted by the \emph{full} element volume
+\code{EVOL}, a four-fold over-count of $D_\text{rve}$, $E_\text{eff}$ and the
+solid volume (porosity even went negative). The fix collapses IP rows to their
+per-element mean before weighting,
+\begin{equation}
+  \bar{\sigma}_e=\frac{1}{n_\text{IP}}\sum_{p=1}^{n_\text{IP}}\sigma_{e,p},
+\end{equation}
+inside \code{\_field\_by\_label} (\code{\_mean\_per\_element}); it is a no-op for
+single-IP \code{C3D4}. Note that \emph{dimensionless ratios} ($f$,
+$E_\text{eff}=\sigma/\varepsilon$, $D/D_\text{class}$) are unaffected by the bug
+because the factor cancels; only absolute cross-run comparisons required the fix.
+
+%==============================================================
+\section{Effective anisotropy and the elasticity tensor}
+\label{sec:aniso}
+For a full-tensor run (\env{full\_tensor=Yes}, six uniaxial + shear load cases)
+the post-processor now reports the \emph{directional} effective moduli rather
+than a single scalar:
+\[
+  E_x,E_y,E_z,\quad G_{xy},G_{xz},G_{yz},\quad \nu_x,\nu_y,\nu_z,
+\]
+together with anisotropy indices
+\begin{equation}
+  A=\frac{\max(E_x,E_y,E_z)}{\min(E_x,E_y,E_z)},
+  \qquad
+  R_{z/xy}=\frac{E_z}{\tfrac12(E_x+E_y)} .
+\end{equation}
+$R_{z/xy}$ targets the transverse isotropy of the vertical ($z$) brine-channel
+network. A representative channel RVE returned
+$E_x{=}6.12$, $E_y{=}6.07$, $E_z{=}7.68$~GPa, i.e.\ $R_{z/xy}=1.26$ ---
+$26\%$ stiffer along the channel axis, the columnar-ice signature. The scalar
+$E_\text{eff}/\nu_\text{eff}/G_\text{eff}$ are retained (taken from the declared
+\code{Mode}/\code{Mode2}) for backward compatibility.
+
+The complete anisotropy descriptor, the $6\times6$ effective stiffness
+$C_{ij}$, is produced by the \code{elasticity} sub-command, which assembles the
+columns of $C$ from the volume-averaged stress response to the six unit
+macro-strains.
+
+%==============================================================
+\section{MCST length-scale extraction (Eq.~19)}
+\label{sec:eq19}
+The modified-couple-stress size effect is, following Choi, Lee \& Sim
+(\textit{Mater.\ Des.}\ \textbf{214}, 2022, Eq.~19),
+\begin{equation}
+  E_\text{app}(L)=E_\text{classical}+12\,\mu\left(\frac{\ell}{L}\right)^{2},
+  \qquad E_\text{app}=\frac{12\,D_\text{rve}}{L^{4}} .
+  \label{eq:eq19}
+\end{equation}
+Fitting $E_\text{app}$ against $1/L^2$ over a size sweep yields the length scale
+from the \emph{slope},
+\begin{equation}
+  \ell=\sqrt{\frac{\text{slope}}{12\,\mu}},
+\end{equation}
+which is \emph{reference-free}: the intercept absorbs the (plate vs.\ beam)
+classical modulus, so $\ell$ does not depend on that choice. The intercept itself
+is a useful consistency check --- for our RVEs it lands on $E^\ast/(1-\nu^2)$,
+confirming plate-like bending.
+
+The analyzer also reports, per realization, the bending-vs-first-order modulus
+ratio (geometric plate factor removed),
+\begin{equation}
+  \frac{E_\text{bend}^\text{mat}}{E^\ast_\text{1st}},
+  \qquad E_\text{bend}^\text{mat}=E_\text{app}\,(1-\nu^2),
+\end{equation}
+separating first-order softening (from weak inclusions) from any genuine MCST
+stiffening. A ratio $\approx 1$ with no size trend indicates no length scale;
+a \emph{size-independent} excess indicates classical anisotropy rather than
+couple stress. Applied to the sea-ice microstructures (isolated soft pockets and
+vertical brine channels) the slope is non-positive in both cases: \emph{no
+measurable couple-stress length scale}; the channel excess is the classical
+transverse isotropy of Sec.~\ref{sec:aniso}.
+
+%==============================================================
+\section{Consolidated tool and command-line interface}
+\label{sec:cli}
+All former standalone analysis scripts are folded into
+\code{Spatium\_PostProcess.py}. \code{odbAccess} is imported lazily, so the
+CSV-only analyzers run under a plain \code{python3} with no Abaqus licence.
+
+\begin{center}
+\begin{tabular}{@{}>{\raggedright\arraybackslash}p{0.46\linewidth} >{\raggedright\arraybackslash}p{0.46\linewidth}@{}}
+\toprule
+\textbf{Command} & \textbf{Purpose}\\
+\midrule
+\code{abaqus python \dots\ <csv> <odb\_dir> [out] [idx]} & per-RVE extraction (incl.\ anisotropy)\\
+\code{python \dots\ --merge <parts> <out>} & union per-RVE partial CSVs\\
+\code{python \dots\ analyze eq19 <csv\ldots>} & Eq.~19 MCST fit + bend/1st-order\\
+\code{python \dots\ analyze lengthscale <por> [base\ldots]} & homogeneous-calibrated $\ell$\\
+\code{python \dots\ analyze homog-calib} & homogeneous-cube artifact $f(L)$\\
+\code{python \dots\ analyze hybrid <fo> <bend>} & small-RVE moduli $+$ big-RVE $D_\text{rve}$\\
+\code{python \dots\ analyze rve-study <csv>} & RVE-size convergence (mean/CoV)\\
+\code{abaqus python \dots\ principal <odb> <out>} & principal stresses/strains/energy\\
+\code{abaqus python \dots\ elasticity <dir> <out> <L> <id>} & full $6\times6$ $C_{ij}$\\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%==============================================================
+\section{Environment-variable reference}
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{@{}lll@{}}
+\toprule
+\textbf{Variable} & \textbf{Default} & \textbf{Effect}\\
+\midrule
+\env{SPAX\_MESH\_ORDER}     & \code{1} & \code{2} $\Rightarrow$ quadratic \code{C3D10(H)}\\
+\env{SPAX\_MIN\_SICN}       & \code{0.01} & quadratic element validity floor (re-pack gate)\\
+\env{SPAX\_SLIVER\_MULT\_Q} & \code{1.0} & order-2 cap-rejection floor ($\times$\,\code{lc\_fine})\\
+\env{SPAX\_OPT\_PASSES}     & \code{2/3} & Netgen quality passes before promotion\\
+\env{SPAX\_HYBRID\_NU}      & \code{0.45} & $\nu$ threshold for hybrid elements\\
+\env{SPAX\_FORCE\_HYBRID}   & \code{0} & \code{1} $\Rightarrow$ legacy all-hybrid\\
+\env{SPAX\_MESH\_ALGO2D}    & (Gmsh) & optional 2-D mesher override\\
+\env{SPAX\_SEED}            & (entropy) & reproducible packing (deterministic per row)\\
+\bottomrule
+\end{tabular}
+\end{table}
+
+%==============================================================
+\section{Validation summary}
+\begin{itemize}[nosep]
+  \item Homogeneous cube ($\ell\!=\!0$ by construction): quadratic $f\!\to\!1.0$
+        (vs.\ $1.12$--$1.28$ linear), confirming the locking removal.
+  \item Per-phase elements: $D_\text{rve}$ within $1\%$ of all-hybrid at
+        $-13\%$ solve time.
+  \item Multi-IP fix: homogeneous $f$ unchanged (it is a ratio); porous absolute
+        $D_\text{rve}$, $E_\text{eff}$ and porosity restored to physical values.
+  \item Mesh resolution: porous $D_\text{rve}$ is sensitive to inclusion
+        resolution (a controlled same-seed test shows $+30\%$ when coarsening
+        $\code{L\_mesh}\,0.033\!\to\!0.045$), so coarsening is \emph{not} a safe
+        speed-up; the matrix-side homogeneous response is mesh-insensitive.
+  \item Eq.~19 reproduces the standalone analyzer exactly and, across all
+        methods tried, returns no positive couple-stress slope for either
+        microstructure.
+\end{itemize}
+
+\end{document}
