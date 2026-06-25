@@ -2330,6 +2330,26 @@ def _generate_one_row(task):
         attempt so a re-pack keeps its channels (they used to be added once,
         outside the retry loop, and were silently lost on every retry).
         `md_scale` widens the min-distance on retries (the old retry used 1.2)."""
+        # --- Packing decoupling for controlled mesh-convergence studies ---
+        # SPAX_LOAD_PACKING=<dir>: reuse a frozen sphere array (<run_id>.npy),
+        # skipping the packer entirely, so the SAME geometry can be meshed at
+        # several L_mesh (the packer's r_floor/sliver floors scale with L_mesh
+        # and would otherwise change the packing). gap_balls are recomputed for
+        # the current lc_fine. Tall channel ellipsoids (rz >= L/2) are excluded
+        # from the gap-ball pass, as in the normal path.
+        _load_dir = os.environ.get('SPAX_LOAD_PACKING', '')
+        if _load_dir:
+            _pf = os.path.join(_load_dir, run_id + '.npy')
+            sphere_array = np.load(_pf)
+            print("  [Packing] loaded {} entries from {} (packer skipped)".format(
+                len(sphere_array), _pf))
+            gap_balls = []
+            if gap_refine:
+                incl = [tuple(row[:6]) for row in sphere_array
+                        if row[5] < 0.49 * L]
+                gap_balls = _collect_gap_balls(incl, L, lc_fine, channels=None,
+                                               resolve=gap_resolve)
+            return sphere_array, None, gap_balls
         md = min_dist * md_scale
         channel_array = np.empty((0, 3))
         channel_prims = None
@@ -2376,6 +2396,17 @@ def _generate_one_row(task):
             ch_x, ch_y, ch_r = channel_array[i]
             ch_entry = np.array([[ch_x, ch_y, L/2, ch_r, ch_r, L/2, 0, 0, 0, 0.01]])
             sphere_array = np.vstack((sphere_array, ch_entry))
+        # Freeze this packing (full array incl. channels) for reuse across
+        # meshes: SPAX_SAVE_PACKING=<dir> -> <run_id>.npy.
+        _save_dir = os.environ.get('SPAX_SAVE_PACKING', '')
+        if _save_dir:
+            try:
+                os.makedirs(_save_dir)
+            except OSError:
+                pass
+            _pf = os.path.join(_save_dir, run_id + '.npy')
+            np.save(_pf, sphere_array)
+            print("  [Packing] saved {} entries -> {}".format(len(sphere_array), _pf))
         return sphere_array, oct_, gap_balls
 
     sliver_gap = sliver_for_attempt(0)
