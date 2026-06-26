@@ -1603,6 +1603,19 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
     n_nodes = len(nodes)
     n_elements = len(elements)
     print("    Read {} nodes, {} elements from Gmsh .inp".format(n_nodes, n_elements))
+
+    # Gmsh -> Abaqus C3D10 mid-edge node remap. Gmsh's 10-node tet orders its
+    # last two mid-edge nodes as [..., m03, m23, m13] whereas Abaqus C3D10 wants
+    # [..., m03, m13, m23] (nodes 9 and 10 swapped). Without this every element
+    # reads as a near-planar, zero/negative-volume tet and the input processor
+    # aborts. Linear (4-node) elements are untouched.
+    _n_remapped = 0
+    for label, (etype, elset, conn) in elements.items():
+        if len(conn) == 10:
+            conn[8], conn[9] = conn[9], conn[8]
+            _n_remapped += 1
+    if _n_remapped:
+        print("    Remapped {} C3D10 elements to Abaqus mid-node order".format(_n_remapped))
     
     # ---- Read periodic pairs ----
     pairs = {'X': [], 'Y': [], 'Z': []}
@@ -1643,13 +1656,26 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         'RP-4': (rp_base + 4, L/2, L/2, L/2),
     }
     
-    # ---- Determine element type ----
-    # C3D4H (hybrid linear tet) for BOTH matrix and inclusion, regardless of
-    # Inclusion_Type. Plain C3D4 locks volumetrically and is excessively stiff
-    # in bending; the hybrid formulation adds an internal pressure DOF that
-    # relieves that locking at the same node count, giving a far better
-    # second-order (bending) response.
-    elem_type = 'C3D4H'
+    # ---- Determine element type (per phase) ----
+    # Order from the mesh actually read: SPAX_MESH_ORDER=2 emits quadratic
+    # 10-node tets (Gmsh "Tetrahedron 10"), locking-free in bending; else linear.
+    # HYBRID (the 'H' suffix, an internal pressure DOF) is only needed for a
+    # (near-)INCOMPRESSIBLE phase -- it prevents volumetric locking but ADDS a
+    # variable per element and so enlarges/slows the solve. The brine inclusions
+    # (nu~0.49) need it; the compressible MATRIX (nu~0.33) does NOT, and it is
+    # the majority of elements, so making the matrix non-hybrid shrinks the
+    # system with no accuracy loss. Key the suffix on each phase's nu; force
+    # all-hybrid (legacy) with SPAX_FORCE_HYBRID=1.
+    _max_conn = max((len(c) for (_t, _e, c) in elements.values()), default=4)
+    _base = 'C3D10' if _max_conn >= 10 else 'C3D4'
+    _force_hyb = os.environ.get('SPAX_FORCE_HYBRID', '0') == '1'
+    _NU_HYB = float(os.environ.get('SPAX_HYBRID_NU', '0.45'))
+    def _etype(nu):
+        return _base + ('H' if (_force_hyb or nu >= _NU_HYB) else '')
+    elem_type_matrix = _etype(nu_matrix)
+    elem_type_sphere = _etype(nu_incl)
+    print("    Element types: matrix={} (nu={:.3f}), inclusion={} (nu={:.3f})".format(
+        elem_type_matrix, nu_matrix, elem_type_sphere, nu_incl))
     
     # ---- Determine loading ----
     # step_name is consumed at the *Step card below; step_desc only labels the
@@ -1719,7 +1745,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             f.write('{}, {}, {}, {}\n'.format(label, x, y, z))
         
         m_start, m_end = matrix_label_range
-        f.write('*Element, type={}, elset=Matrix_Only\n'.format(elem_type))
+        f.write('*Element, type={}, elset=Matrix_Only\n'.format(elem_type_matrix))
         for label in sorted(elements.keys()):
             etype, elset, conn = elements[label]
             if elset == 'Matrix_Only' or (m_start <= label <= m_end):
@@ -1729,7 +1755,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         s_start, s_end = sphere_label_range
         has_spheres = s_start > 0 and s_end >= s_start
         if has_spheres:
-            f.write('*Element, type={}, elset=Sphere_Only\n'.format(elem_type))
+            f.write('*Element, type={}, elset=Sphere_Only\n'.format(elem_type_sphere))
             for label in sorted(elements.keys()):
                 etype, elset, conn = elements[label]
                 if elset == 'Sphere_Only' or (s_start <= label <= s_end):
@@ -2034,7 +2060,10 @@ def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
     payload = dict(sphere_array=sphere_array, L=L, L_mesh=L_mesh,
                    output_dir=output_dir, Is_Porous=mode, run_id=run_id,
                    VoF_void_sphere=VoF_void, VoF_incl_sphere=VoF_incl,
-                   Inclusion_Type=Inclusion_Type, gap_balls=gap_balls or [])
+                   Inclusion_Type=Inclusion_Type, gap_balls=gap_balls or [],
+                   # SPAX_MESH_ORDER=2 -> quadratic C3D10 (locking-free in
+                   # bending). Default 1 (C3D4) keeps existing runs unchanged.
+                   mesh_order=int(os.environ.get('SPAX_MESH_ORDER', '1')))
     tmpd = tempfile.mkdtemp(prefix='spax_mesh_')
     in_pkl = os.path.join(tmpd, 'in.pkl')
     out_pkl = os.path.join(tmpd, 'out.pkl')
@@ -2220,13 +2249,27 @@ def _generate_one_row(task):
     sliver_gap_max = sliver_mult * lc_fine_mult * L_mesh
     max_retries = int(os.environ.get('SPAX_MAX_RETRIES', '6'))
 
+    # Quadratic (C3D10) needs a THICKER minimum boundary cap than linear: a thin
+    # face triangle that meshes fine and is positive-volume as a linear C3D4
+    # becomes a negative-Jacobian quadratic element (Abaqus then aborts). The
+    # escalation below never rescues this because Gmsh succeeds at attempt 0 (the
+    # sliver only fails downstream in Abaqus, so the retry loop is never entered).
+    # So for order-2 we reject grazing caps from attempt 0 with a constant floor
+    # of SPAX_SLIVER_MULT_Q * lc_fine (default 1.0, vs the linear 0.5). Costs a
+    # little VoF; eliminates the face slivers at the DEFAULT element size.
+    _mesh_order = int(os.environ.get('SPAX_MESH_ORDER', '1'))
+    sliver_floor_q = (float(os.environ.get('SPAX_SLIVER_MULT_Q', '1.0'))
+                      * lc_fine_mult * L_mesh) if _mesh_order == 2 else 0.0
+
     def sliver_for_attempt(n):
-        # n = 0-based attempt index. 0 until sliver_start, then ramp
-        # linearly to sliver_gap_max on the final attempt.
-        if sliver_gap_max <= 0.0 or n < sliver_start:
-            return 0.0
-        span = max(1, (max_retries - 1) - sliver_start)
-        return min(1.0, (n - sliver_start + 1) / float(span)) * sliver_gap_max
+        # n = 0-based attempt index. Quadratic carries a constant cap-rejection
+        # floor from attempt 0; on top of that the linear escalation ramps from
+        # sliver_start to sliver_gap_max on the final attempt.
+        ramp = 0.0
+        if sliver_gap_max > 0.0 and n >= sliver_start:
+            span = max(1, (max_retries - 1) - sliver_start)
+            ramp = min(1.0, (n - sliver_start + 1) / float(span)) * sliver_gap_max
+        return max(ramp, sliver_floor_q)
 
     # Channel options resolved once; the packing itself is channel-FIRST.
     gen_channels = params.get('generate_channels', 'No').strip().lower() in ('yes', 'true', '1')
@@ -2287,6 +2330,26 @@ def _generate_one_row(task):
         attempt so a re-pack keeps its channels (they used to be added once,
         outside the retry loop, and were silently lost on every retry).
         `md_scale` widens the min-distance on retries (the old retry used 1.2)."""
+        # --- Packing decoupling for controlled mesh-convergence studies ---
+        # SPAX_LOAD_PACKING=<dir>: reuse a frozen sphere array (<run_id>.npy),
+        # skipping the packer entirely, so the SAME geometry can be meshed at
+        # several L_mesh (the packer's r_floor/sliver floors scale with L_mesh
+        # and would otherwise change the packing). gap_balls are recomputed for
+        # the current lc_fine. Tall channel ellipsoids (rz >= L/2) are excluded
+        # from the gap-ball pass, as in the normal path.
+        _load_dir = os.environ.get('SPAX_LOAD_PACKING', '')
+        if _load_dir:
+            _pf = os.path.join(_load_dir, run_id + '.npy')
+            sphere_array = np.load(_pf)
+            print("  [Packing] loaded {} entries from {} (packer skipped)".format(
+                len(sphere_array), _pf))
+            gap_balls = []
+            if gap_refine:
+                incl = [tuple(row[:6]) for row in sphere_array
+                        if row[5] < 0.49 * L]
+                gap_balls = _collect_gap_balls(incl, L, lc_fine, channels=None,
+                                               resolve=gap_resolve)
+            return sphere_array, None, gap_balls
         md = min_dist * md_scale
         channel_array = np.empty((0, 3))
         channel_prims = None
@@ -2333,6 +2396,17 @@ def _generate_one_row(task):
             ch_x, ch_y, ch_r = channel_array[i]
             ch_entry = np.array([[ch_x, ch_y, L/2, ch_r, ch_r, L/2, 0, 0, 0, 0.01]])
             sphere_array = np.vstack((sphere_array, ch_entry))
+        # Freeze this packing (full array incl. channels) for reuse across
+        # meshes: SPAX_SAVE_PACKING=<dir> -> <run_id>.npy.
+        _save_dir = os.environ.get('SPAX_SAVE_PACKING', '')
+        if _save_dir:
+            try:
+                os.makedirs(_save_dir)
+            except OSError:
+                pass
+            _pf = os.path.join(_save_dir, run_id + '.npy')
+            np.save(_pf, sphere_array)
+            print("  [Packing] saved {} entries -> {}".format(len(sphere_array), _pf))
         return sphere_array, oct_, gap_balls
 
     sliver_gap = sliver_for_attempt(0)
