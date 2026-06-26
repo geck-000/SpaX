@@ -251,6 +251,8 @@ CSV-only analyzers run under a plain \code{python3} with no Abaqus licence.
 \env{SPAX\_FORCE\_HYBRID}   & \code{0} & \code{1} $\Rightarrow$ legacy all-hybrid\\
 \env{SPAX\_MESH\_ALGO2D}    & (Gmsh) & optional 2-D mesher override\\
 \env{SPAX\_SEED}            & (entropy) & reproducible packing (deterministic per row)\\
+\env{SPAX\_SAVE\_PACKING}   & --- & freeze packed sphere array to \code{<dir>/<run\_id>.npy}\\
+\env{SPAX\_LOAD\_PACKING}   & --- & reuse a frozen packing (skip packer); re-mesh same geometry\\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -264,10 +266,14 @@ CSV-only analyzers run under a plain \code{python3} with no Abaqus licence.
         $-13\%$ solve time.
   \item Multi-IP fix: homogeneous $f$ unchanged (it is a ratio); porous absolute
         $D_\text{rve}$, $E_\text{eff}$ and porosity restored to physical values.
-  \item Mesh resolution: porous $D_\text{rve}$ is sensitive to inclusion
-        resolution (a controlled same-seed test shows $+30\%$ when coarsening
-        $\code{L\_mesh}\,0.033\!\to\!0.045$), so coarsening is \emph{not} a safe
-        speed-up; the matrix-side homogeneous response is mesh-insensitive.
+  \item Mesh resolution: with the geometry \emph{frozen}
+        (\env{SPAX\_LOAD\_PACKING}), porous $D_\text{rve}$ is converged --- it
+        varies only $\sim\!1\%$ across $\code{L\_mesh}=0.045\to0.026$. An earlier
+        ``same seed'' study had wrongly suggested $+30\%$ sensitivity; that was a
+        \emph{packing} confound (the packer's $r_\text{floor}$ and sliver floors
+        scale with \code{L\_mesh}, so changing the mesh also changed the
+        inclusion arrangement at fixed porosity). Only freezing the actual sphere
+        array isolates the mesh effect, which is small.
   \item Eq.~19 reproduces the standalone analyzer exactly and, across all
         methods tried, returns no positive couple-stress slope for either
         microstructure.
