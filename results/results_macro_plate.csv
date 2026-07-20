@@ -1,0 +1,23 @@
+# Laminated-plate macro model from results_column.csv (H=1.000 m, beam matrix)
+quantity,value,unit
+A11,4.472256e+09,N/m
+B11,-1.486075e+08,N
+D11,3.428498e+08,N*m
+neutral_plane_offset_over_H,-0.033229,-
+coupling_B_over_sqrtAD,0.120012,-
+E_extensional,3.975497e+09,Pa
+E_flexural,3.648673e+09,Pa
+E_flex_over_E_ext,0.917790,-
+
+# per-layer profile
+run_id,z_over_H,E_x_Pa,z_centroid_m,Q11_Pa
+ICE_z05,0.050,4.282256e+09,-0.450000,4.809573e+09
+ICE_z15,0.150,4.325820e+09,-0.350000,4.859698e+09
+ICE_z25,0.250,4.344671e+09,-0.250000,4.878738e+09
+ICE_z35,0.350,4.366910e+09,-0.150000,4.903801e+09
+ICE_z45,0.450,4.337214e+09,-0.050000,4.869759e+09
+ICE_z55,0.550,4.283534e+09,0.050000,4.810393e+09
+ICE_z65,0.650,4.179524e+09,0.150000,4.695050e+09
+ICE_z75,0.750,3.843071e+09,0.250000,4.322909e+09
+ICE_z85,0.850,3.600672e+09,0.350000,4.053241e+09
+ICE_z95,0.950,2.189995e+09,0.450000,2.519401e+09
