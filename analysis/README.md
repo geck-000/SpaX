@@ -10,6 +10,7 @@ Post-solve analysis: turn the `../results/*.csv` produced by
 | `analyze_brineK.py` | Brine `K(T)` study [#5] figure (`study_brineK.png`). |
 | `analyze_nlgeom.py` | Large-deformation study [#8] figure (`study_nlgeom.png`). |
 | `analyze_tilt.py` | Channel-tilt study [#6] figure (`study_tilt.png`): `E_z/E_x` vs tilt. |
+| `make_rev_figs.py` | Revision figures for `main_rev.tex` (`study_scfdepth`, `ice_column_profiles`, `study_coltensor`) as PDF + PNG; `--out DIR` to redirect. |
 | `aggregate_coltensor.py` | Aggregates per-slice 6×6 elasticity tensors into a depth profile. |
 | `macro_plate.py` | Laminated-plate (classical lamination theory) whole-sheet macro assembly. |
 | `nlgeom_extract.py` | Extracts nominal stress–strain from the nlgeom reference-point reaction. |
