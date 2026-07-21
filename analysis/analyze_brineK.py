@@ -57,9 +57,7 @@ def main():
     ax[2].set_xlabel('shift from $K(T)$ (%)'); ax[2].set_ylabel('depth $z/H$')
     ax[2].set_xlim(-0.2, 0.2); ax[2].invert_yaxis()
     ax[2].set_title(f'(c) uniform $+$stiffening, $\\leq {mx:.2f}\\%$'); ax[2].legend(fontsize=8)
-    fig.suptitle('Study #5 — temperature-dependent brine modulus $K(T)$: '
-                 'negligible effect on the sea-ice column', fontsize=11)
-    fig.tight_layout(rect=[0,0,1,0.96])
+    fig.tight_layout()
     fig.savefig('study_brineK.png', dpi=140)
     print('wrote study_brineK.png')
 
