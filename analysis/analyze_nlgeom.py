@@ -78,10 +78,7 @@ def main():
         ax.set_ylabel('nominal stress $\\sigma_{nom}$ (MPa)')
         if s == 'z25':
             ax.legend(fontsize=7.5, loc='upper left')
-    fig.suptitle('Study #8 — large-deformation (nlgeom) homogenised response: '
-                 'tension softens & destabilises the porous base, compression stiffens',
-                 fontsize=11)
-    fig.tight_layout(rect=[0, 0, 1, 0.95])
+    fig.tight_layout()
     fig.savefig('study_nlgeom.png', dpi=140)
     print('wrote study_nlgeom.png')
 

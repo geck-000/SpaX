@@ -40,7 +40,6 @@ def main():
     ax.set_xlabel('max channel tilt off vertical (deg)')
     ax.set_ylabel('vertical anisotropy  $E_z/E_x$')
     ax.set_xticks(degs)
-    ax.set_title('Channel inclination dilutes the vertical anisotropy')
     # annotate the dilution
     b = means[0] - 1
     for i, d in enumerate(degs[1:], 1):

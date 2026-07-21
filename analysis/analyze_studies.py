@@ -66,9 +66,7 @@ def do_morphology():
                            color="white" if v < np.nanmean(M.values) else "black",
                            fontsize=9)
         fig.colorbar(im, ax=a, fraction=0.046, label=cb)
-    fig.suptitle("Morphology study: pocket shape & orientation control of anisotropy "
-                 "(fixed phi_b=0.05)", fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_morphology.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_morphology.png", dpi=160)
     print("wrote study_morphology.png")
 
 # ===========================================================================
@@ -101,9 +99,7 @@ def do_percolation():
     a.axhline(1.0, color="0.6"); a.axvline(0.05, color="0.5", ls=":")
     a.set_xlabel("brine volume fraction  phi_b"); a.set_ylabel("E_z / E_x")
     a.set_title("(b) anisotropy onset at percolation"); a.grid(alpha=0.3); a.legend(fontsize=8)
-    fig.suptitle("Percolation study: mechanical-anisotropy onset at the rule-of-fives "
-                 "threshold", fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_percolation.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_percolation.png", dpi=160)
     print("wrote study_percolation.png")
 
 # ===========================================================================
@@ -145,8 +141,7 @@ def do_monotonic():
     for i in range(len(d)):
         a.annotate(f"{Eeff[i]/Em[i]:.2f}", (Eeff[i]/Em[i], d[i]), fontsize=7,
                    xytext=(3, 3), textcoords="offset points")
-    fig.suptitle("Monotonic-salinity shape match to Marchenko (2024)", fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_monotonic.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_monotonic.png", dpi=160)
     print(f"wrote study_monotonic.png  (RMS {rms:.0f}%)")
 
 # ===========================================================================
@@ -189,9 +184,7 @@ def do_seasonal():
     a.set_xlim(0, 1); a.set_xlabel(f"fraction of column with E_x < {thr:.0f} GPa")
     a.set_title("(b) warm soft-layer thickness grows with warming")
     a.grid(alpha=0.3, axis="x")
-    fig.suptitle("Seasonal study: soft basal layer thickens as the sheet warms",
-                 fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_seasonal.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_seasonal.png", dpi=160)
     print("wrote study_seasonal.png")
 
 # ===========================================================================
@@ -224,9 +217,7 @@ def do_channel():
                            ha="center", va="center", fontsize=9,
                            color="white" if v < np.nanmean(M.values) else "black")
         fig.colorbar(im, ax=a, fraction=0.046, label=cb)
-    fig.suptitle("Channel-geometry study: channel size & brine share control of "
-                 "anisotropy (phi_b=0.08)", fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_channel.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_channel.png", dpi=160)
     print("wrote study_channel.png")
 
 def do_fymy():
@@ -281,8 +272,7 @@ def do_mono2():
     for i in range(len(d)):
         a.annotate(f"{Eeff[i]/Em[i]:.2f}", (Eeff[i]/Em[i], d[i]), fontsize=7,
                    xytext=(3, 3), textcoords="offset points")
-    fig.suptitle("Steeper-salinity Marchenko closure", fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_mono2.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_mono2.png", dpi=160)
     print(f"wrote study_mono2.png  (RMS {rms:.0f}%)")
 
 def _load_tensor(run_id):
@@ -326,9 +316,7 @@ def do_basetensor():
     a.axvline(1, color="0.6"); a.set_ylim(1, 0)
     a.set_xlabel("anisotropy ratio"); a.set_ylabel("depth z/H")
     a.set_title("(b) transverse-isotropy ratios"); a.grid(alpha=0.3); a.legend(fontsize=9)
-    fig.suptitle("Full 6x6 tensor of the channelled base: E and G anisotropy vs depth",
-                 fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_basetensor.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_basetensor.png", dpi=160)
     print("wrote study_basetensor.png")
 
 # ===========================================================================
@@ -362,9 +350,7 @@ def do_orient():
     ax[1].set_ylim(0.97, max(1.08, aniso.max()*1.02)); ax[1].grid(alpha=0.3, axis="y")
     for i, v in enumerate(aniso):
         ax[1].annotate(f"{v:.3f}", (i, v), ha="center", va="bottom", fontsize=8)
-    fig.suptitle("Crystal-orientation study: pocket alignment vs channel connectivity",
-                 fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_orient.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_orient.png", dpi=160)
     print("wrote study_orient.png")
 
 def do_gas():
@@ -415,8 +401,7 @@ def do_seeds():
     for i, (m, s) in enumerate(zip(an_m, an_s)):
         ax[1].annotate(f"{m:.3f}", (i, m), xytext=(8, 0),
                        textcoords="offset points", va="center", fontsize=8)
-    fig.suptitle("Statistical replicates: signal vs realization scatter", fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_seeds.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_seeds.png", dpi=160)
     print("wrote study_seeds.png")
 
 def do_brine():
@@ -445,9 +430,7 @@ def do_brine():
     ax[1].set_xlabel("brine shear modulus G (Pa)"); ax[1].set_ylabel("E_z / E_x")
     ax[1].set_title("(b) anisotropy sensitivity"); ax[1].grid(alpha=0.3, which="both")
     ax[1].legend(fontsize=9)
-    fig.suptitle("Brine-modulus sensitivity (G swept x0.1..x1000; identical mesh)",
-                 fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_brine.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_brine.png", dpi=160)
     print("wrote study_brine.png")
     # K sensitivity printout
     print("\n  K-sweep (E_x GPa, fixed G):")
@@ -489,9 +472,7 @@ def do_scf():
     ax[1].grid(alpha=0.3, axis="y")
     for i, v in enumerate(fg2):
         ax[1].annotate(f"{v:.1f}%", (i, v), ha="center", va="bottom", fontsize=8)
-    fig.suptitle("Stress concentration around inclusions (uniaxial tension, P99 robust)",
-                 fontsize=13)
-    fig.tight_layout(rect=[0, 0, 1, 0.95]); fig.savefig("study_scf.png", dpi=160)
+    fig.tight_layout(); fig.savefig("study_scf.png", dpi=160)
     print("wrote study_scf.png")
 
 if __name__ == "__main__":
