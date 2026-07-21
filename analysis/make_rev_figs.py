@@ -52,12 +52,24 @@ def zfrac(run_id):
 def depth_axis(ax):
     ax.set_ylim(1.0, 0.0)                 # 0 (surface) at top, 1 (base) at bottom
     ax.set_ylabel(r"Normalized depth $z/H$")
-    ax.axhspan(0.80, 1.0, color=SKY, alpha=0.10, zorder=0)  # warm basal band
-    # axis is inverted (0 at top): top = cold surface, bottom = warm base
-    ax.text(0.5, 0.985, "surface (cold)", transform=ax.transAxes, va="top",
-            ha="center", fontsize=11, color="0.35")
-    ax.text(0.5, 0.015, "bottom (warm)", transform=ax.transAxes, va="bottom",
-            ha="center", fontsize=11, color="0.35")
+    ax.axhspan(0.80, 1.0, color=SKY, alpha=0.10, zorder=0)  # warm bottom band
+
+
+def orient_labels(ax):
+    """Cold-surface / warm-bottom orientation, as ticks outside the right edge.
+
+    Kept out of the plot area: as floating text it sat at bottom centre, where
+    both the curves and the legend want to be.
+    """
+    tw = ax.twinx()
+    tw.set_ylim(1.0, 0.0)
+    tw.set_yticks([0.0, 1.0])
+    tw.set_yticklabels(["surface (cold)", "bottom (warm)"], fontsize=11,
+                       color="0.35")
+    tw.tick_params(axis="y", length=0)
+    tw.grid(False)
+    for spine in tw.spines.values():
+        spine.set_visible(False)
 
 
 def save(fig, stem):
@@ -94,7 +106,7 @@ def fig_scfdepth():
     a.set_xlabel(r"Matrix SCF $=\sigma_1^{\max}/\bar\sigma_{11}$")
     depth_axis(a)
     a.set_title("(a)")
-    a.legend(loc="lower right", framealpha=0.9)
+    a.legend(loc="upper right", framealpha=0.9)
 
     b.plot(ff_scf, z, "-", color=VERM, marker="D",
            label="max-principal (SCF)")
@@ -102,9 +114,10 @@ def fig_scfdepth():
            label="Mohr-Coulomb")
     b.set_xlabel("First-failure macro stress\n(normalized to surface)")
     depth_axis(b)
+    orient_labels(b)
     b.set_title("(b)")
-    b.legend(loc="lower right", framealpha=0.9)
-    b.set_xlim(0, 1.05)
+    b.legend(loc="center left", framealpha=0.9)
+    b.set_xlim(0, 1.10)
 
     fig.tight_layout()
     save(fig, "study_scfdepth")
@@ -129,15 +142,16 @@ def fig_column():
     a.set_xlabel(r"Effective Young's modulus (GPa)")
     depth_axis(a)
     a.set_title("(a)")
-    a.legend(loc="lower left", framealpha=0.9)
+    a.legend(loc="upper left", framealpha=0.9)
 
     b.plot(brine, z, "-", color=ORANGE, marker="o", label="brine pockets")
     b.plot(chan, z, "-", color=BLUE, marker="s", label="brine channels")
     b.plot(gas, z, ":", color=BLACK, marker="^", label="gas voids")
     b.set_xlabel("Phase volume fraction (%)")
     depth_axis(b)
+    orient_labels(b)
     b.set_title("(b)")
-    b.legend(loc="lower right", framealpha=0.9)
+    b.legend(loc="upper right", framealpha=0.9)
 
     fig.tight_layout()
     save(fig, "ice_column_profiles")
@@ -163,15 +177,16 @@ def fig_coltensor():
     a.set_xlabel(r"Directional Young's modulus (GPa)")
     depth_axis(a)
     a.set_title("(a)")
-    a.legend(loc="lower left", framealpha=0.9)
+    a.legend(loc="upper left", framealpha=0.9)
 
     b.axvline(1.0, color="0.5", lw=1.2, ls=":")
     b.plot(Er, z, "-", color=VERM, marker="D", label=r"$E_z/E_{xy}$")
     b.plot(Gr, z, "-", color=BLUE, marker="o", label=r"$G_{ax}/G_{xy}$")
     b.set_xlabel("Anisotropy ratio")
     depth_axis(b)
+    orient_labels(b)
     b.set_title("(b)")
-    b.legend(loc="lower right", framealpha=0.9)
+    b.legend(loc="upper right", framealpha=0.9)
 
     fig.tight_layout()
     save(fig, "study_coltensor")
