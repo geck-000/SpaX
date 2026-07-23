@@ -15,6 +15,12 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+# Shared depth-figure conventions: Okabe-Ito palette, enlarged fonts, z/H on the
+# vertical axis (0 cold surface at top, 1 warm base at bottom); see figstyle.py.
+from figstyle import BLUE, ORANGE, VERM, SKY, depth_axis, orient_labels
+from figstyle import apply as _apply_style
+_apply_style()
+
 ZS = [0.05,0.15,0.25,0.35,0.45,0.55,0.65,0.75,0.85,0.95]
 # K(T) applied per slice (GPa), from make_ice_studies6.K_brine on the C-shape column
 K_GPA = [2.777,2.752,2.718,2.676,2.625,2.567,2.499,2.423,2.339,2.247]
@@ -37,28 +43,30 @@ def main():
     anc = [kc[z]['E_anisotropy'] for z in zk]; ant = [kt[z]['E_anisotropy'] for z in zk]
     mx = max(max(abs(d) for d in dEx), max(abs(d) for d in dEz))
 
-    fig, ax = plt.subplots(1, 3, figsize=(13, 4.4))
+    fig, ax = plt.subplots(1, 3, figsize=(13.5, 6.0), sharey=True)
     # (a) applied K(T) profile
-    ax[0].plot(K_GPA, ZS, 'o-', color='#1f77b4')
-    ax[0].axvline(2.2, ls='--', color='0.6', lw=1, label='fixed K = 2.2 GPa')
-    ax[0].set_xlabel('brine bulk modulus $K$ (GPa)'); ax[0].set_ylabel('depth $z/H$')
-    ax[0].invert_yaxis(); ax[0].set_title('(a) applied $K(T)$'); ax[0].legend(fontsize=8)
+    ax[0].plot(K_GPA, ZS, 'o-', color=BLUE)
+    ax[0].axvline(2.2, ls='--', color='0.6', lw=1.2, label='fixed $K=2.2$ GPa')
+    ax[0].set_xlabel('Brine bulk modulus $K$ (GPa)')
+    depth_axis(ax[0]); ax[0].set_title('(a) applied $K(T)$'); ax[0].legend()
     # (b) E(z): const vs temp (nearly overlapping)
-    ax[1].plot(Exc, ZS, 'o-',  color='#1f77b4', label='$E_x$, fixed $K$')
-    ax[1].plot(Ext, ZS, 'x--', color='#7fc7ff', label='$E_x$, $K(T)$')
-    ax[1].plot(Ezc, ZS, 's-',  color='#d62728', label='$E_z$, fixed $K$')
-    ax[1].plot(Ezt, ZS, '+--', color='#ff9896', label='$E_z$, $K(T)$')
-    ax[1].set_xlabel('effective Young modulus (GPa)'); ax[1].set_ylabel('depth $z/H$')
-    ax[1].invert_yaxis(); ax[1].set_title('(b) $E(z)$: curves overlie'); ax[1].legend(fontsize=7)
+    ax[1].plot(Exc, ZS, 'o-',  color=BLUE, label='$E_x$, fixed $K$')
+    ax[1].plot(Ext, ZS, 'x--', color=SKY,  label='$E_x$, $K(T)$')
+    ax[1].plot(Ezc, ZS, 's-',  color=VERM, label='$E_z$, fixed $K$')
+    ax[1].plot(Ezt, ZS, '+--', color=ORANGE, label='$E_z$, $K(T)$')
+    ax[1].set_xlabel('Effective Young\'s modulus (GPa)')
+    depth_axis(ax[1], label=False); ax[1].set_title('(b) $E(z)$: curves overlie')
+    ax[1].legend(fontsize=10.5)
     # (c) percent shift from K(T)
-    ax[2].plot(dEx, ZS, 'o-', color='#1f77b4', label='$\\Delta E_x$')
-    ax[2].plot(dEz, ZS, 's-', color='#d62728', label='$\\Delta E_z$')
-    ax[2].axvline(0, color='0.6', lw=1)
-    ax[2].set_xlabel('shift from $K(T)$ (%)'); ax[2].set_ylabel('depth $z/H$')
-    ax[2].set_xlim(-0.2, 0.2); ax[2].invert_yaxis()
-    ax[2].set_title(f'(c) uniform $+$stiffening, $\\leq {mx:.2f}\\%$'); ax[2].legend(fontsize=8)
+    ax[2].plot(dEx, ZS, 'o-', color=BLUE, label='$\\Delta E_x$')
+    ax[2].plot(dEz, ZS, 's-', color=VERM, label='$\\Delta E_z$')
+    ax[2].axvline(0, color='0.6', lw=1.2)
+    ax[2].set_xlabel('Shift from $K(T)$ (%)')
+    ax[2].set_xlim(-0.2, 0.2)
+    depth_axis(ax[2], label=False); orient_labels(ax[2])
+    ax[2].set_title(f'(c) uniform $+$stiffening, $\\leq {mx:.2f}\\%$'); ax[2].legend()
     fig.tight_layout()
-    fig.savefig('study_brineK.png', dpi=140)
+    fig.savefig('study_brineK.png', dpi=200)
     print('wrote study_brineK.png')
 
     print(f"\n{'z/H':>5} {'K(GPa)':>7} {'dEx%':>7} {'dEz%':>7} "

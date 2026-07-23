@@ -17,17 +17,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ---- Okabe-Ito CVD-safe palette -------------------------------------------
-BLUE, ORANGE, GREEN = "#0072B2", "#E69F00", "#009E73"
-VERM, PURPLE, SKY, BLACK = "#D55E00", "#CC79A7", "#56B4E9", "#222222"
-
-plt.rcParams.update({
-    "font.size": 14, "axes.titlesize": 15, "axes.labelsize": 15,
-    "xtick.labelsize": 13, "ytick.labelsize": 13, "legend.fontsize": 12.5,
-    "axes.linewidth": 1.0, "lines.linewidth": 2.2, "lines.markersize": 7,
-    "figure.dpi": 120, "savefig.bbox": "tight", "axes.grid": True,
-    "grid.alpha": 0.30, "grid.linewidth": 0.7,
-})
+# Shared Okabe-Ito palette, enlarged fonts, and the z/H-on-vertical depth axis
+# (see figstyle.py); every depth figure in the paper draws from the same frame.
+from figstyle import (BLUE, ORANGE, GREEN, VERM, PURPLE, SKY, BLACK,
+                      depth_axis, orient_labels)
+from figstyle import apply as _apply_style
+_apply_style()
 
 # CSVs are read by bare filename from the working directory, per the
 # convention of the other analyzers; figures land alongside them unless
@@ -47,29 +42,6 @@ def zfrac(run_id):
     """ICE_z05 -> 0.05, ICE_z95 -> 0.95."""
     tok = run_id.lower().split("z")[-1]
     return int(tok) / 100.0
-
-
-def depth_axis(ax):
-    ax.set_ylim(1.0, 0.0)                 # 0 (surface) at top, 1 (base) at bottom
-    ax.set_ylabel(r"Normalized depth $z/H$")
-    ax.axhspan(0.80, 1.0, color=SKY, alpha=0.10, zorder=0)  # warm bottom band
-
-
-def orient_labels(ax):
-    """Cold-surface / warm-bottom orientation, as ticks outside the right edge.
-
-    Kept out of the plot area: as floating text it sat at bottom centre, where
-    both the curves and the legend want to be.
-    """
-    tw = ax.twinx()
-    tw.set_ylim(1.0, 0.0)
-    tw.set_yticks([0.0, 1.0])
-    tw.set_yticklabels(["surface (cold)", "bottom (warm)"], fontsize=11,
-                       color="0.35")
-    tw.tick_params(axis="y", length=0)
-    tw.grid(False)
-    for spine in tw.spines.values():
-        spine.set_visible(False)
 
 
 def save(fig, stem):

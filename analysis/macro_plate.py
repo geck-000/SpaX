@@ -114,28 +114,36 @@ def main():
     print("\n  wrote %s" % out)
 
     # ---- figure: (a) in-plane modulus vs depth; (b) bending-weight Q*z^2 vs depth
+    # Shared depth-figure conventions (z/H on the vertical axis, 0 cold surface at
+    # top; Okabe-Ito palette; enlarged fonts) -- see figstyle.py.
     import matplotlib
     matplotlib.use('Agg')
     import matplotlib.pyplot as plt
+    from figstyle import BLUE, VERM, depth_axis, orient_labels
+    from figstyle import apply as _apply_style
+    _apply_style()
     zoh = np.array([p[1] for p in prof])
     Exs = np.array([p[2] for p in prof]) / 1e9
     zc = np.array([p[3] for p in prof])
     Q11 = np.array([p[4] for p in prof])
     bend_contrib = Q11 * zc**2 * t                  # contribution of each layer to D11
-    fig, ax = plt.subplots(1, 2, figsize=(11, 4.2))
-    ax[0].plot(zoh, Exs, 'o-')
-    ax[0].axvline((0.5 - z_na / H), color='r', ls='--', lw=1,
+    bh = 0.9 / len(zoh)
+    fig, ax = plt.subplots(1, 2, figsize=(11, 6.0), sharey=True)
+    ax[0].plot(Exs, zoh, 'o-', color=BLUE)
+    # neutral plane depth: z/H = 0.5 + z_na/H (z_na<0 -> above mid-plane, toward
+    # the cold top, consistent with the reported -3.3% offset).
+    ax[0].axhline((0.5 + z_na / H), color=VERM, ls='--', lw=1.6,
                   label='neutral plane')
-    ax[0].set_xlabel('normalized depth $z/H$'); ax[0].set_ylabel('$E_x$ (GPa)')
-    ax[0].set_title('(a) In-plane modulus vs depth')
-    ax[0].legend(); ax[0].grid(alpha=0.3)
-    ax[1].bar(zoh, bend_contrib / bend_contrib.sum() * 100, width=0.8 / len(zoh) * 1.0)
-    ax[1].set_xlabel('normalized depth $z/H$')
-    ax[1].set_ylabel('% of bending stiffness $D_{11}$')
+    ax[0].set_xlabel('In-plane modulus $E_x$ (GPa)')
+    depth_axis(ax[0]); ax[0].set_title('(a) In-plane modulus vs depth')
+    ax[0].legend()
+    ax[1].barh(zoh, bend_contrib / bend_contrib.sum() * 100, height=bh,
+               color=BLUE, alpha=0.85, edgecolor='0.3')
+    ax[1].set_xlabel('% of bending stiffness $D_{11}$')
+    depth_axis(ax[1], label=False); orient_labels(ax[1])
     ax[1].set_title('(b) Where the bending stiffness lives')
-    ax[1].grid(alpha=0.3)
     fig.tight_layout()
-    fig.savefig('study_macro_plate.png', dpi=160)
+    fig.savefig('study_macro_plate.png', dpi=200)
     print("  wrote study_macro_plate.png")
     return 0
 
