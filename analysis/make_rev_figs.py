@@ -98,6 +98,26 @@ def fig_scfdepth():
 # ===========================================================================
 # 2) ice_column_profiles : effective moduli + phase fractions vs z/H
 # ===========================================================================
+def _seed_std(z):
+    """Per-slice standard deviation of E_x, E_z across the replicate packings
+    (results_colseeds.csv, 5 seeds per slice), aligned to the depth array z.
+    Returns (sEx, sEz) in GPa, or (None, None) if the replicate campaign has not
+    been run/pulled yet -- so the figure still builds from the single-packing
+    column alone."""
+    try:
+        rr = load("results_colseeds.csv")
+    except FileNotFoundError:
+        return None, None
+    ex, ez = {}, {}
+    for x in rr:
+        zk = round(zfrac(x["run_id"].rsplit("_", 1)[0]), 2)  # CSEED_z95_s3 -> 0.95
+        ex.setdefault(zk, []).append(float(x["E_x"]) / 1e9)
+        ez.setdefault(zk, []).append(float(x["E_z"]) / 1e9)
+    sEx = np.array([np.std(ex.get(round(zz, 2), [0.0])) for zz in z])
+    sEz = np.array([np.std(ez.get(round(zz, 2), [0.0])) for zz in z])
+    return sEx, sEz
+
+
 def fig_column():
     r = load("results_column.csv")
     z = np.array([zfrac(x["run_id"]) for x in r])
@@ -106,9 +126,15 @@ def fig_column():
     brine = np.array([float(x["VoF_incl_sphere"]) for x in r]) * 100
     chan = np.array([float(x["channel_vof_target"]) for x in r]) * 100
     gas = np.array([float(x["VoF_void_sphere"]) for x in r]) * 100
+    sEx, sEz = _seed_std(z)                       # replicate scatter, if available
 
     fig, (a, b) = plt.subplots(1, 2, figsize=(10.5, 6.2), sharey=True)
 
+    # +/-1 s.d. envelope over the 5 packings per slice (Jani #12 / Reviewer 2)
+    if sEx is not None:
+        a.fill_betweenx(z, Exy - sEx, Exy + sEx, color=BLUE, alpha=0.18, lw=0)
+        a.fill_betweenx(z, Ez - sEz, Ez + sEz, color=VERM, alpha=0.15, lw=0,
+                        label=r"$\pm1$ s.d. (5 packings)")
     a.plot(Exy, z, "-", color=BLUE, marker="o", label=r"$E_x=E_y$ (in-plane)")
     a.plot(Ez, z, "--", color=VERM, marker="D", label=r"$E_z$ (vertical)")
     a.set_xlabel(r"Effective Young's modulus (GPa)")
