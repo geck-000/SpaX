@@ -1,14 +1,21 @@
-"""Replicate (seeded) first-year C-shape column for statistical scatter envelopes.
+"""Replicate (seeded) column deck for the depth-profile scatter envelopes.
 
-Reviewer request (Jani #12 / Reviewer 2): the depth-profile figures show a single
-packing per slice; add mean/scatter envelopes. This deck repeats the exact
-first-order C-shape column physics of make_ice_studies2.study_coltensor() at every
-depth slice N_SEED times, so homogenising each replicate yields the per-slice mean
-and spread of the effective moduli E_x (= E_xy) and E_z. Independent packings come
-for free from the per-row reseeding in SpaX_Standalone (fixed SPAX_SEED, distinct
-row index -> distinct random packing), so no code change to the solver is needed.
+Reviewer request (Jani #12 / Reviewer 2): the depth profiles show a single packing
+per slice; add mean/scatter envelopes. This builds the seeded deck by reconstructing
+the *exact* per-slice microstructure of the paper's reference column
+(results_column.csv -> Table 2 / Fig. column) -- its echoed VoF, gas, sphericity,
+channel and matrix parameters -- and replicating each slice N_SEED times. Building
+from results_column.csv (rather than re-deriving the physics) guarantees the
+replicate means are directly comparable to the single-packing profile, so the
+per-slice mean and +/-1 s.d. can re-centre the profile consistently.
 
-    cd params && python3 ../studies/make_colseeds.py     # -> rve_colseeds.csv
+The original ICE_z column deck is not in studies/ (it predates the study
+generators), but results_column.csv preserves every deck parameter except the
+per-slice Growth_Concentration (pocket-orientation strength), which barely affects
+the effective-modulus magnitude and is taken from the columnar-growth formula
+grw = 0.40 + 0.32 z used by the sibling column studies.
+
+    cd params && python3 ../studies/make_colseeds.py      # -> rve_colseeds.csv
 
 Then, from a directory holding SpaX_Standalone.py (fixed seed = reproducible):
 
@@ -17,28 +24,37 @@ Then, from a directory holding SpaX_Standalone.py (fixed seed = reproducible):
 First-order (full_tensor=No): two load cases per RVE (Uniaxial Tension X and Z),
 so 10 slices x N_SEED replicates x 2 solves.
 """
-from make_ice_studies import row, write, phi_brine, E_matrix, temperature, ZS
+import csv, os
+from make_ice_studies import BASE, COLS, write
 
 N_SEED = 5
-S_CSHAPE = [7.0, 5.5, 4.8, 4.5, 4.3, 4.3, 4.5, 5.0, 6.0, 8.0]  # Cox & Weeks 1983
+COLUMN_CSV = os.path.join(os.path.dirname(__file__), '..', 'results',
+                          'results_column.csv')
+
+# Deck fields echoed verbatim in results_column.csv (results-col -> deck-col).
+ECHOED = ['L', 'L_mesh', 'Is_Porous', 'E_matrix', 'nu_matrix', 'VoF_sphere',
+          'r_avg', 'VoF_void_sphere', 'VoF_incl_sphere', 'E_sphere_inclusion',
+          'sphericity_avg', 'PBC_Method', 'Bending_PBC_Type', 'Growth_Direction',
+          'generate_channels', 'channel_vof_target']
 
 
 def study_colseeds():
-    """Ten C-shape depth slices, each replicated N_SEED times (distinct run_id ->
-    distinct row index -> independent packing under a fixed SPAX_SEED)."""
+    """Reconstruct the reference column slice-by-slice from results_column.csv and
+    replicate each slice N_SEED times (distinct run_id -> distinct row index ->
+    independent packing under a fixed SPAX_SEED)."""
     rows = []
-    for z, S in zip(ZS, S_CSHAPE):
-        T = temperature(z, T_top=-20.0)
-        phi_b = phi_brine(S, T)
-        gas = 0.012 + 0.008 * (1 - z)
-        sph, grw = 0.86 - 0.26 * z, 0.40 + 0.32 * z
-        r_avg = 0.030 + 0.016 * z
-        ch = 0.40 if phi_b > 0.05 else 0.0
+    for x in csv.DictReader(open(COLUMN_CSV)):
+        z = int(round(float(x['run_id'].split('z')[-1])))   # ICE_z95 -> 95
+        r = dict(BASE)                                       # constant defaults
+        r.update({k: x[k] for k in ECHOED})                 # exact per-slice physics
+        r['Growth_Concentration'] = f'{0.40 + 0.32 * (z / 100.0):.2f}'
         for s in range(1, N_SEED + 1):
-            rid = f'CSEED_z{int(z * 100):02d}_s{s}'
-            rows.append(row(rid, E_matrix(T), phi_b, gas, sph, grw,
-                            channels_frac=ch, r_avg=r_avg))
-    write('rve_colseeds.csv', rows)
+            rr = dict(r)
+            rr['run_id'] = f'CSEED_z{z:02d}_s{s}'
+            rows.append(rr)
+    # write() expects rows keyed by COLS
+    write('rve_colseeds.csv', [{c: row.get(c, BASE.get(c, '')) for c in COLS}
+                               for row in rows])
 
 
 if __name__ == '__main__':

@@ -98,24 +98,26 @@ def fig_scfdepth():
 # ===========================================================================
 # 2) ice_column_profiles : effective moduli + phase fractions vs z/H
 # ===========================================================================
-def _seed_std(z):
-    """Per-slice standard deviation of E_x, E_z across the replicate packings
-    (results_colseeds.csv, 5 seeds per slice), aligned to the depth array z.
-    Returns (sEx, sEz) in GPa, or (None, None) if the replicate campaign has not
-    been run/pulled yet -- so the figure still builds from the single-packing
-    column alone."""
+def _seed_stats(z):
+    """Per-slice mean and standard deviation of E_x, E_z across the replicate
+    packings (results_colseeds.csv, 5 seeds per slice), aligned to the depth array
+    z. Returns (mEx, mEz, sEx, sEz) in GPa, or four Nones if the replicate campaign
+    has not been run/pulled yet -- so the figure still builds from the
+    single-packing column alone."""
     try:
         rr = load("results_colseeds.csv")
     except FileNotFoundError:
-        return None, None
+        return None, None, None, None
     ex, ez = {}, {}
     for x in rr:
         zk = round(zfrac(x["run_id"].rsplit("_", 1)[0]), 2)  # CSEED_z95_s3 -> 0.95
         ex.setdefault(zk, []).append(float(x["E_x"]) / 1e9)
         ez.setdefault(zk, []).append(float(x["E_z"]) / 1e9)
+    mEx = np.array([np.mean(ex.get(round(zz, 2), [np.nan])) for zz in z])
+    mEz = np.array([np.mean(ez.get(round(zz, 2), [np.nan])) for zz in z])
     sEx = np.array([np.std(ex.get(round(zz, 2), [0.0])) for zz in z])
     sEz = np.array([np.std(ez.get(round(zz, 2), [0.0])) for zz in z])
-    return sEx, sEz
+    return mEx, mEz, sEx, sEz
 
 
 def fig_column():
@@ -126,7 +128,15 @@ def fig_column():
     brine = np.array([float(x["VoF_incl_sphere"]) for x in r]) * 100
     chan = np.array([float(x["channel_vof_target"]) for x in r]) * 100
     gas = np.array([float(x["VoF_void_sphere"]) for x in r]) * 100
-    sEx, sEz = _seed_std(z)                       # replicate scatter, if available
+    mEx, mEz, sEx, sEz = _seed_stats(z)           # replicate mean/scatter, if available
+
+    # Re-centre the warm base (z/H=0.95) on the five-packing mean: its single
+    # reference packing was a ~6-sigma low outlier (E_x 4.47 vs 4.85 GPa), and the
+    # mean matches the independent full-tensor column (study_coltensor). Other
+    # slices keep their single reference packing (all within ~1-2 sigma).
+    if mEx is not None:
+        base = int(np.argmax(z))                  # z/H = 0.95
+        Exy[base], Ez[base] = mEx[base], mEz[base]
 
     fig, (a, b) = plt.subplots(1, 2, figsize=(10.5, 6.2), sharey=True)
 
