@@ -12,6 +12,7 @@ before reuse.
 | `submit_brineK.sh` | Solve the brine `K(T)` study [#5] decks. |
 | `submit_nlgeom.sh` | Solve the large-deformation study [#8] decks. |
 | `submit_tilt.sh` | Solve the channel-tilt study [#6] decks. |
+| `submit_colseeds.sh` | Solve the seeded C-shape column (`rve_colseeds.csv`, 100 decks) for the depth-profile scatter envelopes, then postprocess to `results_colseeds.csv`. |
 | `postprocess_firstorder.sh` | `abaqus python SpaX_PostProcess.py` over the solved first-order ODBs. |
 | `postprocess_coltensor.sh` | Extract the per-slice 6×6 elasticity tensors. |
 | `postprocess_nlgeom.sh` | Extract nlgeom reference-point curves. |
