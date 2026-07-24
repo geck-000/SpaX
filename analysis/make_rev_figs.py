@@ -140,11 +140,17 @@ def fig_column():
 
     fig, (a, b) = plt.subplots(1, 2, figsize=(10.5, 6.2), sharey=True)
 
-    # +/-1 s.d. envelope over the 5 packings per slice (Jani #12 / Reviewer 2)
+    # +/-1 s.d. envelope over the 5 packings per slice (Jani #12 / Reviewer 2).
+    # The shaded ribbon degenerates to zero height at the terminal slices, so
+    # every slice also carries an explicit +/-1 s.d. bar: the scatter is then
+    # read the same way at each depth, base included.
     if sEx is not None:
         a.fill_betweenx(z, Exy - sEx, Exy + sEx, color=BLUE, alpha=0.18, lw=0)
         a.fill_betweenx(z, Ez - sEz, Ez + sEz, color=VERM, alpha=0.15, lw=0,
                         label=r"$\pm1$ s.d. (5 packings)")
+        for val, sd, col in ((Exy, sEx, BLUE), (Ez, sEz, VERM)):
+            a.errorbar(val, z, xerr=sd, fmt="none", ecolor=col, elinewidth=1.3,
+                       capsize=3.5, capthick=1.3, zorder=3)
     a.plot(Exy, z, "-", color=BLUE, marker="o", label=r"$E_x=E_y$ (in-plane)")
     a.plot(Ez, z, "--", color=VERM, marker="D", label=r"$E_z$ (vertical)")
     a.set_xlabel(r"Effective Young's modulus (GPa)")
