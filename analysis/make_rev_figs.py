@@ -84,7 +84,7 @@ def fig_scfdepth():
            label="max-principal (SCF)")
     b.plot(ff_mc, z, "-", color=PURPLE, marker="^",
            label="Mohr-Coulomb")
-    b.set_xlabel("First-failure macro stress\n(normalized to surface)")
+    b.set_xlabel("First-failure macro stress\n(normalised to surface)")
     depth_axis(b)
     orient_labels(b)
     b.set_title("(b)")
