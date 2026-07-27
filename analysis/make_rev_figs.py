@@ -17,17 +17,12 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ---- Okabe-Ito CVD-safe palette -------------------------------------------
-BLUE, ORANGE, GREEN = "#0072B2", "#E69F00", "#009E73"
-VERM, PURPLE, SKY, BLACK = "#D55E00", "#CC79A7", "#56B4E9", "#222222"
-
-plt.rcParams.update({
-    "font.size": 14, "axes.titlesize": 15, "axes.labelsize": 15,
-    "xtick.labelsize": 13, "ytick.labelsize": 13, "legend.fontsize": 12.5,
-    "axes.linewidth": 1.0, "lines.linewidth": 2.2, "lines.markersize": 7,
-    "figure.dpi": 120, "savefig.bbox": "tight", "axes.grid": True,
-    "grid.alpha": 0.30, "grid.linewidth": 0.7,
-})
+# Shared Okabe-Ito palette, enlarged fonts, and the z/H-on-vertical depth axis
+# (see figstyle.py); every depth figure in the paper draws from the same frame.
+from figstyle import (BLUE, ORANGE, GREEN, VERM, PURPLE, SKY, BLACK,
+                      depth_axis, orient_labels)
+from figstyle import apply as _apply_style
+_apply_style()
 
 # CSVs are read by bare filename from the working directory, per the
 # convention of the other analyzers; figures land alongside them unless
@@ -47,29 +42,6 @@ def zfrac(run_id):
     """ICE_z05 -> 0.05, ICE_z95 -> 0.95."""
     tok = run_id.lower().split("z")[-1]
     return int(tok) / 100.0
-
-
-def depth_axis(ax):
-    ax.set_ylim(1.0, 0.0)                 # 0 (surface) at top, 1 (base) at bottom
-    ax.set_ylabel(r"Normalized depth $z/H$")
-    ax.axhspan(0.80, 1.0, color=SKY, alpha=0.10, zorder=0)  # warm bottom band
-
-
-def orient_labels(ax):
-    """Cold-surface / warm-bottom orientation, as ticks outside the right edge.
-
-    Kept out of the plot area: as floating text it sat at bottom centre, where
-    both the curves and the legend want to be.
-    """
-    tw = ax.twinx()
-    tw.set_ylim(1.0, 0.0)
-    tw.set_yticks([0.0, 1.0])
-    tw.set_yticklabels(["surface (cold)", "bottom (warm)"], fontsize=11,
-                       color="0.35")
-    tw.tick_params(axis="y", length=0)
-    tw.grid(False)
-    for spine in tw.spines.values():
-        spine.set_visible(False)
 
 
 def save(fig, stem):
@@ -112,7 +84,7 @@ def fig_scfdepth():
            label="max-principal (SCF)")
     b.plot(ff_mc, z, "-", color=PURPLE, marker="^",
            label="Mohr-Coulomb")
-    b.set_xlabel("First-failure macro stress\n(normalized to surface)")
+    b.set_xlabel("First-failure macro stress\n(normalised to surface)")
     depth_axis(b)
     orient_labels(b)
     b.set_title("(b)")
@@ -126,6 +98,28 @@ def fig_scfdepth():
 # ===========================================================================
 # 2) ice_column_profiles : effective moduli + phase fractions vs z/H
 # ===========================================================================
+def _seed_stats(z):
+    """Per-slice mean and standard deviation of E_x, E_z across the replicate
+    packings (results_colseeds.csv, 5 seeds per slice), aligned to the depth array
+    z. Returns (mEx, mEz, sEx, sEz) in GPa, or four Nones if the replicate campaign
+    has not been run/pulled yet -- so the figure still builds from the
+    single-packing column alone."""
+    try:
+        rr = load("results_colseeds.csv")
+    except FileNotFoundError:
+        return None, None, None, None
+    ex, ez = {}, {}
+    for x in rr:
+        zk = round(zfrac(x["run_id"].rsplit("_", 1)[0]), 2)  # CSEED_z95_s3 -> 0.95
+        ex.setdefault(zk, []).append(float(x["E_x"]) / 1e9)
+        ez.setdefault(zk, []).append(float(x["E_z"]) / 1e9)
+    mEx = np.array([np.mean(ex.get(round(zz, 2), [np.nan])) for zz in z])
+    mEz = np.array([np.mean(ez.get(round(zz, 2), [np.nan])) for zz in z])
+    sEx = np.array([np.std(ex.get(round(zz, 2), [0.0])) for zz in z])
+    sEz = np.array([np.std(ez.get(round(zz, 2), [0.0])) for zz in z])
+    return mEx, mEz, sEx, sEz
+
+
 def fig_column():
     r = load("results_column.csv")
     z = np.array([zfrac(x["run_id"]) for x in r])
@@ -134,9 +128,29 @@ def fig_column():
     brine = np.array([float(x["VoF_incl_sphere"]) for x in r]) * 100
     chan = np.array([float(x["channel_vof_target"]) for x in r]) * 100
     gas = np.array([float(x["VoF_void_sphere"]) for x in r]) * 100
+    mEx, mEz, sEx, sEz = _seed_stats(z)           # replicate mean/scatter, if available
+
+    # Re-centre the warm base (z/H=0.95) on the five-packing mean: its single
+    # reference packing was a ~6-sigma low outlier (E_x 4.47 vs 4.85 GPa), and the
+    # mean matches the independent full-tensor column (study_coltensor). Other
+    # slices keep their single reference packing (all within ~1-2 sigma).
+    if mEx is not None:
+        base = int(np.argmax(z))                  # z/H = 0.95
+        Exy[base], Ez[base] = mEx[base], mEz[base]
 
     fig, (a, b) = plt.subplots(1, 2, figsize=(10.5, 6.2), sharey=True)
 
+    # +/-1 s.d. envelope over the 5 packings per slice (Jani #12 / Reviewer 2).
+    # The shaded ribbon degenerates to zero height at the terminal slices, so
+    # every slice also carries an explicit +/-1 s.d. bar: the scatter is then
+    # read the same way at each depth, base included.
+    if sEx is not None:
+        a.fill_betweenx(z, Exy - sEx, Exy + sEx, color=BLUE, alpha=0.18, lw=0)
+        a.fill_betweenx(z, Ez - sEz, Ez + sEz, color=VERM, alpha=0.15, lw=0,
+                        label=r"$\pm1$ s.d. (5 packings)")
+        for val, sd, col in ((Exy, sEx, BLUE), (Ez, sEz, VERM)):
+            a.errorbar(val, z, xerr=sd, fmt="none", ecolor=col, elinewidth=1.3,
+                       capsize=3.5, capthick=1.3, zorder=3)
     a.plot(Exy, z, "-", color=BLUE, marker="o", label=r"$E_x=E_y$ (in-plane)")
     a.plot(Ez, z, "--", color=VERM, marker="D", label=r"$E_z$ (vertical)")
     a.set_xlabel(r"Effective Young's modulus (GPa)")

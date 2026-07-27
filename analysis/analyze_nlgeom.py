@@ -20,6 +20,12 @@ import matplotlib
 matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 
+# Shared enlarged fonts + Okabe-Ito palette (see figstyle.py). This figure is
+# stress-strain, not depth-resolved, so it keeps a linear x-axis (no z/H flip).
+from figstyle import BLUE, VERM
+from figstyle import apply as _apply_style
+_apply_style()
+
 SLICES = ['z25', 'z65', 'z95']
 TITLES = {'z25': '(a) z/H=0.25  low porosity',
           'z65': '(b) z/H=0.65  transition',
@@ -40,30 +46,30 @@ def main():
     lin, ten, cmp = load_curves('lin'), load_curves('ten'), load_curves('cmp')
     sl, st, sc = load_summary('lin'), load_summary('ten'), load_summary('cmp')
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 4.6))
+    fig, axes = plt.subplots(1, 3, figsize=(14.5, 5.4))
     for ax, s in zip(axes, SLICES):
         E0 = float(sl['NLGLIN_%s' % s]['E0'])
         # linear reference line through origin, slope E0 (both branches)
         xr = [-0.021, 0.021]
         ax.plot([x * 100 for x in xr], [E0 * x / 1e6 for x in xr],
-                '--', color='0.55', lw=1.3, label='linear (small-strain)', zorder=1)
+                '--', color='0.55', lw=1.6, label='linear (small-strain)', zorder=1)
         # compression branch (eps < 0)
         cc = cmp['NLGCMP_%s' % s]
         ax.plot([e * 100 for e, _ in cc], [sig / 1e6 for _, sig in cc],
-                'o-', color='#1f77b4', ms=3, label='nlgeom compression', zorder=3)
+                'o-', color=BLUE, ms=4, label='nlgeom compression', zorder=3)
         # tension branch (eps > 0), mark the last converged point if it stalled
         tt = ten['NLGTEN_%s' % s]
         ax.plot([e * 100 for e, _ in tt], [sig / 1e6 for _, sig in tt],
-                'o-', color='#d62728', ms=3, label='nlgeom tension', zorder=3)
+                'o-', color=VERM, ms=4, label='nlgeom tension', zorder=3)
         eps_reached = tt[-1][0]
         if eps_reached < 0.019:                     # tension lost stability early
-            ax.plot(eps_reached * 100, tt[-1][1] / 1e6, 'x', color='k', ms=11,
-                    mew=2.5, zorder=4)
+            ax.plot(eps_reached * 100, tt[-1][1] / 1e6, 'x', color='k', ms=12,
+                    mew=2.8, zorder=4)
             ax.annotate('tensile\ninstability\n(%.1f%% strain)' % (eps_reached * 100),
                         xy=(eps_reached * 100, tt[-1][1] / 1e6),
                         xytext=(0.30, 0.30), textcoords='axes fraction',
-                        fontsize=8, ha='center',
-                        arrowprops=dict(arrowstyle='->', color='k', lw=1))
+                        fontsize=11, ha='center',
+                        arrowprops=dict(arrowstyle='->', color='k', lw=1.2))
         # annotate the geometric correction where each branch converged
         secC = float(sc['NLGCMP_%s' % s]['sec_over_E0'])
         txt = 'compr: %+.1f%%' % (100 * (secC - 1))
@@ -71,15 +77,15 @@ def main():
             secT = float(st['NLGTEN_%s' % s]['sec_over_E0'])
             txt = 'tens: %+.1f%%   ' % (100 * (float(st['NLGTEN_%s' % s]['sec_over_E0']) - 1)) + txt
         ax.text(0.5, 0.02, txt, transform=ax.transAxes, ha='center', va='bottom',
-                fontsize=8.5, bbox=dict(boxstyle='round', fc='w', ec='0.7', alpha=0.9))
+                fontsize=11, bbox=dict(boxstyle='round', fc='w', ec='0.7', alpha=0.9))
         ax.axhline(0, color='0.8', lw=0.8); ax.axvline(0, color='0.8', lw=0.8)
-        ax.set_title(TITLES[s], fontsize=10)
-        ax.set_xlabel('nominal strain $\\varepsilon_{nom}$ (%)')
-        ax.set_ylabel('nominal stress $\\sigma_{nom}$ (MPa)')
+        ax.set_title(TITLES[s])
+        ax.set_xlabel('Nominal strain $\\varepsilon_{nom}$ (%)')
+        ax.set_ylabel('Nominal stress $\\sigma_{nom}$ (MPa)')
         if s == 'z25':
-            ax.legend(fontsize=7.5, loc='upper left')
+            ax.legend(fontsize=10.5, loc='upper left')
     fig.tight_layout()
-    fig.savefig('study_nlgeom.png', dpi=140)
+    fig.savefig('study_nlgeom.png', dpi=200)
     print('wrote study_nlgeom.png')
 
     print('\n%-6s %10s %12s %12s %14s' % ('slice', 'E0(GPa)', 'tens sec/E0',

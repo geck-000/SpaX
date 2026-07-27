@@ -1,8 +1,11 @@
 """Render publication-quality RVE figures from a SpaX mesh/result (pyvista,
-offscreen). Two modes:
+offscreen). Three modes:
 
   micro  <Job-*.inp> <out.png>        microstructure: brine CHANNELS (blue) vs
                                       POCKETS (orange) in a faint ice cube.
+  mesh   <Job-*.inp> <out.png>        the periodic FE mesh itself, one corner
+                                      octant removed so the conforming
+                                      matrix/inclusion interface shows.
   field  <Job-*.vtk> <out.png>        von Mises on the (warped) RVE, viridis.
 
 Colours: Okabe-Ito colourblind-safe pair for the two inclusion classes; a
@@ -15,6 +18,8 @@ import pyvista as pv
 
 BLUE, ORANGE = '#0072B2', '#E69F00'      # channels, pockets (Okabe-Ito, CVD-safe)
 ICE = '#e8f2f8'                          # faint ice-cube tint
+MATRIX = '#dde6ee'                       # ice matrix in the cut-away mesh view
+EDGE = '#7d8b99'                         # element edges
 
 
 # ---------------------------------------------------------------- .inp parsing
@@ -68,6 +73,25 @@ def _plotter():
     return p
 
 
+def _trim(path, pad=24):
+    """Crop the uniform white margin left by the offscreen camera, keeping a
+    small pad, so the figure carries no dead space into the paper."""
+    try:
+        from PIL import Image, ImageChops
+    except ImportError:
+        return
+    im = Image.open(path).convert('RGB')
+    # tolerance crop: the renderer leaves a scattering of near-white pixels that
+    # would otherwise defeat an exact-white bounding box
+    diff = ImageChops.difference(im, Image.new('RGB', im.size, (255, 255, 255)))
+    bbox = diff.convert('L').point(lambda v: 255 if v > 8 else 0).getbbox()
+    if not bbox:
+        return
+    x0, y0, x1, y1 = bbox
+    im.crop((max(0, x0 - pad), max(0, y0 - pad),
+             min(im.width, x1 + pad), min(im.height, y1 + pad))).save(path)
+
+
 def _frame(p, bounds, az, el, cube=True):
     # faint tinted faces + a crisp dark wireframe so the cube reads clearly
     if cube:
@@ -80,8 +104,24 @@ def _frame(p, bounds, az, el, cube=True):
     p.enable_parallel_projection()
     p.reset_camera()               # fit the whole cube in frame
     p.camera.zoom(0.82)            # leave a margin for the legend/axes overlays
-    p.add_axes(line_width=4, labels_off=False, color='#22303a',
-               xlabel='x', ylabel='y', zlabel='z')
+    if '--noaxes' not in sys.argv:
+        p.add_axes(line_width=4, labels_off=False, color='#22303a',
+                   xlabel='x', ylabel='y', zlabel='z')
+
+
+def _classify(incl, L):
+    """Split the inclusion cells into connected bodies; a body spanning most of
+    the cell height is a (percolating) channel, the compact ones are pockets.
+    Returns a per-cell array, 0 = pocket, 1 = channel."""
+    conn = incl.connectivity()
+    rid = conn.cell_data['RegionId']
+    kind = np.zeros(incl.n_cells, int)
+    for r in np.unique(rid):
+        cids = np.where(rid == r)[0]
+        sub = conn.extract_cells(cids)
+        if (sub.points[:, 2].max() - sub.points[:, 2].min()) > 0.55 * L:
+            kind[cids] = 1
+    return kind
 
 
 # ------------------------------------------------------------------ micro mode
@@ -90,17 +130,7 @@ def render_micro(inp, out, az, el):
     g = grid_from(nodes, tets, mat)
     L = g.bounds[5] - g.bounds[4]
     incl = g.extract_cells(np.where(mat == 1)[0])
-    # split inclusions into connected bodies; a body spanning most of the height
-    # is a (percolating) channel, the compact ones are pockets.
-    conn = incl.connectivity()
-    rid = conn.cell_data['RegionId']
-    kind = np.zeros(incl.n_cells, int)          # 0 pocket, 1 channel
-    ptsz = conn.points[:, 2]
-    for r in np.unique(rid):
-        cids = np.where(rid == r)[0]
-        sub = conn.extract_cells(cids)
-        if (sub.points[:, 2].max() - sub.points[:, 2].min()) > 0.55 * L:
-            kind[cids] = 1
+    kind = _classify(incl, L)
     p = _plotter()
     for k, col, lab in ((1, BLUE, 'channels'), (0, ORANGE, 'pockets')):
         sel = np.where(kind == k)[0]
@@ -114,6 +144,61 @@ def render_micro(inp, out, az, el):
     p.screenshot(out, scale=2)
     print('micro %s: %d channels-cells, %d pocket-cells' %
           (out, int((kind == 1).sum()), int((kind == 0).sum())))
+
+
+# ------------------------------------------------------------------- mesh mode
+def _mesh_render(inp, out, az, el, cut):
+    """The periodic tetrahedral mesh of a real generated deck. With cut=True one
+    corner octant of cells is removed -- whole tets are dropped (cell-centre
+    test) rather than sliced, so every element drawn is a genuine element of the
+    solved model -- exposing the interior discretisation and the conforming
+    matrix/inclusion interface. With cut=False the intact cell shows the strictly
+    periodic surface mesh and the inclusion traces on the cell faces."""
+    nodes, tets, mat = parse_inp(inp)
+    g = grid_from(nodes, tets, mat)
+    b = g.bounds
+    L = b[5] - b[4]
+    ctr = [(b[0] + b[1]) / 2, (b[2] + b[3]) / 2, (b[4] + b[5]) / 2]
+    if cut:
+        cc = g.cell_centers().points
+        # octant facing the camera, so the cut opens toward the reader
+        oct_ = (cc[:, 0] < ctr[0]) & (cc[:, 1] > ctr[1]) & (cc[:, 2] > ctr[2])
+        keep = g.extract_cells(np.where(~oct_)[0])
+    else:
+        keep = g
+    kmat = keep.cell_data['material']
+
+    # near-flat shading: the cell faces must read as one material, not as three
+    # brightnesses, so the mesh lines carry the 3D form instead of the lighting
+    shade = dict(show_edges=True, edge_color=EDGE, line_width=0.35,
+                 specular=0.0, ambient=0.72, diffuse=0.30)
+    p = _plotter()
+    matrix = keep.extract_cells(np.where(kmat == 0)[0]).extract_surface()
+    p.add_mesh(matrix, color=MATRIX, label='ice matrix', **shade)
+    incl = keep.extract_cells(np.where(kmat == 1)[0])
+    if incl.n_cells:
+        kind = _classify(incl, L)
+        for k, col, lab in ((1, BLUE, 'brine channels'), (0, ORANGE, 'brine pockets')):
+            sel = np.where(kind == k)[0]
+            if len(sel):
+                p.add_mesh(incl.extract_cells(sel).extract_surface(), color=col,
+                           label=lab, **shade)
+    _frame(p, g.bounds, az, el)
+    if '--nolegend' not in sys.argv:      # the paper labels the phases in TikZ
+        p.add_legend(bcolor='white', border=True, size=(0.235, 0.115),
+                     loc='upper left', face='circle', font_family='arial')
+    p.screenshot(out, scale=2)
+    _trim(out)
+    print('mesh %s: %d of %d tets shown (%d inclusion)' %
+          (out, keep.n_cells, g.n_cells, int((kmat == 1).sum())))
+
+
+def render_mesh(inp, out, az, el):
+    _mesh_render(inp, out, az, el, cut=False)
+
+
+def render_meshcut(inp, out, az, el):
+    _mesh_render(inp, out, az, el, cut=True)
 
 
 # ------------------------------------------------------------------ field mode
@@ -151,7 +236,8 @@ def main():
     mode, src, out = sys.argv[1], sys.argv[2], sys.argv[3]
     az = float(sys.argv[4]) if len(sys.argv) > 4 else 40.0
     el = float(sys.argv[5]) if len(sys.argv) > 5 else 22.0
-    (render_micro if mode == 'micro' else render_field)(src, out, az, el)
+    {'micro': render_micro, 'mesh': render_mesh, 'meshcut': render_meshcut,
+     'field': render_field}[mode](src, out, az, el)
 
 
 if __name__ == '__main__':
