@@ -1,13 +1,13 @@
-# Laminated-plate macro model from results_column.csv (H=1.000 m, highfreq matrix)
+# Laminated-plate macro model from results_column_recentred.csv (H=1.000 m, highfreq matrix)
 quantity,value,unit
-A11,9.127054e+09,N/m
-B11,-3.032807e+08,N
-D11,6.996936e+08,N*m
-neutral_plane_offset_over_H,-0.033229,-
-coupling_B_over_sqrtAD,0.120012,-
-E_extensional,8.113259e+09,Pa
-E_flexural,7.446272e+09,Pa
-E_flex_over_E_ext,0.917790,-
+A11,9.170314e+09,N/m
+B11,-2.838138e+08,N
+D11,7.084897e+08,N*m
+neutral_plane_offset_over_H,-0.030949,-
+coupling_B_over_sqrtAD,0.111346,-
+E_extensional,8.151658e+09,Pa
+E_flexural,7.539957e+09,Pa
+E_flex_over_E_ext,0.924960,-
 
 # per-layer profile
 run_id,z_over_H,E_x_Pa,z_centroid_m,Q11_Pa
@@ -20,4 +20,4 @@ ICE_z55,0.550,8.741907e+09,0.050000,9.817129e+09
 ICE_z65,0.650,8.529641e+09,0.150000,9.581735e+09
 ICE_z75,0.750,7.843002e+09,0.250000,8.822264e+09
 ICE_z85,0.850,7.348311e+09,0.350000,8.271920e+09
-ICE_z95,0.950,4.469377e+09,0.450000,5.141635e+09
+ICE_z95,0.950,4.853200e+09,0.450000,5.574233e+09
