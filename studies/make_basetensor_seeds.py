@@ -50,8 +50,16 @@ ECHOED = ['L', 'L_mesh', 'Is_Porous', 'E_matrix', 'nu_matrix', 'VoF_sphere',
           'generate_channels', 'channel_vof_target']
 
 
-def study_basetensor():
-    """Replicate the base slice N_SEED times, each solved for the full 6x6."""
+def study_basetensor(L=None, prefix='BTEN', out=None):
+    """Replicate the base slice N_SEED times, each solved for the full 6x6.
+
+    With `L` given, the cell edge is overridden while every inclusion size,
+    volume fraction and the mesh size are left untouched -- so the cell holds
+    proportionally more inclusions at the same physical resolution, which is
+    how the size sweep (rve_sizechan.csv) grows its cells. This is the knob
+    that matters for in-plane isotropy at the base: the scatter is set by how
+    few channels fit, so only a bigger cell reduces it.
+    """
     src = None
     for x in csv.DictReader(open(COLUMN_CSV)):
         if int(round(float(x['run_id'].split('z')[-1]))) == Z_SLICE:
@@ -64,16 +72,25 @@ def study_basetensor():
     r.update({k: src[k] for k in ECHOED})
     r['Growth_Concentration'] = f'{0.40 + 0.32 * (Z_SLICE / 100.0):.2f}'
     r['full_tensor'] = 'Yes'                     # 6 load cases
+    if L is not None:
+        r['L'] = f'{float(L):.2f}'               # L_mesh deliberately unchanged
 
     rows = []
     for s in range(1, N_SEED + 1):
         rr = dict(r)
-        rr['run_id'] = f'BTEN_z{Z_SLICE:02d}_s{s}'
+        rr['run_id'] = f'{prefix}_z{Z_SLICE:02d}_s{s}'
         rows.append(rr)
 
-    write('rve_basetensor_seeds.csv', [{c: row.get(c, BASE.get(c, '')) for c in COLS}
-                                 for row in rows])
+    write(out or 'rve_basetensor_seeds.csv',
+          [{c: row.get(c, BASE.get(c, '')) for c in COLS} for row in rows])
 
 
 if __name__ == '__main__':
-    study_basetensor()
+    import sys
+    if len(sys.argv) > 1:                        # e.g. `... 0.80 BT80`
+        L = float(sys.argv[1])
+        pref = sys.argv[2] if len(sys.argv) > 2 else 'BT%02d' % round(L * 100)
+        study_basetensor(L=L, prefix=pref,
+                         out='rve_basetensor_%s.csv' % pref.lower())
+    else:
+        study_basetensor()
