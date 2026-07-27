@@ -1176,8 +1176,51 @@ def extract_principals(Odb_Path, Output_Path, L=0.0, run_id='RVE',
     return last
 
 
+def _applied_strain_from_deck(odb_dir, run_id, suffixes, L):
+    """Recover the applied engineering strain as Disp/L from the input deck.
+
+    The decks prescribe a fixed *displacement* on the driving reference point
+    (`*Boundary, amplitude=LoadRamp` -> `RP-n, dof, dof, Disp`), so the strain
+    the load case actually imposes is Disp/L and therefore depends on the cell
+    size. Every load case, tension and shear alike, uses the same magnitude.
+
+    This must not be guessed. A cell of L=0.50 with the standard Disp=0.005
+    gives exactly 0.01, so a hardcoded 0.01 is silently right at that one size
+    and silently wrong at every other -- it scales the whole tensor by
+    (assumed/true) with no error and no warning. Returns None if no deck can be
+    read, leaving the caller to decide.
+    """
+    for sfx in [suffixes[k] for k in sorted(suffixes)]:
+        inp = os.path.join(odb_dir, 'Job-{}-{}.inp'.format(run_id, sfx))
+        if not os.path.isfile(inp):
+            continue
+        try:
+            armed = False
+            for line in open(inp):
+                s = line.strip()
+                if s.lower().startswith('*boundary') and 'amplitude' in s.lower():
+                    armed = True
+                    continue
+                if armed:
+                    if s.startswith('*'):        # section ended without a value
+                        armed = False
+                        continue
+                    parts = [p.strip() for p in s.split(',')]
+                    # driving row carries a magnitude: NAME, dof, dof, value
+                    if len(parts) >= 4:
+                        try:
+                            disp = abs(float(parts[3]))
+                        except ValueError:
+                            continue
+                        if disp > 0 and L > 0:
+                            return disp / float(L)
+        except (IOError, OSError):
+            continue
+    return None
+
+
 def extract_elasticity_tensor(odb_dir, output_dir, L, run_id,
-                                applied_strain=0.01,
+                                applied_strain=None,
                                 suffixes=None):
     """
     Extract the full 6x6 effective elasticity tensor C_ij from multiple
@@ -1206,8 +1249,10 @@ def extract_elasticity_tensor(odb_dir, output_dir, L, run_id,
         RVE side length.
     run_id : str
         RVE identifier (e.g. 'soft_m008').
-    applied_strain : float
-        The engineering strain magnitude applied in each load case.
+    applied_strain : float or None
+        The engineering strain magnitude applied in each load case. Leave None
+        (the default) to read it from the deck as Disp/L, which is the only
+        value that is correct at every cell size; pass a float only to override.
     suffixes : dict or None
         Mapping of Voigt column index to job suffix.
         Default: {0:'utx', 1:'uty', 2:'utz', 3:'ss12', 4:'ss13', 5:'ss23'}
@@ -1223,12 +1268,28 @@ def extract_elasticity_tensor(odb_dir, output_dir, L, run_id,
     if suffixes is None:
         suffixes = {0: 'utx', 1: 'uty', 2: 'utz',
                     3: 'ss12', 4: 'ss13', 5: 'ss23'}
-    
+
+    # Derive the applied strain from the deck unless explicitly overridden. The
+    # whole tensor scales linearly with this number, so getting it wrong scales
+    # every modulus by the same factor -- invisible in any ratio, and invisible
+    # in the output, which used to print the assumed value as if it were fact.
+    strain_src = 'given'
+    if applied_strain is None:
+        applied_strain = _applied_strain_from_deck(odb_dir, run_id, suffixes, L)
+        strain_src = 'from deck (Disp/L)'
+        if applied_strain is None:
+            raise ValueError(
+                "cannot determine the applied strain for {}: no readable "
+                "Job-{}-<case>.inp in {}. Pass applied_strain explicitly "
+                "(= Disp/L) rather than letting it default -- a wrong value "
+                "rescales every modulus silently.".format(run_id, run_id, odb_dir))
+
     print("\n" + "=" * 70)
     print("ELASTICITY TENSOR EXTRACTION")
     print("=" * 70)
     print("  RVE: {}".format(run_id))
-    print("  Applied strain: {}".format(applied_strain))
+    print("  L: {}".format(L))
+    print("  Applied strain: {} [{}]".format(applied_strain, strain_src))
     
     voigt_labels = ['11', '22', '33', '12', '13', '23']
     stress_keys = ['S11', 'S22', 'S33', 'S12', 'S13', 'S23']
@@ -1755,9 +1816,14 @@ if __name__ == '__main__':
         sys.exit(0)
     if len(sys.argv) >= 2 and sys.argv[1] == 'elasticity':
         if len(sys.argv) < 6:
-            print("Usage: abaqus python SpaX_PostProcess.py elasticity <odb_dir> <out> <L> <run_id>")
+            print("Usage: abaqus python SpaX_PostProcess.py elasticity "
+                  "<odb_dir> <out> <L> <run_id> [applied_strain]")
+            print("       applied_strain is read from the deck as Disp/L if omitted;")
+            print("       pass it only to override.")
             sys.exit(1)
-        extract_elasticity_tensor(sys.argv[2], sys.argv[3], float(sys.argv[4]), sys.argv[5])
+        _eps = float(sys.argv[6]) if len(sys.argv) > 6 else None
+        extract_elasticity_tensor(sys.argv[2], sys.argv[3], float(sys.argv[4]),
+                                  sys.argv[5], applied_strain=_eps)
         sys.exit(0)
 
     # Merge mode (no Abaqus needed): combine per-RVE partial CSVs.
