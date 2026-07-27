@@ -50,7 +50,7 @@ ECHOED = ['L', 'L_mesh', 'Is_Porous', 'E_matrix', 'nu_matrix', 'VoF_sphere',
           'generate_channels', 'channel_vof_target']
 
 
-def study_basetensor(L=None, prefix='BTEN', out=None):
+def study_basetensor(L=None, prefix='BTEN', out=None, full_tensor=True):
     """Replicate the base slice N_SEED times, each solved for the full 6x6.
 
     With `L` given, the cell edge is overridden while every inclusion size,
@@ -71,7 +71,8 @@ def study_basetensor(L=None, prefix='BTEN', out=None):
     r = dict(BASE)
     r.update({k: src[k] for k in ECHOED})
     r['Growth_Concentration'] = f'{0.40 + 0.32 * (Z_SLICE / 100.0):.2f}'
-    r['full_tensor'] = 'Yes'                     # 6 load cases
+    # 6 load cases (utx,uty,utz,ss12,ss13,ss23) or just utx+utz
+    r['full_tensor'] = 'Yes' if full_tensor else 'No'
     if L is not None:
         r['L'] = f'{float(L):.2f}'               # L_mesh deliberately unchanged
 
@@ -87,10 +88,11 @@ def study_basetensor(L=None, prefix='BTEN', out=None):
 
 if __name__ == '__main__':
     import sys
-    if len(sys.argv) > 1:                        # e.g. `... 0.80 BT80`
+    if len(sys.argv) > 1:                        # e.g. `... 0.80 BT80 [first]`
         L = float(sys.argv[1])
         pref = sys.argv[2] if len(sys.argv) > 2 else 'BT%02d' % round(L * 100)
-        study_basetensor(L=L, prefix=pref,
+        ft = not (len(sys.argv) > 3 and sys.argv[3].lower().startswith('first'))
+        study_basetensor(L=L, prefix=pref, full_tensor=ft,
                          out='rve_basetensor_%s.csv' % pref.lower())
     else:
         study_basetensor()
