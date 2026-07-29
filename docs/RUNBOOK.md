@@ -1,69 +1,115 @@
-# CSC Puhti runbook — L=0.40 second-order + failure-onset study
+# Cluster runbook
 
-Budget on hand: **1671 BU**. Both campaigns together cost **well under ~250 BU**
-worst-case (realistically ~80–130 BU). No hugemem, no large partition — these are
-small jobs. `small` partition throughout; the failure solves could even use `test`.
+How to take a campaign from parameter deck to result table on an HPC cluster.
+The examples use Slurm and the scripts in `../hpc/`, which were written for CSC
+Roihu; adapt the account, partition and module lines for your own site.
 
-WORKDIR on Puhti = `/scratch/project_XXXXXX/test_rve` (the shared dir the other
-studies used). Account `project_XXXXXX`, `module load abaqus/2025`.
+For the toolkit itself — parameters, environment variables, output columns —
+see the repository `README.md`. For operational pitfalls, see `USER_DOCS.md`.
 
-## 0. One-time: copy files to CSC
-From the local repository checkout:
+---
+
+## 0. What runs where
+
+| Stage | Needs Abaqus? | Where |
+|-------|---------------|-------|
+| Generate decks from a parameter CSV | no | laptop or cluster |
+| Solve the decks | **yes** | cluster |
+| Extract ODBs → `results_*.csv` | **yes** (`abaqus python`) | cluster |
+| Analyse CSVs → figures and numbers | no | laptop |
+
+Only the middle two stages need a licence, so generation and the whole analysis
+stage run locally. Generation is the memory-hungry stage; solving is the
+wall-clock-hungry one.
+
+---
+
+## 1. Stage the campaign
+
 ```bash
-WD=<cluster>:/scratch/project_XXXXXX/test_rve
-# scripts + extractor (this bundle)
-scp csc_solve_array.sh submit_si2nd_l400.sh postprocess_si2nd_l400.sh \
-    submit_failure.sh postprocess_failure.sh failure_extract.py  $WD/
-# the engines must already be there; refresh to this version to be safe
-scp Spatium_Standalone.py Spatium_PostProcess.py  $WD/
-# L=0.40 decks (already generated locally)
-scp out_si2nd/Job-SI2_L400_*.inp  $WD/
-# column-slice uniaxial decks (already generated locally)
-scp out_column/Job-ICE_z*-utx.inp  $WD/
-# CSVs needed by post-processing
-scp rve_seaice_2nd.csv results_si2nd.csv  $WD/   # results_si2nd has the L240/L320 rows
+# 1. build the parameter deck
+cd studies && python3 make_<campaign>.py          # -> ../params/rve_<campaign>.csv
+
+# 2. generate the Abaqus input decks locally
+cd .. && SPAX_SEED=<seed> python3 SpaX_Standalone.py \
+         params/rve_<campaign>.csv out_<campaign>/
+
+# 3. copy the decks and the pipeline to the cluster
+export WORKDIR=/scratch/<project>/<workdir>
+rsync -az out_<campaign>/ <cluster>:$WORKDIR/ --include='Job-*' --exclude='*'
+rsync -az SpaX_Standalone.py SpaX_PostProcess.py \
+          params/rve_<campaign>.csv <cluster>:$WORKDIR/
 ```
 
-## A. L=0.40 second-order bending (the actual A1 blocker)
-12 decks = 4 seeds × {utx, ss13, ben}, quadratic C3D10H, ~78k tets each.
-```bash
-ssh <cluster>; cd /scratch/project_XXXXXX/test_rve
-bash submit_si2nd_l400.sh        # solve array (small, 8 cpu, 32G, 2h, %6) -> post (rows 9-12)
-```
-Resources: `--partition=small --cpus-per-task=8 --mem=32G --time=02:00:00`. 8 cores
-keeps billing == cores; 2 h caps a stuck job. If a `-ben` deck times out, resubmit
-that one with `--time=04:00:00` (still fits `small`).
+Both `SpaX_Standalone.py` and `SpaX_PostProcess.py` must be present in
+`WORKDIR`: the post-processor imports the deck reader from the generator.
 
-Then pull results back and finalize the 3-size MCST slope **locally** (pandas only):
-```bash
-scp <cluster>:/scratch/project_XXXXXX/test_rve/results_si2nd.csv ./   # now 12 rows
-python3 Spatium_PostProcess.py analyze eq19 results_si2nd.csv
-```
-Expected: Eq.19 slope stays ≈0 / negative at the 3rd size → **no MCST length scale**
-confirmed (closes the paper's second-order section).
+## 2. Solve
 
-## B. Strength / failure-onset mapping (the new study)
-10 column slices ICE_z05..z95, uniaxial only, linear C3D4 (~50k elem) — tiny.
 ```bash
-ssh <cluster>; cd /scratch/project_XXXXXX/test_rve
-bash submit_failure.sh           # solve array (small, 4 cpu, 12G, 30 min) -> failure_extract
-scp <cluster>:/scratch/project_XXXXXX/test_rve/results_failure.csv ./
-# run with the SAME python env you use for analyze_studies.py (needs pandas+matplotlib):
-python analyze_failure.py results_failure.csv       # -> study_failure.png + first-failure depth
+ssh <cluster>
+cd $WORKDIR
+WORKDIR=$WORKDIR bash submit_<campaign>.sh
 ```
-`failure_extract.py` reports, per slice, the matrix max-principal SCF and the
-Mohr-Coulomb demand (φ default 30°, set `SPAX_MC_PHI_DEG`) as percentiles normalised
-by the macro stress. `analyze_failure.py` converts P99 → first-failure macro stress
-σ_fail(z) = σ_t/SCF_p99 (tensile) and 2c·cosφ/MCnorm_p99 (MC); the depth with the
-lowest σ_fail fails first. The depth **ranking is strength-independent** — σ_t (def
-1 MPa) and c (def 0.6 MPa) only set the MPa scale, so the headline ("warm channelled
-base cracks first") needs no strength assumption. Expected: minimum at the porous
-base (z85/z95), consistent with SCF_p99≈5.6 and 27% of matrix above SCF 2 there.
 
-## Notes
-- All decks request `S,E,LE,EVOL`, so `failure_extract.py` gets correct element
-  volumes (→ correct macro S11_bar and volume-weighted volfracs).
-- Column slices use box size L=0.50 (hard-coded in postprocess_failure.sh).
-- ODBs are pruned to deck+ODB by the solver; delete ODBs after post-processing.
-- For more scatter on B, regenerate ICE_z* decks with extra seeds and resubmit;
-  still only a few BU each.
+Every script in `../hpc/` honours `WORKDIR` from the environment, so nothing
+needs editing. The Slurm account cannot be taken from a variable in a `#SBATCH`
+directive — either edit the `--account=` line once, or override per submission:
+
+```bash
+sbatch --account=<your_account> submit_<campaign>.sh
+```
+
+**Sizing.** These are small jobs. A linear `C3D4` column slice (~50k elements)
+solves in minutes on 4 cores; a quadratic `C3D10H` bending deck (~78k tets) wants
+8 cores, ~32 GB and a couple of hours. Ask for 8 cores rather than more — on most
+billing models that keeps the charge equal to the cores used — and set a
+walltime that caps a stuck job rather than one that never trips.
+
+## 3. Post-process
+
+```bash
+WORKDIR=$WORKDIR bash postprocess_<campaign>.sh
+```
+
+which runs, per deck,
+
+```bash
+abaqus python SpaX_PostProcess.py <params.csv> <odb_dir> results_<campaign>.csv
+```
+
+Array tasks write `results_<campaign>_<i>.csv` partials; union them with
+
+```bash
+python3 SpaX_PostProcess.py --merge parts_dir/ results_<campaign>.csv
+```
+
+## 4. Pull back and analyse
+
+```bash
+rsync -az <cluster>:$WORKDIR/results_<campaign>.csv results/
+cd results && python3 ../analysis/<analyzer>.py
+```
+
+Analysers read their inputs by bare filename, so run them from `results/`.
+
+---
+
+## 5. Housekeeping
+
+- **Delete ODBs once the results CSV is pulled.** A campaign is several GB of
+  ODBs and the CSV holds everything the analysis needs. Cluster scratch is
+  usually shared and often purged on a timer.
+- **Decks are reproducible**, so there is no need to archive `out_*/`. The
+  parameter CSV plus `SPAX_SEED` regenerates them.
+- **Check the generation summary before submitting**: `GENERATION COMPLETE: N
+  RVEs` and the per-deck node counts. Periodic meshing retries at high inclusion
+  counts are normal and appear in the log as tracebacks — see `USER_DOCS.md`.
+
+## 6. When a solve fails
+
+Identify genuine failures by the **absence of an `Abaqus exit:` line** in the
+job log, not by whether an `.odb` exists. A job killed at walltime leaves a
+truncated ODB behind, and the solve array skips any deck whose ODB is present —
+so a naive resubmit silently skips exactly the jobs that failed. Delete those
+ODBs first, then resubmit.
