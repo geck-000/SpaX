@@ -17,6 +17,24 @@ before reuse.
 | `postprocess_coltensor.sh` | Extract the per-slice 6×6 elasticity tensors. |
 | `postprocess_nlgeom.sh` | Extract nlgeom reference-point curves. |
 
+### Earlier campaign scripts
+
+Restored from the repository root, where they had been left untracked:
+
+| File | Role |
+|------|------|
+| `csc_solve_array.sh` | The general Slurm solve array used for most campaigns. |
+| `bend_01_generate.sh` … `bend_04_merge.sh`, `bend_submit.sh` | The four-stage bending (second-order) pipeline and its submitter. |
+| `run_channels_q.sh`, `run_porous_q_full.sh` | Quadratic-element channel and porous sweeps. |
+| `submit_failure.sh`, `postprocess_failure.sh` | Failure-onset campaign. |
+| `submit_si2nd_l400.sh`, `postprocess_si2nd_l400.sh` | The `L=0.40` second-order set, the heavy part of the 3-size MCST null. |
+
+> **Trap.** `csc_solve_array.sh` skips a deck when its `.odb` merely *exists*,
+> not when the solve completed. A job killed at walltime leaves a truncated ODB,
+> so a naive resubmit silently skips exactly the jobs that failed. Identify
+> failures by the absence of an `Abaqus exit:` line in the log and delete those
+> ODBs before resubmitting. See `../docs/HANDOVER.md` §5.
+
 **Note.** After the CSC v2026_03 software-stack change, `module load abaqus`
 fails in batch; these scripts source a snapshot env (`~/abaqus_env.sh`) instead.
 They assume the core modules (`SpaX_Standalone.py`, `SpaX_PostProcess.py`) and
