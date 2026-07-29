@@ -47,7 +47,7 @@ into folders, each with its own `README`:
 | `analysis/` | Analyzers and field extractors that turn results into figures/quantities. |
 | `viz/` | RVE visualization (`render_rve.py`, `odb_to_vtk.py`). |
 | `tensors/`, `post_coltensor/`, `post_basetensor_seeds/`, `post_bt80/` | Per-slice 6×6 elasticity tensors, one CSV per RVE. |
-| `docs/` | Project notes (`SPAX_TODO.md`, runbooks, developer feature notes). |
+| `docs/` | User guide (`USER_DOCS.md`) and the cluster runbook (`RUNBOOK.md`). |
 
 ## Reproducing the published figures
 
@@ -249,7 +249,18 @@ or `SpaX_PostProcess.py` (post) as appropriate.
 | `SPAX_CHANNEL_SEP` | `1.0` | extra channel-side min-distance widening (× `lc_fine`) |
 | `SPAX_ZGROW_BIAS` | `0.0` | anisotropic densification strength along `Growth_Direction` (w>0 lowers sphericity) |
 
-### 3.3 Reproducibility, decoupling & runtime
+### 3.3 Channel inclination (wavy channels)
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `SPAX_CHANNEL_TILT_DEG` | `0` | maximum lean off the Z axis, in degrees. `0` keeps the straight vertical cylinder. A channel is built as a *mean-vertical* wave of amplitude `amp = L·tan(tilt)/2π`, returning to the same XY position **and** tangent on both z-faces, so strict periodicity is preserved. It bulges laterally by up to `2·amp`, and the packing margin is inflated by `amp` to keep channels off the x/y faces |
+| `SPAX_CHANNEL_TILT_AZIMUTH_DEG` | (per-channel) | direction of the lean. Unset ⇒ each channel gets its **own** azimuth from a deterministic hash of its centre, so the inclination has no net in-plane direction — this is what isolates *dilution* of the vertical anisotropy from an artificial x/y anisotropy. Set it to force every channel to lean the same way |
+| `SPAX_TILT_DEBUG` | — | dump per-channel tilt geometry while meshing |
+
+> A straight *net* tilt is impossible on a cubic periodic cell without sheared
+> periodicity. The wavy form tests whether inclination **dilutes** the vertical
+> anisotropy, not whether the anisotropy axis rotates.
+
+### 3.4 Reproducibility, decoupling & runtime
 | Variable | Default | Effect |
 |----------|---------|--------|
 | `SPAX_SEED` | (OS entropy) | reproducible packing (deterministic per row index) |
@@ -263,6 +274,11 @@ or `SpaX_PostProcess.py` (post) as appropriate.
 
 > **Thread pinning** (recommended for parallel generation, to avoid
 > oversubscription): `OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1`.
+
+### 3.5 Analysis-side
+| Variable | Default | Effect |
+|----------|---------|--------|
+| `SPAX_MC_PHI_DEG` | `30` | Mohr–Coulomb friction angle (degrees) used by `analysis/failure_extract.py` |
 
 ---
 
