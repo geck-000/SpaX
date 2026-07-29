@@ -24,3 +24,23 @@ large-deformation study.
 **Figures** (`study_*.png`) — the analysis plots (`study_brineK`, `study_nlgeom`,
 `study_tilt`, `study_coltensor`, `study_scf`, `study_failure`,
 `study_macro_plate`), regenerable from the CSVs via `../analysis/`.
+
+## Legacy campaign tables
+
+The tables below predate this folder — they are the first sea-ice campaign, run
+when everything still lived in the repository root, and they are the only
+surviving data for the studies written up in `claude.tex` (the older campaign
+report on Overleaf). They were untracked on one machine until 2026-07-29:
+`results_bending`, `results_brine`, `results_bten`, `results_chan_ft`,
+`results_channel`, `results_channels_q`, `results_fymy`, `results_gas`,
+`results_homog*`, `results_lscale`, `results_marchenko`, `results_mono{,2}`,
+`results_morph`, `results_old`, `results_orient`, `results_perc`,
+`results_porous_q3{,_interim}`, `results_seas`, `results_seeds`. Their input
+decks are the matching `../params/rve_*.csv` restored in the same commit.
+
+> **Scatter convention.** These legacy tables were summarised in `claude.tex`
+> using the *sample* standard deviation (`ddof=1`). The current manuscript
+> (`main_rev.tex` §4.1) declares and uses the *population* standard deviation
+> (`ddof=0`), which with five packings is ~12% narrower. `results_seeds.csv` is
+> the provenance for claude.tex's "0.3%, 0.5%, 1.9%" three-configuration
+> replicate study — under the population convention those are 0.2%, 0.5%, 1.7%.
