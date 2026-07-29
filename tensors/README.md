@@ -7,8 +7,7 @@ abaqus python ../SpaX_PostProcess.py elasticity <odb_dir> <out.csv> <L> <run_id>
 ```
 
 one `elasticity_tensor_<run_id>.csv` per RVE. These are the earlier campaigns —
-the `ICE_z*` graded column and the `BTEN_z*` base slices — and were left
-untracked in the repository root until 2026-07-29.
+the `ICE_z*` graded column and the `BTEN_z*` base slices.
 
 The later, manuscript-facing tensor sets live in their own directories, because
 each is a single coherent ensemble rather than an accumulation:
