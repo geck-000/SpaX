@@ -16,6 +16,11 @@ Post-solve analysis: turn the `../results/*.csv` produced by
 | `macro_plate.py` | Laminated-plate (classical lamination theory) whole-sheet macro assembly. |
 | `nlgeom_extract.py` | Extracts nominal stress–strain from the nlgeom reference-point reaction. |
 | `scf_extract.py` | Stress-concentration-factor percentiles from matrix principal stress. |
+| `failure_extract.py` | Failure-onset extractor (`abaqus python`). Extends `scf_extract.py`: Mohr–Coulomb and max-principal criteria over a slice's `utx` ODB. |
+| `analyze_failure.py` | Failure-onset figure (`study_failure.png`) from `results_failure.csv`. |
+| `plot_ice_column.py` | Depth profiles and cross-plots of the graded column. |
+| `plot_tensor.py` | Per-slice 6×6 elasticity-tensor figure. |
+| `plot_marchenko.py`, `plot_marchenko_match.py` | Comparison against the Marchenko (2024) vibrating-beam field data — raw, and after the matrix/salinity matching. |
 
 **Running:** most analyzers read result CSVs by bare filename (e.g.
 `results_tilt00.csv`). Run them with those files on the path — either copy the

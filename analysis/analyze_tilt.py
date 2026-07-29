@@ -26,7 +26,8 @@ def main():
     data = {deg: load(tag) for deg, tag in TILTS}
     degs = [d for d, _ in TILTS]
     means = [st.mean(data[d]) for d in degs]
-    sds = [st.stdev(data[d]) if len(data[d]) > 1 else 0 for d in degs]
+    # population s.d. (ddof=0), the convention declared in the manuscript
+    sds = [st.pstdev(data[d]) if len(data[d]) > 1 else 0 for d in degs]
 
     fig, ax = plt.subplots(figsize=(6.4, 4.8))
     # individual seeds (light) + mean±sd (dark)
@@ -54,7 +55,7 @@ def main():
     print('wrote study_tilt.png')
     for d in degs:
         print(f'  tilt {d:>2}deg: E_z/E_x = {st.mean(data[d]):.4f} '
-              f'+/- {(st.stdev(data[d]) if len(data[d])>1 else 0):.4f}  {[round(x,3) for x in data[d]]}')
+              f'+/- {(st.pstdev(data[d]) if len(data[d])>1 else 0):.4f}  {[round(x,3) for x in data[d]]}')
 
 if __name__ == '__main__':
     main()

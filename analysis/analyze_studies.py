@@ -383,8 +383,10 @@ def do_seeds():
     means, stds, an_m, an_s = [], [], [], []
     for c in order:
         g = df[df.cfg == c]
-        m, s = g.Ex.mean(), g.Ex.std()
-        am, as_ = g.aniso.mean(), g.aniso.std()
+        # population s.d. (ddof=0), the convention declared in the manuscript;
+        # pandas defaults to the sample s.d., which is ~12% wider at 5 packings
+        m, s = g.Ex.mean(), g.Ex.std(ddof=0)
+        am, as_ = g.aniso.mean(), g.aniso.std(ddof=0)
         means.append(m); stds.append(s); an_m.append(am); an_s.append(as_)
         print(f"  {c:6s}  {m:6.2f} +/- {s:.3f}     {100*s/m:4.1f}   {am:.3f} +/- {as_:.3f}")
     x = np.arange(len(order))
