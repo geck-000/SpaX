@@ -1,8 +1,14 @@
+import os
 import numpy as np, matplotlib.pyplot as plt
+
+# tensors/ sits at the repository root, so resolve it relative to this file
+# rather than the working directory -- the other analysers here are run from
+# results/, where a bare "tensors/" would not exist.
+TENSOR_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), os.pardir, "tensors")
 
 def load_C(run_id):
     rows = []
-    with open(f"tensors/elasticity_tensor_{run_id}.csv") as f:
+    with open(os.path.join(TENSOR_DIR, f"elasticity_tensor_{run_id}.csv")) as f:
         for ln in f:
             if ln.startswith("#") or ln.strip()=="" or ln.startswith(","): continue
             p = ln.split(",")
