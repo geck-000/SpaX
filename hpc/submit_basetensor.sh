@@ -10,7 +10,7 @@
 # is the densest in the column), so the walltime is raised to 1 h.
 # Run on a Roihu CPU login node: bash submit_basetensor.sh
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 mkdir -p logs

@@ -12,8 +12,8 @@
 # Union this study's per-RVE partials into results_bending.csv. Pure Python.
 unset SLURM_GTIDS
 module load python-data
-export PYTHONUSERBASE=/projappl/project_XXXXXX/my-python-env
-WORKDIR=/scratch/project_XXXXXX/test_rve
+export PYTHONUSERBASE=${PYTHONUSERBASE:-/projappl/project_XXXXXX/my-python-env}
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 cd "$WORKDIR" || exit 1
 export PYTHONUNBUFFERED=1
 python3 Spatium_PostProcess.py --merge post_parts_bend results_bending.csv

@@ -15,7 +15,7 @@
 # Uses THIS study's CSV + its own post_parts_bend dir.
 unset SLURM_GTIDS
 module load abaqus/2025
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 cd "$WORKDIR" || exit 1
 export PYTHONUNBUFFERED=1
 CSV=rve_bending_extended.csv

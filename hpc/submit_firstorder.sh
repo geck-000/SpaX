@@ -3,7 +3,7 @@
 # utx + utz per RVE, linear C3D4H, small/cheap. One solve array over all decks,
 # then a per-study postprocess (E_x, E_z, E_z/E_x). Run on a Roihu login node.
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 mkdir -p "$WORKDIR"; cd "$WORKDIR"; mkdir -p logs
 
 ls Job-SZCH_*.inp Job-SAL_*.inp 2>/dev/null | sed 's/\.inp$//' | sort > GlobalJobList_fo

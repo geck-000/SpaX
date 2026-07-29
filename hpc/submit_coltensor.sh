@@ -4,7 +4,7 @@
 # Linear C3D4H, ~46k elements each -> small/cheap. extract_elasticity_tensor then
 # assembles each slice's C_ij. Run on a Roihu CPU login node: bash submit_coltensor.sh
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 mkdir -p logs
