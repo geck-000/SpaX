@@ -4,7 +4,7 @@
 # These are NOT the multi-million-element extended-bending study -> NO hugemem.
 # Run from the SHARED test_rve dir on the Puhti login node:  bash submit_si2nd_l400.sh
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 cd "$WORKDIR"
 mkdir -p logs
 

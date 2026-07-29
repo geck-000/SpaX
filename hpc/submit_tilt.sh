@@ -4,7 +4,7 @@
 # then a per-tilt postprocess (E_x, E_z, E_z/E_x). ODBs are KEPT (not cleaned) so
 # a couple can be exported to VTK for ParaView figures. Run on a Roihu login node.
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 mkdir -p "$WORKDIR"; cd "$WORKDIR"; mkdir -p logs
 
 ls Job-TLT00_*.inp Job-TLT15_*.inp Job-TLT30_*.inp 2>/dev/null | sed 's/\.inp$//' | sort > GlobalJobList_tilt

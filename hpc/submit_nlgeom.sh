@@ -3,7 +3,7 @@
 # single-axis utx. One solve array over all 9 decks, then a per-case extraction of
 # the reaction-based nominal sigma-eps path. Run on a Roihu login node.
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 mkdir -p "$WORKDIR"; cd "$WORKDIR"; mkdir -p logs
 
 ls Job-NLG*-utx.inp 2>/dev/null | sed 's/\.inp$//' | sort > GlobalJobList_nlg

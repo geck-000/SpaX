@@ -73,8 +73,8 @@ Copy the PNGs into the Overleaf `figures/` directory.
 ```bash
 cd params && python3 ../studies/make_<campaign>.py          # -> rve_<campaign>.csv
 cd .. && SPAX_SEED=20260723 python3 SpaX_Standalone.py params/rve_<campaign>.csv out_<campaign>/
-rsync -az out_<campaign>/ roihu:/scratch/project_XXXXXX/test_rve/ --include='Job-*' --exclude='*'
-ssh roihu "cd /scratch/project_XXXXXX/test_rve && bash submit_<campaign>.sh"
+rsync -az out_<campaign>/ <cluster>:/scratch/project_XXXXXX/test_rve/ --include='Job-*' --exclude='*'
+ssh <cluster> "cd /scratch/project_XXXXXX/test_rve && bash submit_<campaign>.sh"
 # ... then pull results_*.csv or post_*/ back
 ```
 

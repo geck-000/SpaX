@@ -5,6 +5,20 @@ of the generate → solve → post-process pipeline at cluster scale; paths and
 account/project fields are specific to that environment and should be adapted
 before reuse.
 
+## Site-specific fields
+
+Two placeholders stand in for the allocation these were run under. Neither is a
+working value — set them for your own site:
+
+| Placeholder | Meaning | How to set |
+|---|---|---|
+| `project_XXXXXX` | Slurm account / allocation | edit the `#SBATCH --account=` line, or override per submission with `sbatch --account=<acct> …`, which takes precedence over the directive |
+| `/scratch/project_XXXXXX/test_rve` | shared working directory on the cluster | export `WORKDIR=…` before running; every script now honours it |
+
+`PYTHONUSERBASE` is likewise overridable where the scripts set it. The scripts
+otherwise assume the core modules (`SpaX_Standalone.py`, `SpaX_PostProcess.py`)
+and the decks are staged in `WORKDIR`.
+
 | File | Role |
 |------|------|
 | `submit_firstorder.sh` | Slurm array: solve the first-order (uniaxial/shear) decks. |

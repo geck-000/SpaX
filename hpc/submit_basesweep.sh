@@ -18,7 +18,7 @@
 # different jobs: ~3.7e5 elements at L=0.65 against ~1.35e6 at L=1.00.
 # Run on a Roihu CPU login node: bash submit_basesweep.sh
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 mkdir -p logs

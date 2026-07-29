@@ -14,14 +14,14 @@
 # clobbers the other runs already living in test_rve.
 unset SLURM_GTIDS
 module load python-data
-export PYTHONUSERBASE=/projappl/project_XXXXXX/my-python-env
+export PYTHONUSERBASE=${PYTHONUSERBASE:-/projappl/project_XXXXXX/my-python-env}
 export OMP_NUM_THREADS=1; export OPENBLAS_NUM_THREADS=1; export MKL_NUM_THREADS=1
 export SPAX_RESUME=1
 export SPAX_GEN_WORKERS=4        # few workers: each meshes a 2-5 M-element RVE
 export SPAX_MAX_RETRIES=8
 export SPAX_MESH_TIMEOUT=5400
 
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 cd "$WORKDIR" || exit 1
 CSV=rve_bending_extended.csv
 echo "CSV: $CSV   WORKDIR: $WORKDIR"

@@ -4,7 +4,7 @@
 # tension step per deck; failure_extract.py then gives per-slice SCF + Mohr-Coulomb
 # stress-concentration percentiles. Run on the Puhti login node: bash submit_failure.sh
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 cd "$WORKDIR"
 mkdir -p logs
 

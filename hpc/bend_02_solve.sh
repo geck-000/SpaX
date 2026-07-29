@@ -24,7 +24,7 @@
 # NOTE: --array is set on the command line by bend_01_generate.sh.
 unset SLURM_GTIDS
 module load abaqus/2025
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 cd "$WORKDIR" || exit 1
 
 JOBNAME=$(sed -n "${SLURM_ARRAY_TASK_ID}p" GlobalJobList_bend)

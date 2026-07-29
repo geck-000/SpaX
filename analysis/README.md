@@ -26,5 +26,5 @@ Post-solve analysis: turn the `../results/*.csv` produced by
 `results_tilt00.csv`). Run them with those files on the path — either copy the
 relevant `../results/*.csv` alongside, or invoke from a directory where they are
 reachable. Figures are written next to the CSVs by default.
-Use the conda/matplotlib Python (`~/miniconda3/bin/python`); the system
-`python3` may lack matplotlib.
+Use a Python that has matplotlib and pandas available (a conda environment, for
+instance); a bare system `python3` may lack them.

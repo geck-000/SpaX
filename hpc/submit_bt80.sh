@@ -13,7 +13,7 @@
 # (cubic in L at fixed mesh size), so cpus, memory and walltime are all raised.
 # Run on a Roihu CPU login node: bash submit_bt80.sh
 set -e
-WORKDIR=/scratch/project_XXXXXX/test_rve
+WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 mkdir -p "$WORKDIR"
 cd "$WORKDIR"
 mkdir -p logs
