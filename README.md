@@ -5,6 +5,28 @@ microstructures (e.g. sea ice: ice matrix + brine inclusions + voids), including
 first-order effective moduli, anisotropy, and second-order (couple-stress)
 bending response.
 
+## Start here
+
+This repository is two things at once, kept deliberately apart. Pick your path:
+
+**"I want the tool."** Take the three modules at the top level and read
+§1–§6 below. Nothing in the subfolders is needed — they are a worked example,
+not part of the toolkit. Start at §5, *Worked examples*.
+
+**"I want to reproduce the sea-ice study."** The subfolders are a complete
+campaign: decks in `params/`, the outputs they produced in `results/`, and the
+analyzers that turn those into figures in `analysis/`. See *Reproducing the
+published figures* below.
+
+**"I want to understand a specific number in the paper."** Every folder has its
+own `README` naming what each file is for; `docs/` holds the campaign notes.
+
+```
+SpaX_Standalone.py  SpaX_GmshPeriodic.py  SpaX_PostProcess.py   <- the toolkit
+────────────────────────────────────────────────────────────────────────────
+studies/ params/ hpc/ results/ analysis/ viz/ tensors/          <- the campaign
+```
+
 The toolkit is **three Python files**:
 
 | File | Run with | Role |
@@ -24,7 +46,40 @@ into folders, each with its own `README`:
 | `results/` | Homogenisation output tables (`results_*.csv`), curves, and figures (`study_*.png`). |
 | `analysis/` | Analyzers and field extractors that turn results into figures/quantities. |
 | `viz/` | RVE visualization (`render_rve.py`, `odb_to_vtk.py`). |
-| `docs/` | Project notes (`SPAX_TODO.md`, developer feature notes). |
+| `tensors/`, `post_coltensor/`, `post_basetensor_seeds/`, `post_bt80/` | Per-slice 6×6 elasticity tensors, one CSV per RVE. |
+| `docs/` | Project notes (`SPAX_TODO.md`, runbooks, developer feature notes). |
+
+## Reproducing the published figures
+
+All analyzers are plain `python3` (matplotlib + pandas, no Abaqus licence) and
+read the CSVs already in `results/`. Run them from `results/`, which is where
+they look for their inputs:
+
+```bash
+cd results
+PYTHONPATH=../analysis python3 ../analysis/make_rev_figs.py   # 3 figures, PDF+PNG
+python3 ../analysis/analyze_brineK.py
+python3 ../analysis/analyze_nlgeom.py
+python3 ../analysis/macro_plate.py
+```
+
+| Figure | Produced by |
+|--------|-------------|
+| `ice_column_profiles`, `study_coltensor`, `study_scfdepth` | `analysis/make_rev_figs.py` |
+| `study_brineK` | `analysis/analyze_brineK.py` |
+| `study_nlgeom` | `analysis/analyze_nlgeom.py` |
+| `study_macro_plate` | `analysis/macro_plate.py` |
+| `rve_mesh`, `rve_meshcut`, `rve_straight_channels`, `rve_tilted_channels` | `viz/render_rve.py` (needs `pyvista` and a generated deck) |
+
+Regenerating the *inputs* rather than the figures means re-solving the decks in
+`params/` with Abaqus — see §1. The `hpc/` scripts are the Slurm jobs that did
+so on CSC Roihu; they are archival examples and site-specific, not a dependency.
+
+> **Scatter convention.** Every quoted scatter is the population standard
+> deviation (`ddof=0`) over the packings of an ensemble. Note that pandas
+> `.std()` and `statistics.stdev` default to the *sample* convention, ~12%
+> wider at five packings. Standard errors and Welch statistics correctly use
+> `ddof=1` — see `check_channel_isotropy.py` and `compare_basetensor_sizes.py`.
 
 ---
 
