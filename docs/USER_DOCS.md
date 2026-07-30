@@ -40,7 +40,7 @@ stumble:
 | Parameter CSVs | `params/rve_*.csv` |
 | Cluster submit/post | `hpc/submit_*.sh`, `hpc/postprocess_*.sh` |
 | Result tables | `results/results_*.csv` |
-| Stiffness matrices | `tensors/`, `post_coltensor/`, `post_basetensor_seeds/`, `post_bt80/` |
+| Stiffness matrices | `tensors/` (earlier campaigns at the top level; the manuscript ensembles in `tensors/column/`, `tensors/basetensor_seeds/`, `tensors/bt80/`) |
 | Analysers and figures | `analysis/` (plain `python3`) |
 | Renderers | `viz/render_rve.py`, `viz/odb_to_vtk.py` |
 

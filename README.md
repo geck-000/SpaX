@@ -46,7 +46,7 @@ into folders, each with its own `README`:
 | `results/` | Homogenisation output tables (`results_*.csv`), curves, and figures (`study_*.png`). |
 | `analysis/` | Analyzers and field extractors that turn results into figures/quantities. |
 | `viz/` | RVE visualization (`render_rve.py`, `odb_to_vtk.py`). |
-| `tensors/`, `post_coltensor/`, `post_basetensor_seeds/`, `post_bt80/` | Per-slice 6×6 elasticity tensors, one CSV per RVE. |
+| `tensors/` | Per-slice 6×6 elasticity tensors, one CSV per RVE. Earlier campaigns at the top level; each manuscript ensemble in its own subdirectory (`column/`, `basetensor_seeds/`, `bt80/`). |
 | `docs/` | User guide (`USER_DOCS.md`) and the cluster runbook (`RUNBOOK.md`). |
 
 ## Reproducing the published figures
