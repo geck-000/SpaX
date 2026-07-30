@@ -35,4 +35,4 @@ echo "solve array: $SOLVE"
 
 POST=$(sbatch --parsable --dependency=afterany:${SOLVE} \
   --export=ALL,WORKDIR=$WORKDIR postprocess_bt80.sh)
-echo "postprocess: $POST  -> post_bt80/elasticity_tensor_BT80_z95_s*.csv"
+echo "postprocess: $POST  -> tensors/bt80/elasticity_tensor_BT80_z95_s*.csv"
