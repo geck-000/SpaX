@@ -53,3 +53,29 @@ Restored from the repository root, where they had been left untracked:
 fails in batch; these scripts source a snapshot env (`~/abaqus_env.sh`) instead.
 They assume the core modules (`SpaX_Standalone.py`, `SpaX_PostProcess.py`) and
 the decks are staged in the job working directory.
+
+## CSC Roihu access
+
+The scripts submit from a Roihu login node. CSC authenticates with short-lived
+SSH **certificates**: a login tool generates a keypair and has CSC's CA sign the
+public half, so `ssh` needs *both* the private key and the signed certificate.
+
+`~/.ssh/config` here defines a `roihu` host pointing at
+`~/.ssh/csc_id` + `~/.ssh/csc_id-cert.pub`, user `your-csc-username`. Two things are not
+in the repository and must be present locally before anything can be submitted:
+
+1. **The private key.** A certificate on its own cannot authenticate. Re-running
+   the CSC login tool writes `csc_id` and `csc_id-cert.pub` together; a
+   certificate downloaded by itself from the web UI is not enough. Certificates
+   expire after 24 h, so this is a routine per-session step.
+2. **Network access.** CSC restricts SSH to allowlisted networks. From outside
+   them `roihu.csc.fi:22` times out (while, say, `github.com:22` connects
+   normally, which is the quick way to tell a CSC allowlist problem from a local
+   firewall). Connect through the institutional VPN first.
+
+Check both with:
+
+```bash
+ssh-keygen -L -f ~/.ssh/csc_id-cert.pub   # principal + validity window
+ssh -o BatchMode=yes roihu true           # should not time out
+```
