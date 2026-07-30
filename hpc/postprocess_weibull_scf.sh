@@ -29,10 +29,10 @@ for odb in Job-WBL_*-utx.odb; do
   rid=$(basename "$odb" -utx.odb); rid=${rid#Job-}
   # cell edge is a per-deck property; read it back from the deck rather than
   # assuming, since the six WBL cases inherit different L from their sources
-  Lr=$(awk -F, -v id="$rid" 'NR==1{for(i=1;i<=NF;i++){if($i=="run_id")c=i; if($i=="L")l=i}; next} $c==id{print $l; exit}' params/rve_weibull.csv 2>/dev/null || true)
+  Lr=$(awk -F, -v id="$rid" 'NR==1{for(i=1;i<=NF;i++){if($i=="run_id")c=i; if($i=="L")l=i}; next} $c==id{print $l; exit}' rve_weibull.csv 2>/dev/null || true)
   Lr=${Lr:-$L}
   echo "== $rid  (L=$Lr)"
-  abaqus python ../analysis/scf_extract.py "$odb" "$Lr" "$rid" "$OUT" "$DUMPDIR/$rid.npz"
+  abaqus python scf_extract.py "$odb" "$Lr" "$rid" "$OUT" "$DUMPDIR/$rid.npz"
   n=$((n+1))
 done
 echo "extracted $n ODBs -> $OUT  and  $DUMPDIR/*.npz"
@@ -41,7 +41,7 @@ cat <<EOF
 
 Then, offline (plain python3, no Abaqus):
 
-  python3 analysis/weibull_sensitivity.py $DUMPDIR results_weibull
+  python3 weibull_sensitivity.py $DUMPDIR results_weibull
 
 which reports the effective concentration factor as a volume-weighted m-norm,
 

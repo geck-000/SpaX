@@ -69,7 +69,11 @@ MICRO = {
     'E_matrix': '9.3922e+09', 'nu_matrix': '0.33',
     'VoF_sphere': '0.09', 'r_avg': '0.040', 'r_std': '0.011',
     'Mode': 'Uniaxial Tension X', 'Disp': '0.005',
-    'Mode2': 'Simple Shear S13', 'Disp2': '0.005',
+    # No Mode2: the size fit needs only the first-order reference E_eff (utx)
+    # and the bending deck (Kappa>0). Carrying a shear solve as well would add
+    # a third to the cost of the most expensive study for a modulus the fit
+    # never uses.
+    'Mode2': '', 'Disp2': '',
     'VoF_void_sphere': '0.012', 'VoF_incl_sphere': '0.078',
     'E_sphere_inclusion': '2.2e9', 'nu_sphere_inclusion': '0.48',
     'sphericity_avg': '0.65', 'sphericity_std': '0.10',
