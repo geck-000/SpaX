@@ -60,8 +60,8 @@ The scripts submit from a Roihu login node. CSC authenticates with short-lived
 SSH **certificates**: a login tool generates a keypair and has CSC's CA sign the
 public half, so `ssh` needs *both* the private key and the signed certificate.
 
-`~/.ssh/config` here defines a `roihu` host pointing at
-`~/.ssh/csc_id` + `~/.ssh/csc_id-cert.pub`, user `your-csc-username`. Two things are not
+Define a `roihu` host in `~/.ssh/config` pointing at `~/.ssh/csc_id` +
+`~/.ssh/csc_id-cert.pub`, with your CSC username as `User`. Two things are not
 in the repository and must be present locally before anything can be submitted:
 
 1. **The private key.** A certificate on its own cannot authenticate. Re-running
