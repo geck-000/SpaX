@@ -69,12 +69,42 @@ def main():
     S11_bar = num / (L ** 3)
 
     mat = inst.elementSets['MATRIX_ONLY']
-    sp1, wts = [], []
+    sp1, wts, labs = [], [], []
     for v in S.getSubset(region=mat).values:
         sp1.append(max_principal(v.data))
         wts.append(volmap.get(v.elementLabel, 1.0))
+        labs.append(v.elementLabel)
     sp1 = np.array(sp1); wts = np.array(wts)
     scf = sp1 / S11_bar
+
+    # Element centroids, so the dumped field can be mapped in space rather than
+    # only summarised as a distribution. Computed from the connectivity because
+    # an ODB stores nodal coordinates, not element centres; done only when a
+    # dump is requested, since it costs a pass over the mesh.
+    cent = None
+    if dump_path is not None:
+        try:
+            ncoord = {}
+            for n in inst.nodes:
+                ncoord[n.label] = n.coordinates
+            emap = {}
+            for e in inst.elements:
+                emap[e.label] = e.connectivity
+            cent = np.zeros((len(labs), 3))
+            for i, lab in enumerate(labs):
+                conn = emap.get(lab)
+                if not conn:
+                    continue
+                acc = np.zeros(3); k = 0
+                for nd in conn:
+                    c = ncoord.get(nd)
+                    if c is not None:
+                        acc += np.array(c[:3], dtype=float); k += 1
+                if k:
+                    cent[i] = acc / k
+        except Exception as e:
+            print('  (centroids unavailable: %s)' % e)
+            cent = None
 
     def pct(q):
         return float(np.percentile(scf, q))
@@ -97,8 +127,12 @@ def main():
         # scf is per matrix element, vol the element volume (the dV of the
         # Weibull integral); S11_bar and L carry the normalisation so the
         # offline analyzer can rebuild absolute stresses if it needs to.
-        np.savez_compressed(dump_path, scf=scf, vol=wts,
-                            S11_bar=S11_bar, L=L, run_id=run_id)
+        if cent is not None:
+            np.savez_compressed(dump_path, scf=scf, vol=wts, cent=cent,
+                                S11_bar=S11_bar, L=L, run_id=run_id)
+        else:
+            np.savez_compressed(dump_path, scf=scf, vol=wts,
+                                S11_bar=S11_bar, L=L, run_id=run_id)
         print('  dumped %d matrix elements -> %s' % (len(scf), dump_path))
 
     odb.close()

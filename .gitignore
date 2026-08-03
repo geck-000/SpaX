@@ -3,3 +3,4 @@ __pycache__/
 out_*/
 logs_gen/
 results/weibull_dumps/
+results/scf_fields/
