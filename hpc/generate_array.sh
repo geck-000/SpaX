@@ -52,15 +52,32 @@ ROW=${SLURM_ARRAY_TASK_ID}
 RUN_ID=$(awk -F, -v r=$((ROW+1)) 'NR==1{for(i=1;i<=NF;i++) if($i=="run_id") c=i} NR==r{print $c}' "$CSV")
 [ -z "$RUN_ID" ] && { echo "ERROR: no row $ROW in $CSV"; exit 1; }
 
+# Each task generates into a private directory and the finished decks are moved
+# up afterwards. Sharing one output directory across concurrent array tasks does
+# not work: the generator writes intermediate artefacts there (the Gmsh mesh and
+# the <run_id>_periodic_pairs.csv that the .inp writer consumes) and tidies them
+# between rows, so parallel tasks delete each other's files and the writer fails
+# with FileNotFoundError on a pairs file that existed moments earlier. The
+# failures are scattered rather than reproducible, which is the signature.
+TASKDIR="$OUTDIR/.task_${SLURM_ARRAY_JOB_ID}_${ROW}"
+mkdir -p "$TASKDIR"
+
 # One-row slice of the deck, so the task builds exactly its own RVE.
-SLICE="$OUTDIR/.row_${ROW}.csv"
+SLICE="$TASKDIR/row.csv"
 head -1 "$CSV" > "$SLICE"
 awk -v r=$((ROW+1)) 'NR==r' "$CSV" >> "$SLICE"
 
 echo "===== row ${ROW}: ${RUN_ID}  start $(date) ====="
-python3 SpaX_Standalone.py "$SLICE" "$OUTDIR/"
+python3 SpaX_Standalone.py "$SLICE" "$TASKDIR/"
 RC=$?
-rm -f "$SLICE"
+
+N=$(ls "$TASKDIR"/Job-*.inp 2>/dev/null | wc -l)
+if [ "$N" -gt 0 ]; then
+    mv -f "$TASKDIR"/Job-*.inp "$OUTDIR"/
+fi
+rm -rf "$TASKDIR"
+
 echo "===== row ${ROW}: ${RUN_ID}  done $(date)  rc=${RC} ====="
-echo "decks: $(ls ${OUTDIR}/Job-${RUN_ID}-*.inp 2>/dev/null | wc -l)"
+echo "decks: ${N}"
+[ "$N" -eq 0 ] && exit 1
 exit $RC
