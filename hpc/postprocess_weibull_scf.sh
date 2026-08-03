@@ -20,7 +20,11 @@ L=${L:-0.50}
 cd "$WORKDIR"
 mkdir -p "$DUMPDIR" logs
 
-module load abaqus 2>/dev/null || true
+# Lmod does not work in batch on Roihu (CSC's zz-csc-env.sh bails out for
+# non-interactive shells, leaving Tcl env-modules that cannot parse Abaqus's
+# .lua modulefile). Source the snapshot of the working interactive environment
+# instead, exactly as csc_solve_array.sh does.
+source "$HOME/abaqus_env.sh"
 
 OUT=results_weibull_scf.csv
 n=0

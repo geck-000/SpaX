@@ -130,32 +130,59 @@ def main():
         import matplotlib
         matplotlib.use('Agg')
         import matplotlib.pyplot as plt
-        import figstyle  # noqa: F401  (shared rc)
+        import os as _os
+        import sys as _sys
+        _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+        import figstyle as fs
+        fs.apply()
     except Exception:
         print('(matplotlib/figstyle unavailable, skipping figure)')
         return
 
-    fig, ax = plt.subplots(1, 2, figsize=(9.5, 4.0))
+    # Okabe-Ito, matching the rest of the figures; BASE deliberately the one
+    # dark saturated colour since it is the case every conclusion turns on.
+    COL = {'BASE': fs.VERM, 'CHAN': fs.BLUE, 'GAS': fs.ORANGE,
+           'ELON': fs.GREEN, 'POCK': fs.PURPLE, 'CTRL': fs.SKY}
+    order = ['BASE', 'CHAN', 'GAS', 'ELON', 'POCK', 'CTRL']
+    rows.sort(key=lambda r: order.index(r['case']) if r['case'] in order else 99)
+
+    fig, ax = plt.subplots(1, 2, figsize=(11.5, 4.4))
     for r in rows:
         y = [r['SCFeff_m%g' % m] for m in M_GRID]
         e = [r['SCFeff_m%g_sd' % m] for m in M_GRID]
-        ax[0].errorbar(M_GRID, y, yerr=e, marker='o', ms=3, capsize=2, label=r['case'])
+        ax[0].errorbar(M_GRID, y, yerr=e, marker='o', ms=4, capsize=2,
+                       color=COL.get(r['case']), label=r['case'])
     ax[0].set_xscale('log')
     ax[0].set_xlabel('Weibull modulus $m$')
     ax[0].set_ylabel(r'$\mathrm{SCF}_{\mathrm{eff}}(m)$')
     ax[0].set_title('effective concentration vs weakest-link severity')
     ax[0].legend(fontsize=7)
 
-    base = [r for r in rows if r['case'] == 'BASE']
-    ref = base[0] if base else rows[-1]
-    for r in rows:
-        y = [r['SCFeff_m%g' % m] / ref['SCFeff_m%g' % m] for m in M_GRID]
-        ax[1].plot(M_GRID, y, marker='o', ms=3, label=r['case'])
+    # Second panel: the one ordering that actually depends on m. Ratios to a
+    # common reference would obscure it, since every case rises with m together.
+    d = {r['case']: r for r in rows}
+    if 'CHAN' in d and 'GAS' in d:
+        ratio = [d['CHAN']['SCFeff_m%g' % m] / d['GAS']['SCFeff_m%g' % m]
+                 for m in M_GRID]
+        ax[1].plot(M_GRID, ratio, marker='o', ms=4, color=fs.BLUE,
+                   label='channels / gas voids')
+        ax[1].axhline(1.0, lw=1.0, color=fs.BLACK, ls='--')
+        cross = None
+        for i in range(len(M_GRID) - 1):
+            if (ratio[i] - 1.0) * (ratio[i + 1] - 1.0) < 0:
+                cross = M_GRID[i] + (M_GRID[i + 1] - M_GRID[i]) * \
+                    (1.0 - ratio[i]) / (ratio[i + 1] - ratio[i])
+        if cross:
+            ax[1].axvline(cross, lw=1.0, color=fs.VERM, ls=':')
+            ax[1].annotate('order reverses at $m\\approx%.0f$' % cross,
+                           xy=(cross, 1.0), xytext=(cross * 1.3, 0.92),
+                           color=fs.VERM, fontsize=11.5,
+                           arrowprops=dict(arrowstyle='->', color=fs.VERM, lw=1.2))
     ax[1].set_xscale('log')
-    ax[1].axhline(1.0, lw=0.8, color='0.5')
     ax[1].set_xlabel('Weibull modulus $m$')
-    ax[1].set_ylabel(r'$\mathrm{SCF}_{\mathrm{eff}}$ / %s' % ref['case'])
-    ax[1].set_title('ranking stability')
+    ax[1].set_ylabel(r'$\mathrm{SCF}_{\mathrm{eff}}$ ratio')
+    ax[1].set_title(r'the one ordering that depends on $m$')
+    ax[1].legend(loc='upper left', fontsize=11)
     fig.tight_layout()
     fig.savefig(prefix + '.png', dpi=200)
     print('wrote %s.png' % prefix)
