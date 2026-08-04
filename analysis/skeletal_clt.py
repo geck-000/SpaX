@@ -5,7 +5,7 @@ The manuscript assembles ten equal slices by classical lamination theory
 above mid-depth. Kujala et al. (1990, IAHR, Table 2) measure z0/H = 0.37-0.39
 on strain-gauged floating beams, i.e. 11-13% above mid-depth, together with a
 bottom-to-top modulus ratio alpha = E_bot/E_top = 0.12-0.19. Our column gives
-alpha = 0.51.
+alpha = 0.55.
 
 This script works in the same one-dimensional (cylindrical-bending) reduction
 Kujala et al. used, so the comparison is like-for-like, and it accepts laminae
@@ -68,13 +68,29 @@ def report(E, t, z, H, label):
 
 
 def load_column(path):
-    """Mean E_eff per slice from a column results CSV (ddof=0 over packings)."""
+    """Mean E_eff per slice from a column results CSV (ddof=0 over packings).
+
+    Only the equal-thickness depth slices are returned. A steep-column file may
+    also carry the resolved basal sub-laminae (z955, z970, ...) in the same CSV;
+    those are a subdivision of the lowest slice, not extra slices, and admitting
+    them here would build a stack of n+4 layers all assumed equally thick. That
+    silently misplaces the neutral plane, so they are dropped and passed instead
+    through --skeletal, which knows their true thicknesses.
+    """
     g = defaultdict(list)
+    dropped = set()
     for r in csv.DictReader(open(path)):
+        rid = r['run_id'].split('_s')[0]
+        if len(rid.rsplit('_z', 1)[-1]) > 2:
+            dropped.add(rid)
+            continue
         try:
-            g[r['run_id'].split('_s')[0]].append(float(r['E_eff']))
+            g[rid].append(float(r['E_eff']))
         except (ValueError, KeyError, TypeError):
             continue
+    if dropped:
+        print('  (ignoring %d sub-lamina rows in %s: %s -- pass them via --skeletal)'
+              % (len(dropped), path, ', '.join(sorted(dropped))))
     out = []
     for rid in sorted(g, key=lambda k: int(''.join(c for c in k if c.isdigit()) or 0)):
         out.append((rid, st.mean(g[rid])))
@@ -157,7 +173,7 @@ def probe(E_col, H=1.0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('column', nargs='?', default='results_column.csv')
+    ap.add_argument('column', nargs='?', default='results_column_recentred.csv')
     ap.add_argument('--skeletal', default=None)
     ap.add_argument('--H', type=float, default=1.0)
     ap.add_argument('--probe', action='store_true')

@@ -12,15 +12,18 @@ The comparison has to be made carefully, because the two determinations are not
 the same object. Ours is a computed profile; theirs is a two-parameter fit whose
 functional form is assumed. The panels separate what agrees from what does not.
 
-(a) The profiles. Our cold-end modulus lands inside the range of their measured
-    top-surface values with no rescaling, which is the strongest agreement in
-    the comparison. The base does not: their inferred bottom-surface modulus is
-    far softer than anything a periodic cell can be made to produce.
+(a) The profiles. Our cold-end modulus reaches the top of the range of their
+    measured top-surface values with no rescaling -- it exceeds their stiffest
+    of four beams by 2% and their softest by 22% -- which is the closest
+    agreement in the comparison, though at the stiff edge of their range rather
+    than central to it. The base does not agree at all: their inferred
+    bottom-surface modulus is far softer than anything a periodic cell can be
+    made to produce.
 
 (b) What follows from the shape. Their linear profile places the neutral plane
     at z0/H = 0.37-0.39; ours, being convex, places it near 0.44-0.47 whatever
     the endpoints. The same convexity makes our profile less gradient-affected
-    than a straight line, so the flexural correction E_top/E_flex is 1.19 for
+    than a straight line, so the flexural correction E_top/E_flex is 1.17 for
     our column against ~2.1 for theirs.
 
 Run from results/:  python3 ../analysis/plot_kujala.py
@@ -78,7 +81,10 @@ def flex(E, H=1.0):
 
 def main():
     prof = {}
-    for path, lab in (('results_colseeds.csv', 'C-shape column'),
+    # The re-centred column, not results_colseeds.csv: this is the profile the
+    # manuscript tabulates and assembles by CLT, so panel (b) has to be computed
+    # on it or the figure prints a different E_top/E_flex than Section 4.3.2.
+    for path, lab in (('results_column_recentred.csv', 'C-shape column'),
                       ('results_steep_column.csv', 'steep monotonic column')):
         if os.path.isfile(path):
             m, s = load(path)
