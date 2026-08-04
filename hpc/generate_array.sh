@@ -67,6 +67,24 @@ SLICE="$TASKDIR/row.csv"
 head -1 "$CSV" > "$SLICE"
 awk -v r=$((ROW+1)) 'NR==r' "$CSV" >> "$SLICE"
 
+# The generator seeds each row as (SPAX_SEED + idx*2654435761) mod 2^32, where
+# idx is the row's position IN THE FILE IT IS GIVEN. Because each task is handed
+# a one-row slice, idx is always 0, so with a fixed SPAX_SEED every task packs
+# from the same seed. Rows that differ only in run_id -- which is exactly what a
+# replicate ensemble is -- then produce near-identical cells: measured scatter
+# came out some sixty times narrower than a serially generated ensemble, which
+# silently turns an ensemble into one draw repeated.
+#
+# Folding the global row index into the seed here restores independence, and
+# does so by reproducing the serial arithmetic exactly: the task computes what
+# row ROW would have received had the whole deck been processed in one pass, and
+# the generator then adds its own idx=0.
+if [ -n "${SPAX_SEED:-}" ]; then
+  SPAX_SEED=$(python3 -c "print((${SPAX_SEED} + ${ROW} * 2654435761) % (2**32))")
+  export SPAX_SEED
+  echo "row ${ROW}: effective SPAX_SEED=${SPAX_SEED} (global-row derived)"
+fi
+
 echo "===== row ${ROW}: ${RUN_ID}  start $(date) ====="
 python3 SpaX_Standalone.py "$SLICE" "$TASKDIR/"
 RC=$?
