@@ -223,21 +223,31 @@ def main():
         beta, se, p = ols(ycorr, x, brine, void)
         dof = len(ycorr) - 4
         tcrit = stats.t.ppf(0.975, dof)
-        upper = beta[1] + tcrit * se[1]              # 95% upper confidence limit
+        lower = beta[1] - tcrit * se[1]
+        upper = beta[1] + tcrit * se[1]
+        # The two nonclassical branches take opposite signs of the same slope,
+        # so they are bounded by opposite ends of one confidence interval:
+        #   III.A gradient/couple-stress  E_app = E_inf + 12*mu*l^2 / L^2
+        #   III.B Eringen integral        E_inf/E_app = 1 + (e0a)^2 / L^2,
+        #                                 i.e. slope ~ -E_inf*(e0a)^2
+        E_inf = float(stats.linregress(x, ycorr).intercept)
         l_max = np.sqrt(max(upper, 0.0) / (12.0 * mu))
         print()
         print('What the null excludes')
-        print('  MCST puts the length scale on the slope as 12*mu*l^2, with the')
-        print('  effective shear modulus mu = %.2f GPa here, so slope = %.1f*l^2 GPa.'
-              % (mu, 12 * mu))
-        print('  coefficient on 1/L^2  = %+.4f +- %.4f GPa' % (beta[1], se[1]))
-        print('  95%% upper conf. limit = %+.4f GPa (t=%.3f, dof=%d)'
-              % (upper, tcrit, dof))
-        print('  => l < %.4f model units = %.2f d  (d = mean inclusion diameter)'
-              % (l_max, l_max / D_INCL))
-        print('  This is the bound the data support: not that l is zero, but')
-        print('  that it is below a fraction of one inclusion diameter, which is')
-        print('  smaller than any microstructural feature the cell resolves.')
+        print('  coefficient on 1/L^2 = %+.4f +- %.4f GPa,  95%% CI [%+.4f, %+.4f]'
+              % (beta[1], se[1], lower, upper))
+        print('  (t=%.3f, dof=%d)' % (tcrit, dof))
+        print('  III.A couple-stress, slope=+12*mu*l^2, mu=%.2f GPa' % mu)
+        print('        -> l   < %.4f units = %.2f d' % (l_max, l_max / D_INCL))
+        if lower < 0:
+            e0a = np.sqrt(-lower / E_inf)
+            print('  III.B Eringen, slope=-E_inf*(e0a)^2, E_inf=%.2f GPa' % E_inf)
+            print('        -> e0a < %.4f units = %.2f d' % (e0a, e0a / D_INCL))
+        else:
+            print('  III.B: the interval admits no softening at all.')
+        print('  Both bounds sit below one mean inclusion diameter, which is the')
+        print('  smallest feature the cell resolves. That is the exclusion the')
+        print('  data support -- not that either length is exactly zero.')
         print()
         print('  Power check -- inject a synthetic l and re-run the same model:')
         print('  %8s %8s %12s %10s' % ('l/d', 'l (units)', 'coef 1/L^2', 'p'))
