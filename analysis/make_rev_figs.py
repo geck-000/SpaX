@@ -100,12 +100,12 @@ def fig_scfdepth():
 # ===========================================================================
 def _seed_stats(z):
     """Per-slice mean and standard deviation of E_x, E_z across the replicate
-    packings (results_colseeds.csv, 5 seeds per slice), aligned to the depth array
+    packings (results_colseeds_all.csv, 10 seeds per slice), aligned to the depth array
     z. Returns (mEx, mEz, sEx, sEz) in GPa, or four Nones if the replicate campaign
     has not been run/pulled yet -- so the figure still builds from the
     single-packing column alone."""
     try:
-        rr = load("results_colseeds.csv")
+        rr = load("results_colseeds_all.csv")
     except FileNotFoundError:
         return None, None, None, None
     ex, ez = {}, {}
@@ -140,14 +140,14 @@ def fig_column():
 
     fig, (a, b) = plt.subplots(1, 2, figsize=(10.5, 6.2), sharey=True)
 
-    # +/-1 s.d. envelope over the 5 packings per slice (Jani #12 / Reviewer 2).
+    # +/-1 s.d. envelope over the 10 packings per slice.
     # The shaded ribbon degenerates to zero height at the terminal slices, so
     # every slice also carries an explicit +/-1 s.d. bar: the scatter is then
     # read the same way at each depth, base included.
     if sEx is not None:
         a.fill_betweenx(z, Exy - sEx, Exy + sEx, color=BLUE, alpha=0.18, lw=0)
         a.fill_betweenx(z, Ez - sEz, Ez + sEz, color=VERM, alpha=0.15, lw=0,
-                        label=r"$\pm1$ s.d. (5 packings)")
+                        label=r"$\pm1$ s.d. (10 packings)")
         for val, sd, col in ((Exy, sEx, BLUE), (Ez, sEz, VERM)):
             a.errorbar(val, z, xerr=sd, fmt="none", ecolor=col, elinewidth=1.3,
                        capsize=3.5, capthick=1.3, zorder=3)

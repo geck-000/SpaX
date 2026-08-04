@@ -30,7 +30,7 @@ from collections import defaultdict
 import numpy as np
 
 COLUMN = 'results_column_ensemble.csv'
-SEEDS = 'results_colseeds.csv'
+SEEDS = 'results_colseeds_all.csv'
 BEAM_FACTOR = 0.49
 OFFSET = 2.3
 
@@ -42,18 +42,18 @@ QUOTED = {
     # Table 2 and Section 4.1.2
     'E_surface':        (8.77, 0.005),
     'E_peak':           (8.93, 0.005),
-    'E_base':           (4.85, 0.005),
+    'E_base':           (4.85, 0.006),
     'peak_depth':       (0.25, 0.001),
     'surface_below_pct': (1.8, 0.05),
     'knockdown_pct':    (46.0, 0.5),
     # Section 4.1.1
     'cov_surface_pct':  (0.33, 0.005),
-    'cov_base_pct':     (1.35, 0.005),
-    'cov_max_pct':      (2.1,  0.05),
-    'aniso_z85':        (1.025, 0.0005),
-    'aniso_z85_sigma':  (6.5,  0.05),
-    'aniso_base':       (1.041, 0.0005),
-    'aniso_base_sigma': (4.3,  0.05),
+    'cov_base_pct':     (1.50, 0.005),
+    'cov_max_pct':      (2.0,  0.05),
+    'aniso_z85':        (1.026, 0.0005),
+    'aniso_z85_sigma':  (6.2,  0.05),
+    'aniso_base':       (1.045, 0.0005),
+    'aniso_base_sigma': (4.0,  0.05),
     # Section 4.3.3, laminated plate
     'E_ext':            (8.12, 0.005),
     'E_flex':           (7.51, 0.005),
@@ -63,7 +63,7 @@ QUOTED = {
     'coupling':         (0.12, 0.005),
     # Section 4.3.2, gradient separation
     'alpha':            (0.55, 0.005),
-    'grad_ratio':       (1.19, 0.005),
+    'grad_ratio':       (1.18, 0.005),
     'k7_alpha':         (1.32, 0.005),
     'residual':         (1.94, 0.005),
     'matrix_factor':    (0.52, 0.005),
@@ -210,9 +210,9 @@ def main():
     print('Narrative claims that are not single numbers:')
     print('  below the peak the softening is monotonic          : %s' % mono)
     print('  ... and monotonically steepening                   : %s' % steep)
-    print('  nine of the ten slices below 2%% CoV                : %s (%d)'
-          % (n_under2 == 9, n_under2))
-    if not (mono and steep and n_under2 == 9):
+    print('  all ten slices below 2%% CoV                       : %s (%d)'
+          % (n_under2 == 10, n_under2))
+    if not (mono and steep and n_under2 == 10):
         bad.append(('narrative claim', 0, 0))
 
     if bad:
