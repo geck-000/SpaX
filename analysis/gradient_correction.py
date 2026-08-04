@@ -83,11 +83,10 @@ def k7(alpha):
 
 
 def main():
-    # The re-centred column is the production one: its base is the five-packing
-    # mean, not the single reference packing that came out ~6 sigma low. Section
-    # 4.3.3 assembles that column, so the gradient correction has to use it too
-    # or the two sections disagree on alpha.
-    paths = sys.argv[1:] or ['results_column_recentred.csv',
+    # The production column is the five-packing ensemble mean at every depth
+    # (build_ensemble_column.py). Section 4.3.3 assembles that same column, so
+    # the gradient correction has to use it too or the two disagree on alpha.
+    paths = sys.argv[1:] or ['results_column_ensemble.csv',
                              'results_steep_column.csv']
     print('%-28s %8s %9s %9s %9s %9s'
           % ('profile', 'alpha', 'E_top', 'E_flex', 'ratio', 'K7(alpha)'))

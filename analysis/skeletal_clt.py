@@ -1,7 +1,7 @@
 """Neutral plane and flexural modulus of a graded sheet with a skeletal base.
 
 The manuscript assembles ten equal slices by classical lamination theory
-(analysis/macro_plate.py) and obtains a neutral plane 3.1% of the thickness
+(analysis/macro_plate.py) and obtains a neutral plane 3.3% of the thickness
 above mid-depth. Kujala et al. (1990, IAHR, Table 2) measure z0/H = 0.37-0.39
 on strain-gauged floating beams, i.e. 11-13% above mid-depth, together with a
 bottom-to-top modulus ratio alpha = E_bot/E_top = 0.12-0.19. Our column gives
@@ -173,7 +173,7 @@ def probe(E_col, H=1.0):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument('column', nargs='?', default='results_column_recentred.csv')
+    ap.add_argument('column', nargs='?', default='results_column_ensemble.csv')
     ap.add_argument('--skeletal', default=None)
     ap.add_argument('--H', type=float, default=1.0)
     ap.add_argument('--probe', action='store_true')

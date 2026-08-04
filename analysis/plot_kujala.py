@@ -81,10 +81,10 @@ def flex(E, H=1.0):
 
 def main():
     prof = {}
-    # The re-centred column, not results_colseeds.csv: this is the profile the
-    # manuscript tabulates and assembles by CLT, so panel (b) has to be computed
-    # on it or the figure prints a different E_top/E_flex than Section 4.3.2.
-    for path, lab in (('results_column_recentred.csv', 'C-shape column'),
+    # The ensemble column is the profile the manuscript tabulates and assembles
+    # by CLT, so panel (b) has to be computed on it or the figure prints a
+    # different E_top/E_flex than Section 4.3.2.
+    for path, lab in (('results_column_ensemble.csv', 'C-shape column'),
                       ('results_steep_column.csv', 'steep monotonic column')):
         if os.path.isfile(path):
             m, s = load(path)

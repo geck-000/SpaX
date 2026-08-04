@@ -121,7 +121,11 @@ def _seed_stats(z):
 
 
 def fig_column():
-    r = load("results_column.csv")
+    # The production column is the five-packing ensemble mean at every depth
+    # (analysis/build_ensemble_column.py). It used to be the single reference
+    # packing with only the base re-centred, which left z/H=0.65 and 0.85 at
+    # 2.4 sd from their own ensembles while carrying ensemble error bars.
+    r = load("results_column_ensemble.csv")
     z = np.array([zfrac(x["run_id"]) for x in r])
     Exy = np.array([float(x["E_x"]) for x in r]) / 1e9
     Ez = np.array([float(x["E_z"]) for x in r]) / 1e9
@@ -130,13 +134,9 @@ def fig_column():
     gas = np.array([float(x["VoF_void_sphere"]) for x in r]) * 100
     mEx, mEz, sEx, sEz = _seed_stats(z)           # replicate mean/scatter, if available
 
-    # Re-centre the warm base (z/H=0.95) on the five-packing mean: its single
-    # reference packing was a ~6-sigma low outlier (E_x 4.47 vs 4.85 GPa), and the
-    # mean matches the independent full-tensor column (study_coltensor). Other
-    # slices keep their single reference packing (all within ~1-2 sigma).
-    if mEx is not None:
-        base = int(np.argmax(z))                  # z/H = 0.95
-        Exy[base], Ez[base] = mEx[base], mEz[base]
+    # Nothing to re-centre: the loaded column is already the ensemble mean at
+    # every depth, so the plotted curve and the error bars below now describe
+    # the same object.
 
     fig, (a, b) = plt.subplots(1, 2, figsize=(10.5, 6.2), sharey=True)
 
