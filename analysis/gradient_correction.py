@@ -44,15 +44,24 @@ BEAM_FACTOR = 0.49    # matrix factor currently used to absorb it
 
 
 def load(path):
-    """Mean E_eff per depth slice, ordered top to base."""
+    """Mean E_eff per depth slice, ordered top to base.
+
+    Resolved basal sub-laminae (z955, z970, ...) are skipped: they subdivide
+    the lowest slice rather than adding to it, and treating them as further
+    equal-thickness slices would both misweight the rigidity integral and
+    understate alpha.
+    """
     g = defaultdict(list)
     for r in csv.DictReader(open(path)):
         try:
             v = float(r['E_eff'])
         except (ValueError, KeyError, TypeError):
             continue
+        rid = r['run_id'].split('_s')[0]
+        if len(rid.rsplit('_z', 1)[-1]) > 2:
+            continue
         if v > 0:
-            g[r['run_id'].split('_s')[0]].append(v)
+            g[rid].append(v)
     key = lambda k: int(''.join(c for c in k if c.isdigit()) or 0)
     return [st.mean(g[k]) for k in sorted(g, key=key)]
 
