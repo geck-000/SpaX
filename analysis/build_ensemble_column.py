@@ -23,21 +23,23 @@ What has to be reconstructed
 ----------------------------
 The replicate campaign (results_colseeds.csv) solved only the x and z load
 cases, so it carries E_x, E_z and their Poisson ratios but no E_y or G_xy. The
-laminated-plate model needs those. They are taken from the single-packing
-column and rescaled slice by slice by the ensemble/single ratio of E_x:
+laminated-plate model needs those, and they come from the independent
+full-tensor sweep (results_coltensor.csv), which solves all six load cases at
+every depth, rescaled slice by slice onto the ensemble level:
 
-    E_y_ens = E_y_single * (E_x_ens / E_x_single)
+    E_y_ens = E_y_tensor * (E_x_ens / E_x_tensor)
 
-which puts the level on the ensemble while preserving every in-plane ratio the
-one fully-solved six-load-case column provided. The alternative -- setting
-E_y = E_x on the grounds that Section 4.1.4 establishes in-plane isotropy --
-changes B/sqrt(AD) in the fourth decimal, so the choice is immaterial; this one
-is used because it invents nothing.
+The rescaling is small -- the two campaigns agree on E_x to better than 0.5% at
+every depth -- so this transfers a genuine six-load-case in-plane ratio rather
+than inventing one. It matters most at the base, where the single reference
+packing was the 6 sigma outlier and its in-plane ratio (E_y/E_x = 1.045) is not
+the ensemble's; the full-tensor solve gives 1.033 there.
 
     python3 build_ensemble_column.py results_column.csv results_colseeds.csv \
-            results_column_ensemble.csv
+            results_column_ensemble.csv [results_coltensor.csv]
 """
 import csv
+import os
 import statistics as st
 import sys
 from collections import defaultdict
@@ -54,10 +56,22 @@ def depth_key(rid):
 
 
 def main():
-    if len(sys.argv) != 4:
+    if len(sys.argv) not in (4, 5):
         print(__doc__)
         return 1
     single_path, seeds_path, out_path = sys.argv[1:4]
+    tensor_path = sys.argv[4] if len(sys.argv) == 5 else 'results_coltensor.csv'
+
+    tensor = {}
+    if os.path.isfile(tensor_path):
+        with open(tensor_path) as f:
+            for r in csv.DictReader(f):
+                tensor[depth_key(r['run_id'])] = r
+        print('in-plane E_y and G_xy taken from %s (%d slices), rescaled to the '
+              'ensemble level\n' % (tensor_path, len(tensor)))
+    else:
+        print('WARNING: %s not found; E_y and G_xy will be rescaled from the '
+              'single-packing column instead\n' % tensor_path)
 
     single = {}
     with open(single_path) as f:
@@ -97,9 +111,17 @@ def main():
             vals = [float(r[col]) for r in reps if r.get(col)]
             if vals:
                 base[col] = '%.6f' % st.mean(vals)
+        # In-plane quantities: prefer the full-tensor sweep, rescaled onto the
+        # ensemble level, over the single packing's own values. At the base the
+        # single packing is the 6 sigma outlier, and its in-plane ratio is not
+        # the one a representative cell gives.
+        src, src_ratio = base, ratio
+        if k in tensor:
+            src = tensor[k]
+            src_ratio = ex_e / float(src['E_x'])
         for col in SCALED:
-            if base.get(col):
-                base[col] = '%.6e' % (float(base[col]) * ratio)
+            if src.get(col):
+                base[col] = '%.6e' % (float(src[col]) * src_ratio)
 
         # keep the derived ratio columns consistent with the new levels
         if base.get('E_z') and base.get('E_x'):
