@@ -14,7 +14,7 @@ Usage:
     python SpaX_Standalone.py --single --L 0.55 --VoF 0.10 --r_avg 0.05 ...
 
 This generates solver-ready .inp files (UTX, SS13, Bending) that can be
-submitted directly to Abaqus solver on CSC:
+submitted directly to the Abaqus solver:
     abaqus job=Job-SI_cold_r1-utx input=Job-SI_cold_r1-utx cpus=8
 """
 

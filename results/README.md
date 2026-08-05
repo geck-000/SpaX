@@ -17,13 +17,24 @@ moduli, anisotropy ratios, and (where computed) tensor / SCF quantities:
 | `results_tilt{00,15,30}.csv` | Channel-tilt study [#6]. |
 | `results_scf.csv`, `results_failure.csv` | Stress-concentration / failure-onset. |
 | `results_macro_plate.csv` | Laminated-plate macro assembly. |
+| `results_column_ensemble.csv` | The production depth column: the ensemble mean over independent packings, and the file the manuscript numbers are drawn from. |
+| `results_colseeds.csv`, `results_colseeds_extra.csv`, `results_colseeds_all.csv` | The column replicate ensemble — first five packings, the additional five, and the merged ten. |
+| `results_fieldseeds.csv` | Replicates of the three field-comparison columns. |
+| `results_eringen.csv`, `results_eringen_homog.csv` | The bending size sweep and its matched inclusion-free (`φ=0`) control. The control is what makes the sweep interpretable — see `../docs/USER_DOCS.md` §4.3. |
+| `results_basesweep*.csv`, `results_steep_column.csv` | Base-slice size convergence, and the steeply monotonic salinity column. |
+| `results_skeletal.csv`, `results_skeletal_laminae.csv` | Skeletal basal layer, whole-slice and resolved into sub-laminae. |
+| `results_weibull.csv` | Weakest-link sensitivity of the localisation measure. |
 
 **Curves** (`curves_nlgeom_*.csv`) — per-frame nominal stress–strain for the
 large-deformation study.
 
 **Figures** (`study_*.png`) — the analysis plots (`study_brineK`, `study_nlgeom`,
 `study_tilt`, `study_coltensor`, `study_scf`, `study_failure`,
-`study_macro_plate`), regenerable from the CSVs via `../analysis/`.
+`study_macro_plate`), regenerable from the CSVs via `../analysis/`. The
+manuscript figures carry their own names — `ice_column_profiles`,
+`kujala_comparison`, `field_decomposition`, `stress_field_3d` — and are written
+as PDF + PNG by `../analysis/make_rev_figs.py` and the plotting scripts beside
+it.
 
 ## Legacy campaign tables
 
