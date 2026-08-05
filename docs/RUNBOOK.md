@@ -1,111 +1,138 @@
-# SpaX — runbook
+# Cluster runbook
 
-Everything needed to run a campaign end to end. For what the toolkit is and
-why it is built this way, see [`USER_DOCS.md`](USER_DOCS.md).
+How to take a campaign from parameter deck to result table on an HPC cluster.
+The examples use Slurm and the scripts in `../hpc/`, which are the real
+submissions from one site kept as worked examples — adapt the account,
+partition and module lines to your own.
 
-Cluster instructions here are deliberately generic: they assume Slurm and
-nothing else. The scripts in `hpc/` are the real ones from the machine this
-work was run on, kept as worked examples of how a campaign was actually
-submitted — read them for the shape of a submission, not as something to run
-unmodified. Set `WORKDIR`, the Slurm account and the partition names to match
-your own site.
+For the toolkit itself — parameters, environment variables, output columns —
+see the repository `README.md`. For operational pitfalls, see `USER_DOCS.md`.
 
 ---
 
-## 1. Environment
+## 0. What runs where
 
-```bash
-pip install numpy gmsh          # generation and meshing
-pip install matplotlib pandas   # analysis and figures
-pip install pyvista             # optional, 3-D renders
-```
+| Stage | Needs Abaqus? | Where |
+|-------|---------------|-------|
+| Generate decks from a parameter CSV | no | laptop or cluster |
+| Solve the decks | **yes** | cluster |
+| Extract ODBs → `results_*.csv` | **yes** (`abaqus python`) | cluster |
+| Analyse CSVs → figures and numbers | no | laptop |
 
-Abaqus is needed **only** to solve decks and to read ODBs. Generation and the
-entire analysis stage run without it and without a licence.
-
----
-
-## 2. The cycle
-
-Generation → solve → post-process. Each stage writes files the next one reads,
-so stages can be run on different machines.
-
-### 2.1 Generate
-
-```bash
-cd params && python3 ../studies/make_<campaign>.py     # -> rve_<campaign>.csv
-cd ..
-SPAX_SEED=<seed> python3 SpaX_Standalone.py params/rve_<campaign>.csv out_<campaign>/
-```
-
-This writes one Abaqus input deck per RVE per load case into `out_<campaign>/`.
-
-**Seeding.** `SPAX_SEED` fixes the packing, and the seed is resolved *per row
-index*. The same seed with a different number of rows therefore gives different
-packings. Two campaigns are comparable packing-for-packing only if their
-parameter CSVs have the same shape. When generation is split across parallel
-array tasks, the per-task seed must be derived from the task's **global row
-index**, not from its index within its own slice — otherwise every task
-generates the same packing and "replicates" come out near-identical. See
-`hpc/generate_array.sh` for the derivation.
-
-### 2.2 Solve
-
-Locally, for a small campaign:
-
-```bash
-abaqus job=Job-<id>-<mode> input=Job-<id>-<mode>.inp cpus=4 interactive
-```
-
-On a cluster, submit the decks as a Slurm array. The pattern used throughout
-`hpc/` is: stage the decks and the three core modules into `$WORKDIR`, build a
-job list, size the array to it, and chain post-processing behind the solve with
-a dependency.
-
-```bash
-rsync -az out_<campaign>/ <host>:$WORKDIR/ --include='Job-*' --exclude='*'
-ssh <host> "cd $WORKDIR && bash submit_<campaign>.sh"
-```
-
-### 2.3 Post-process
-
-```bash
-abaqus python SpaX_PostProcess.py params/rve_<campaign>.csv out_<campaign>/ results_<campaign>.csv
-```
-
-Then pull `results_*.csv` (and `post_*/` if the full tensor was requested) back
-to the repository's `results/`.
+Only the middle two stages need a licence, so generation and the whole analysis
+stage run locally. Generation is the memory-hungry stage; solving is the
+wall-clock-hungry one.
 
 ---
 
-## 3. Reproducing the published figures
+## 1. Stage the campaign
 
-All analyzers are plain Python and read the CSVs already committed under
-`results/`. Run them **from** `results/`, which is where they look for inputs:
+```bash
+# 1. build the parameter deck
+cd studies && python3 make_<campaign>.py          # -> ../params/rve_<campaign>.csv
+
+# 2. generate the Abaqus input decks locally
+cd .. && SPAX_SEED=<seed> python3 SpaX_Standalone.py \
+         params/rve_<campaign>.csv out_<campaign>/
+
+# 3. copy the decks and the pipeline to the cluster
+export WORKDIR=/scratch/<project>/<workdir>
+rsync -az out_<campaign>/ <cluster>:$WORKDIR/ --include='Job-*' --exclude='*'
+rsync -az SpaX_Standalone.py SpaX_PostProcess.py \
+          params/rve_<campaign>.csv <cluster>:$WORKDIR/
+```
+
+Both `SpaX_Standalone.py` and `SpaX_PostProcess.py` must be present in
+`WORKDIR`: the post-processor imports the deck reader from the generator.
+
+If generation itself is run as a Slurm array rather than locally, read
+`USER_DOCS.md` §5 first — the per-task seed must be derived from the **global**
+row index, or every task packs the same microstructure and the campaign's
+replicates are not independent.
+
+## 2. Solve
+
+```bash
+ssh <cluster>
+cd $WORKDIR
+WORKDIR=$WORKDIR bash submit_<campaign>.sh
+```
+
+Every script in `../hpc/` honours `WORKDIR` from the environment, so nothing
+needs editing. The Slurm account cannot be taken from a variable in a `#SBATCH`
+directive — either edit the `--account=` line once, or override per submission:
+
+```bash
+sbatch --account=<your_account> submit_<campaign>.sh
+```
+
+**Sizing.** Most of these are small jobs. A linear `C3D4` slice (~50k elements)
+solves in minutes on 4 cores; a quadratic `C3D10H` bending deck (~78k tets)
+wants 8 cores, ~32 GB and a couple of hours. Ask for 8 cores rather than more —
+on most billing models that keeps the charge equal to the cores used — and set a
+walltime that caps a stuck job rather than one that never trips.
+
+**Bending is the exception, and it is memory-bound rather than core-bound.** The
+mesh grows as `(L/d)³` and the direct solver dominates, so requirements climb
+steeply with cell size. Keep the solver's out-of-core scratch on **node-local**
+storage and never on a shared parallel filesystem — point Abaqus `scratch=` at
+the node-local path the scheduler grants, and request enough of it. Before
+scaling a bending sweep up, read `USER_DOCS.md` §6: the size effect these solves
+were originally chasing turned out not to be microstructural.
+
+## 3. Post-process
+
+```bash
+WORKDIR=$WORKDIR bash postprocess_<campaign>.sh
+```
+
+which runs, per deck,
+
+```bash
+abaqus python SpaX_PostProcess.py <params.csv> <odb_dir> results_<campaign>.csv
+```
+
+Array tasks write `results_<campaign>_<i>.csv` partials; union them with
+
+```bash
+python3 SpaX_PostProcess.py --merge parts_dir/ results_<campaign>.csv
+```
+
+## 4. Pull back and analyse
+
+```bash
+rsync -az <cluster>:$WORKDIR/results_<campaign>.csv results/
+cd results && python3 ../analysis/<analyzer>.py
+```
+
+Analysers read their inputs by bare filename, so run them from `results/`.
+
+Regenerate the manuscript figures with
 
 ```bash
 cd results && PYTHONPATH=../analysis python3 ../analysis/make_rev_figs.py
 ```
 
-Two self-checking harnesses re-derive every quoted number and fail loudly if
-one drifts:
+and check that nothing has drifted with the two self-verifying harnesses, which
+re-derive every published number from the committed tables and fail loudly on a
+mismatch:
 
 ```bash
 cd results
-python3 ../analysis/verify_column.py       # depth-graded column
-python3 ../analysis/verify_sizeeffect.py   # bending size effect
+python3 ../analysis/verify_column.py
+python3 ../analysis/verify_sizeeffect.py
 ```
 
 ---
 
-## 4. Housekeeping — delete decks and ODBs after pulling results
+## 5. Housekeeping
 
-**This is policy, not a suggestion.** Cluster scratch is a shared, finite
-resource, and a campaign's ODBs dwarf everything else: a single set of solves
-can leave tens of gigabytes behind, while the extracted results are a few
-hundred kilobytes of CSV.
+**Verify first, then delete. The order is the whole point.**
 
-Once results are extracted **and pulled back and verified**:
+1. Confirm every result file on the cluster has a local counterpart, and that
+   the local copy is **byte-identical** — not merely present. Compare checksums,
+   not filenames.
+2. Only then remove the bulk:
 
 ```bash
 cd $WORKDIR
@@ -113,66 +140,38 @@ find . -maxdepth 1 -name '*.odb'     -delete
 find . -maxdepth 1 -name 'Job-*.inp' -delete
 ```
 
-Keep the `results_*.csv` on the cluster — they are small and are the record of
-what ran.
+Keep the `results_*.csv` on the cluster. They are small and they are the record
+of what actually ran.
 
-For generation output directories, the equivalent is to keep only the decks:
+Three things make the ordering matter rather than merely tidy:
+
+- **A campaign is orders of magnitude larger than its results.** Several hundred
+  solves can leave tens of gigabytes of ODBs behind, against a few hundred
+  kilobytes of CSV. Cluster scratch is shared and usually purged on a timer, so
+  leaving it is antisocial as well as risky.
+- **A re-run post-process can leave two files covering the same runs with
+  different values.** The later one is normally authoritative, but "normally" is
+  not "always" — check timestamps and checksums against what is committed before
+  deleting the ODBs that would let you re-extract.
+- **Decks are reproducible; ODBs are not cheap to recreate.** The parameter CSV
+  plus `SPAX_SEED` regenerates `out_*/`, so there is no need to archive it. But
+  if a campaign might need re-extraction with different output fields, pull what
+  you need before the ODBs go.
+
+For generation output directories the equivalent is to keep only the decks:
 
 ```bash
 find out_<campaign> -type f ! -name '*.inp' -delete
 ```
 
-Order matters. Verify *before* deleting: confirm every result file on the
-cluster has a local counterpart, and that the local copy is byte-identical, not
-merely present. A re-run post-process can leave two files covering the same
-runs with different values; the later one is normally authoritative, but check
-rather than assume.
+Check the generation summary before submitting anything: `GENERATION COMPLETE:
+N RVEs` and the per-deck node counts. Periodic meshing retries at high inclusion
+counts are normal and appear in the log as tracebacks — see `USER_DOCS.md`.
 
-Decks are cheap to regenerate from `params/`; ODBs are not, so if a campaign
-might need re-extraction with different fields, pull what you need first.
+## 6. When a solve fails
 
----
-
-## 5. Traps
-
-Read these before running anything.
-
-- **A solve array that skips a deck when its `.odb` merely exists** is testing
-  for the file, not for a completed solve. A job killed at walltime leaves a
-  truncated ODB, so a naive resubmit silently skips exactly the jobs that
-  failed. Identify failures by the absence of an `Abaqus exit:` line in the
-  log, and delete those ODBs before resubmitting.
-
-- **Strain must be read from the deck, never assumed.** The tensor extractor
-  once defaulted to a hard-coded applied strain while the decks prescribe a
-  fixed *displacement*. The two coincided exactly at one box size, so it was
-  silently correct for every campaign until the cell size changed, then
-  silently rescaled the whole tensor. It now reads the deck and raises rather
-  than guessing. Ratios were always immune, since a common factor cancels.
-
-- **Generation forks one mesher per core** unless `SPAX_GEN_WORKERS` says
-  otherwise. At around 7×10⁵ elements each worker needs ~3 GB, so on a 16 GB
-  machine set `SPAX_GEN_WORKERS=2`, and `=1` above 10⁶ elements. Killing the
-  parent leaves **orphaned mesher children** still holding the memory — and
-  their command line reads `GmshPeriodic`, not `Standalone`, so the obvious
-  `pkill` pattern misses them.
-
-- **Periodic meshing retries are normal** at high inclusion counts, where more
-  inclusions cross the periodic faces. A traceback in the log is usually the
-  retry mechanism working. Check the reported count of completed RVEs and the
-  per-deck node counts before concluding the decks are bad.
-
-- **Module systems change under you.** If `module load abaqus` fails inside a
-  batch job while working interactively, source a snapshot of the environment
-  instead. Copy the working form from a script known to be current rather than
-  from the oldest one in the directory.
-
-- **Bending is memory-bound**, far more than the uniaxial cases: the mesh grows
-  as `(L/d)³` and the direct solver is the constraint. Keep the solver's
-  out-of-core scratch on node-local storage, never on a shared parallel
-  filesystem. Before scaling up, read §4.3 of `USER_DOCS.md` — the size effect
-  this was chasing turned out to be a kinematic artefact, so larger bending
-  cells are unlikely to be worth their cost.
-
-- **Scatter is the population standard deviation** (`ddof=0`) everywhere. The
-  `pandas` and `statistics` defaults are `ddof=1`.
+Identify genuine failures by the **absence of an `Abaqus exit:` line** in the
+job log, not by whether an `.odb` exists. A job killed at walltime leaves a
+truncated ODB behind, and the solve array skips any deck whose ODB is present —
+so a naive resubmit silently skips exactly the jobs that failed. Delete those
+ODBs first, then resubmit.

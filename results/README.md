@@ -20,7 +20,7 @@ moduli, anisotropy ratios, and (where computed) tensor / SCF quantities:
 | `results_column_ensemble.csv` | The production depth column: the ensemble mean over independent packings, and the file the manuscript numbers are drawn from. |
 | `results_colseeds.csv`, `results_colseeds_extra.csv`, `results_colseeds_all.csv` | The column replicate ensemble — first five packings, the additional five, and the merged ten. |
 | `results_fieldseeds.csv` | Replicates of the three field-comparison columns. |
-| `results_eringen.csv`, `results_eringen_homog.csv` | The bending size sweep and its matched inclusion-free (`φ=0`) control. The control is what makes the sweep interpretable — see `../docs/USER_DOCS.md` §4.3. |
+| `results_eringen.csv`, `results_eringen_homog.csv` | The bending size sweep and its matched inclusion-free (`φ=0`) control. The control is what makes the sweep interpretable — see `../docs/USER_DOCS.md` §6. |
 | `results_basesweep*.csv`, `results_steep_column.csv` | Base-slice size convergence, and the steeply monotonic salinity column. |
 | `results_skeletal.csv`, `results_skeletal_laminae.csv` | Skeletal basal layer, whole-slice and resolved into sub-laminae. |
 | `results_weibull.csv` | Weakest-link sensitivity of the localisation measure. |

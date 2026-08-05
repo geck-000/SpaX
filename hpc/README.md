@@ -48,7 +48,8 @@ Restored from the repository root, where they had been left untracked:
 > not when the solve completed. A job killed at walltime leaves a truncated ODB,
 > so a naive resubmit silently skips exactly the jobs that failed. Identify
 > failures by the absence of an `Abaqus exit:` line in the log and delete those
-> ODBs before resubmitting. See `../docs/RUNBOOK.md` §5.
+> ODBs before resubmitting. See `../docs/USER_DOCS.md` §6 and
+> `../docs/RUNBOOK.md` §6.
 
 **Note.** After the CSC v2026_03 software-stack change, `module load abaqus`
 fails in batch; these scripts source a snapshot env (`~/abaqus_env.sh`) instead.
