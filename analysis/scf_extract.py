@@ -9,11 +9,26 @@ Reports the distribution (mean, P50/P90/P99, max) and the matrix volume fraction
 above SCF thresholds. Appends one row to the output CSV.
 
 Usage:
-  abaqus python scf_extract.py <odb_path> <L> <run_id> <out_csv>
+  abaqus python scf_extract.py <odb_path> <L> <run_id> <out_csv> [dump.npz]
+
+If a fifth argument is given, the per-element (scf, volume) pairs are written to
+that .npz instead of being discarded after the percentiles are formed. A Weibull
+weakest-link measure needs the whole field, not a percentile of it,
+
+    P_f = 1 - exp[ -(1/V0) * INT (sigma_1/sigma_0)^m dV ]
+
+and the integral is just sum(scf^m * vol) over the matrix elements. Dumping the
+arrays keeps the one expensive pass (opening the ODB, which needs an Abaqus
+licence) separate from the m-sweep, which is then plain offline numpy --- see
+analysis/weibull_sensitivity.py.
 
 NOTE: matrix elements are linear C3D4 (one constant stress per element), so the
 absolute peak is a mesh-limited lower bound; the P99 and the cross-case ranking
 are the robust, comparable measures (identical mesh resolution across cases).
+The same caveat applies to the Weibull integral, which for large m is dominated
+by the few most-stressed elements and so inherits their mesh sensitivity; that
+is a property of the measure, and weibull_sensitivity.py reports it as a
+function of m rather than hiding it in a single number.
 """
 import sys, os, csv
 import numpy as np
@@ -27,6 +42,7 @@ def max_principal(s):
 
 def main():
     odb_path, L, run_id, out_csv = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4]
+    dump_path = sys.argv[5] if len(sys.argv) > 5 else None
     odb = openOdb(odb_path, readOnly=True)
     step = max(odb.steps.values(), key=lambda s: len(s.frames))
     fr = step.frames[-1]
@@ -53,12 +69,42 @@ def main():
     S11_bar = num / (L ** 3)
 
     mat = inst.elementSets['MATRIX_ONLY']
-    sp1, wts = [], []
+    sp1, wts, labs = [], [], []
     for v in S.getSubset(region=mat).values:
         sp1.append(max_principal(v.data))
         wts.append(volmap.get(v.elementLabel, 1.0))
+        labs.append(v.elementLabel)
     sp1 = np.array(sp1); wts = np.array(wts)
     scf = sp1 / S11_bar
+
+    # Element centroids, so the dumped field can be mapped in space rather than
+    # only summarised as a distribution. Computed from the connectivity because
+    # an ODB stores nodal coordinates, not element centres; done only when a
+    # dump is requested, since it costs a pass over the mesh.
+    cent = None
+    if dump_path is not None:
+        try:
+            ncoord = {}
+            for n in inst.nodes:
+                ncoord[n.label] = n.coordinates
+            emap = {}
+            for e in inst.elements:
+                emap[e.label] = e.connectivity
+            cent = np.zeros((len(labs), 3))
+            for i, lab in enumerate(labs):
+                conn = emap.get(lab)
+                if not conn:
+                    continue
+                acc = np.zeros(3); k = 0
+                for nd in conn:
+                    c = ncoord.get(nd)
+                    if c is not None:
+                        acc += np.array(c[:3], dtype=float); k += 1
+                if k:
+                    cent[i] = acc / k
+        except Exception as e:
+            print('  (centroids unavailable: %s)' % e)
+            cent = None
 
     def pct(q):
         return float(np.percentile(scf, q))
@@ -74,6 +120,21 @@ def main():
         'volfrac_SCF_gt2': '%.4f' % (float(wts[scf > 2].sum()) / float(wts.sum())),
         'volfrac_SCF_gt3': '%.4f' % (float(wts[scf > 3].sum()) / float(wts.sum())),
     }
+    if dump_path is not None:
+        d = os.path.dirname(dump_path)
+        if d and not os.path.isdir(d):
+            os.makedirs(d)
+        # scf is per matrix element, vol the element volume (the dV of the
+        # Weibull integral); S11_bar and L carry the normalisation so the
+        # offline analyzer can rebuild absolute stresses if it needs to.
+        if cent is not None:
+            np.savez_compressed(dump_path, scf=scf, vol=wts, cent=cent,
+                                S11_bar=S11_bar, L=L, run_id=run_id)
+        else:
+            np.savez_compressed(dump_path, scf=scf, vol=wts,
+                                S11_bar=S11_bar, L=L, run_id=run_id)
+        print('  dumped %d matrix elements -> %s' % (len(scf), dump_path))
+
     odb.close()
     fields = ['run_id', 'S11_bar', 'n_matrix', 'SCF_mean', 'SCF_p50', 'SCF_p90',
               'SCF_p99', 'SCF_max', 'volfrac_SCF_gt2', 'volfrac_SCF_gt3']

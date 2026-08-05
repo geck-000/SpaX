@@ -1,6 +1,6 @@
 """Export an Abaqus ODB to a legacy VTK UnstructuredGrid for ParaView.
 
-Only Abaqus can read a .odb, so run this on CSC with `abaqus python odb_to_vtk.py
+Only Abaqus can read a .odb, so run this under `abaqus python odb_to_vtk.py
 <odb> <out.vtk> [step] [frame]`. It writes an ASCII legacy .vtk that ParaView
 opens directly, carrying:
   * POINT_DATA  U           (displacement vectors -> Filters > Warp By Vector)

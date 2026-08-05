@@ -31,7 +31,60 @@ stumble:
 
 ---
 
-## 2. Where things live
+## 2. What SpaX models
+
+A periodic representative volume element of a **two-phase microstructure**: a
+continuous matrix holding a population of discrete inclusions. The inclusions
+are packed by random sequential addition, meshed periodically so that opposite
+faces correspond node-for-node, and loaded through reference-point-driven
+periodic constraints. The macroscopic stress is recovered as a volume average,
+with the Hill–Mandel condition satisfied identically by the periodic
+constraints.
+
+That covers a broad class of materials:
+
+| Class | How it is set up |
+|---|---|
+| **Particle-reinforced composites** | Stiff inclusions in a compliant matrix — the classic case. Set `E_sphere_inclusion` above `E_matrix`. |
+| **Porous media and foams** | Voids, via `VoF_void_sphere`. True voids are left unmeshed rather than filled with a near-zero stiffness. |
+| **Compliant-inclusion composites** | A second phase softer than the matrix, via its own bulk and shear moduli. |
+| **Anisotropic microstructures** | Elongated inclusions aligned by `Growth_Direction` and sharpened by `Growth_Concentration`, and optionally a percolating network of parallel channels. |
+
+Voids and a soft second phase can coexist in one cell; they are distinct
+phases, not two names for the same thing.
+
+### Modelling a compliant phase
+
+Give a compliant inclusion phase **its own bulk and shear moduli** rather than
+treating it as a cavity. A nearly incompressible fluid-filled inclusion is well
+represented by a soft solid with a realistic `K` and a very small `G`, giving
+`ν → 0.5` from below. A true cavity constraint is both physically wrong for a
+phase that carries pressure and numerically fragile in a periodic cell, where
+the constraint interacts badly with the face-tying equations.
+
+The distinction matters most when the inclusion phase is far more compressible
+than intuition suggests: it is the *ratio* of the phase moduli to the matrix,
+not the label "fluid", that sets the effective response.
+
+### What controls the effective anisotropy
+
+Two mechanisms are easy to confuse. Inclusion **shape and orientation** — the
+aspect ratio of aligned ellipsoids — produce an anisotropy that saturates
+quickly. Inclusion **connectivity** — whether the second phase percolates —
+produces a much stronger one. Where both are present, connectivity dominates,
+so a study sweeping shape at fixed volume fraction will underestimate the
+anisotropy of a microstructure whose second phase is actually connected.
+
+### Units are free
+
+Classical effective moduli are scale-invariant, so the cell edge and the
+inclusion radii are in arbitrary model units. What matters is their ratio, and
+the elements-per-inclusion the mesh size implies. Map the cell onto a physical
+size only when reporting.
+
+---
+
+## 3. Where things live
 
 | What | Where |
 |---|---|
@@ -42,7 +95,7 @@ stumble:
 | Result tables | `results/results_*.csv` |
 | Stiffness matrices | `tensors/` (earlier campaigns at the top level; the manuscript ensembles in `tensors/column/`, `tensors/basetensor_seeds/`, `tensors/bt80/`) |
 | Analysers and figures | `analysis/` (plain `python3`) |
-| Renderers | `viz/render_rve.py`, `viz/odb_to_vtk.py` |
+| Renderers | `viz/render_rve.py`, `viz/odb_to_vtk.py`, `viz/render_stress_field.py` |
 
 `out_*/` directories hold generated Abaqus decks. They are derived and
 untracked — several GB, and regenerable from `params/`. Exclude them from any
@@ -50,7 +103,7 @@ archive unless you specifically need them.
 
 ---
 
-## 3. A campaign end to end
+## 4. A campaign end to end
 
 ```bash
 cd studies && python3 make_<campaign>.py           # -> ../params/rve_<campaign>.csv
@@ -66,7 +119,7 @@ Analysers read their inputs by bare filename, so run them from `results/`.
 
 ---
 
-## 4. Reproducibility
+## 5. Reproducibility
 
 ### Seeding is per row index
 
@@ -74,6 +127,20 @@ Analysers read their inputs by bare filename, so run them from `results/`.
 same seed with a different number of rows gives different packings. Two
 campaigns are only comparable packing-for-packing if their CSVs have the same
 shape.
+
+### Split generation must seed from the *global* row index
+
+When generation is spread across parallel array tasks, each task receives a
+slice of the CSV. If the per-task seed is derived from the row's index *within
+its own slice*, every task starts from the same index — and a campaign whose
+rows differ only in replicate number comes back with near-identical packings
+that look like an implausibly well-converged ensemble.
+
+The symptom is a median packing coefficient of variation one to two orders of
+magnitude below what serial generation of the same deck gives. Derive the seed
+from the task's **global** row index instead; `hpc/generate_array.sh` has the
+worked form. If an ensemble's scatter looks too good, check this before
+believing it.
 
 ### Mesh generation is not deterministic across runs
 
@@ -104,9 +171,16 @@ packings is ~12% wider. Standard errors and Welch statistics correctly use
 `ddof=1` — see `analysis/check_channel_isotropy.py` and
 `analysis/compare_basetensor_sizes.py`.
 
+### Report ensembles, not realisations
+
+A single packing can sit several standard deviations off the ensemble mean, and
+a production number taken from one realisation will move when the campaign is
+repeated. Quote the ensemble mean with its scatter, and treat a difference
+smaller than the replicate scatter as no difference at all.
+
 ---
 
-## 5. Traps
+## 6. Traps
 
 Read this section before running anything long.
 
@@ -145,6 +219,25 @@ assuming a fixed strain is silently correct only at the one cell size where the
 two coincide, and silently rescales the whole tensor everywhere else. Ratios are
 immune, since a common factor cancels.
 
+### A bending size effect is not by itself a length scale
+
+Solving the cell in bending at several sizes and regressing the apparent modulus
+on `1/L²` looks like a direct measurement of an intrinsic length. It is not,
+because the measurement carries a systematic error of the same shape: imposing
+plate-like bending kinematics on a *cubic* cell is itself size-dependent.
+
+A geometrically identical **inclusion-free** cell — no microstructure, and
+therefore no possible intrinsic length — shows a size dependence of the same
+order as the microstructured one. Any bending size-effect measurement must
+therefore be referred to such a `φ = 0` control and the control divided out.
+
+Two consequences. **Do not solve larger bending cells hoping the length scale
+will converge** — the cost grows as `(L/d)³` and the trend being chased is not
+microstructural. And do not read the *sign* of the raw slope as a verdict: a
+positive slope is diagnostic of couple-stress stiffening, but a negative one is
+ambiguous between nonlocal softening, first-order dilution and the extraction
+bias itself.
+
 ### A solve array skips on ODB *existence*
 
 Not on a completed solve. A job killed at walltime leaves a truncated ODB, so a
@@ -163,19 +256,20 @@ plain `module load`. Copy from a robust one when writing a new post-processor.
 ### Clean up scratch
 
 Delete decks and ODBs once the result CSV is pulled. Cluster scratch is shared
-and usually purged on a timer.
+and usually purged on a timer. `RUNBOOK.md` §5 has the procedure and, more
+importantly, the order the steps have to happen in.
 
 ---
 
-## 6. Choosing load cases
+## 7. Choosing load cases
 
 For **isotropic effective moduli**, one uniaxial plus one shear is enough:
 `Mode=Uniaxial Tension X` with `Mode2=Simple Shear S13`, adding `Kappa>0` if you
 also want the bending response.
 
-For **anisotropy** — the transverse isotropy of a vertical channel network, say —
-set `full_tensor=Yes` to solve all six load cases and obtain
-`E_x,E_y,E_z,G_xy,G_xz,G_yz` and the full 6×6 matrix.
+For **anisotropy** — the transverse isotropy of an aligned inclusion population
+or a parallel channel network, say — set `full_tensor=Yes` to solve all six load
+cases and obtain `E_x,E_y,E_z,G_xy,G_xz,G_yz` and the full 6×6 matrix.
 
 A cell must be large enough to hold enough features for the directions being
 compared to be equivalent. A cell holding only three to five channels is too

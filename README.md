@@ -42,7 +42,7 @@ into folders, each with its own `README`:
 |--------|----------|
 | `studies/` | RVE parameter-deck generators (`make_ice_studies*.py`, deck-stamping helpers). |
 | `params/` | The generated input parameter decks (`rve_*.csv`) — one row per RVE. |
-| `hpc/` | CSC Roihu / Slurm batch scripts (`submit_*.sh`, `postprocess_*.sh`). |
+| `hpc/` | Slurm batch scripts (`submit_*.sh`, `postprocess_*.sh`) — worked examples from the cluster this work ran on, kept for reference. |
 | `results/` | Homogenisation output tables (`results_*.csv`), curves, and figures (`study_*.png`). |
 | `analysis/` | Analyzers and field extractors that turn results into figures/quantities. |
 | `viz/` | RVE visualization (`render_rve.py`, `odb_to_vtk.py`). |
@@ -73,7 +73,8 @@ python3 ../analysis/macro_plate.py
 
 Regenerating the *inputs* rather than the figures means re-solving the decks in
 `params/` with Abaqus — see §1. The `hpc/` scripts are the Slurm jobs that did
-so on CSC Roihu; they are archival examples and site-specific, not a dependency.
+so; they are archival, site-specific examples of how the campaigns were
+submitted, not a dependency. See `docs/RUNBOOK.md` for the generic procedure.
 
 > **Scatter convention.** Every quoted scatter is the population standard
 > deviation (`ddof=0`) over the packings of an ensemble. Note that pandas

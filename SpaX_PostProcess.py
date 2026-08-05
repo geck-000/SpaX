@@ -208,6 +208,7 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
         
         total_stress_vol = 0.0
         total_vol = 0.0
+        total_incl_vol = 0.0
         total_strain_axial_vol = 0.0
         total_strain_trans1_vol = 0.0
         total_strain_trans2_vol = 0.0
@@ -232,6 +233,24 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
 
             total_stress_vol += float(np.dot(s_dat[:, s_idx], w))
             total_vol += float(w.sum())
+
+            # Volume of the meshed soft phase, so the ACHIEVED inclusion
+            # fraction can be reported. The void porosity below counts only
+            # non-meshed volume (gas); brine is a meshed soft solid and is
+            # therefore invisible to it, which makes void porosity useless for
+            # auditing whether the packer reached its brine target.
+            for _sname in ('SPHERE_ONLY', 'Sphere_Only'):
+                try:
+                    _set = inst.elementSets[_sname]
+                except (KeyError, AttributeError):
+                    continue
+                try:
+                    _l, _d = _field_by_label(volume_field, _set)
+                    if len(_l):
+                        total_incl_vol += float(_d[:, 0].sum())
+                except Exception:
+                    pass
+                break
 
             if strain_key:
                 e_lab, e_dat = _field_by_label(frame.fieldOutputs[strain_key], inst)
@@ -278,11 +297,34 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
             'eps_axial_solid': eps_axial_solid,
             'eps_trans1': eps_trans1,
             'eps_trans2': eps_trans2,
+            # Meshed solid volume in this frame. Carried out of the loop so the
+            # ACHIEVED porosity can be reported alongside the moduli: the packer
+            # does not always reach the requested volume fraction, and a target
+            # VoF echoed from the deck is therefore not evidence of what was
+            # actually built. The second-order path already reports this; the
+            # first-order path did not, which made high-VoF cases impossible to
+            # audit from the results file alone.
+            'v_solid': total_vol,
+            'v_incl': total_incl_vol,
         })
-    
+
     odb.close()
-    
+
     results = {}
+    if stress_strain_data and V_RVE > 0:
+        # Small-strain volume change is negligible, but average over frames
+        # rather than trusting any single one.
+        v_solid = sum(d['v_solid'] for d in stress_strain_data) / float(len(stress_strain_data))
+        v_incl = sum(d['v_incl'] for d in stress_strain_data) / float(len(stress_strain_data))
+        results['V_solid'] = v_solid
+        # Non-meshed volume only. For these decks that is the gas, since brine
+        # is a meshed soft phase and therefore counts as solid here.
+        results['porosity'] = 1.0 - v_solid / V_RVE
+        # Achieved soft-phase (brine) fraction, and the two together -- the
+        # quantity to compare against the requested VoF when auditing whether
+        # the packer met its target.
+        results['phi_inclusion'] = v_incl / V_RVE
+        results['phi_soft_total'] = (v_incl / V_RVE) + (1.0 - v_solid / V_RVE)
     if len(stress_strain_data) >= 2:
         eps_arr = np.array([d['eps'] for d in stress_strain_data])
         sig_arr = np.array([d['sigma'] for d in stress_strain_data])
@@ -551,6 +593,15 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
                 row[Ek] = 'ERROR'
             elif r:
                 row[Ek] = r.get('E_eff', ''); row[nuk] = r.get('nu_eff', '')
+                # Achieved porosity, from the meshed solid volume rather than
+                # the requested VoF. Recorded from the first uniaxial ODB that
+                # yields it (all load cases share the geometry), and only when
+                # the bending path has not already supplied it.
+                if 'porosity' in r and row.get('porosity', '') in ('', None):
+                    row['porosity'] = r['porosity']
+                    row['V_solid'] = r.get('V_solid', '')
+                    row['phi_inclusion'] = r.get('phi_inclusion', '')
+                    row['phi_soft_total'] = r.get('phi_soft_total', '')
                 print("    {} -> E={:.4e}  nu={}".format(short, r.get('E_eff', 0),
                                                          r.get('nu_eff', '')))
         for short, scomp, Gk in SHR:

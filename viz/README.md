@@ -6,6 +6,7 @@ Tools to turn meshes and solved models into publication figures.
 |------|----------|------|
 | `render_rve.py` | `python3` (PyVista) | Offscreen renders. `micro` mode: brine channels (blue) vs pockets (orange) in a faint ice cube from a `Job-*.inp`. `mesh` / `meshcut` modes: the tetrahedral mesh itself, intact or with one corner octant of whole elements removed. `field` mode: von Mises on the warped, clipped RVE from a `.vtk`. Okabe-Ito colourblind-safe palette. |
 | `odb_to_vtk.py` | `abaqus python` | Exports a solved `.odb` to legacy VTK (displacement vectors, von Mises, material tag) for ParaView or for `render_rve.py field`. |
+| `render_stress_field.py` | `python3` (PyVista) | The 3-D matrix stress field of a solved cell, for the critical-zone figure. Renders the matrix only, treating inclusions as voids, and normalises by the volume-weighted matrix mean so the colour scale means "times the average", not an absolute stress. A second panel removes one corner octant to expose the interior. |
 
 **Usage**
 

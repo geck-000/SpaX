@@ -1,0 +1,9 @@
+__pycache__/
+*.pyc
+out_*/
+logs_gen/
+results/weibull_dumps/
+results/scf_fields/
+
+# ODB->VTK intermediates for the 3D field renders (regenerable, ~8 MB each)
+results/*.vtk
