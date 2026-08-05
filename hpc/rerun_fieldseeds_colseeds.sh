@@ -8,9 +8,14 @@
 # small partition caps submitted jobs at 200, so the 300-deck solve arrays
 # cannot be queued alongside the generation arrays that produce them.
 set -e
-W=/scratch/project_2019020/test_rve
+# Placeholders as in the rest of hpc/ (see hpc/README.md): override per run with
+# WORKDIR / SPAX_ACCOUNT / PYTHONUSERBASE rather than editing this file.
+W=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
 cd "$W"
-A=--account=project_2019020
+A=--account=${SPAX_ACCOUNT:-project_XXXXXX}
+PUB=${PYTHONUSERBASE:-/projappl/project_XXXXXX/spax_py}
+# Each stage re-submits this same controller, so it must be staged in $W.
+SELF=rerun_fieldseeds_colseeds.sh
 
 collect () {  # $1 = outdir, $2 = deck glob, $3 = joblist name
   find "$1" -name 'Job-*.inp' -exec mv -t "$W" {} +
@@ -27,7 +32,7 @@ case "$STAGE" in
          --time=00:30:00 --array=1-150%30 \
          --export=ALL,WORKDIR=$W,JOBLIST=GJ_fs2 csc_solve_array.sh)
     echo "fs wave1: $S1"
-    sbatch $A --dependency=afterany:$S1 --export=ALL,STAGE=fs_wave2 rerun_chain.sh
+    sbatch $A --dependency=afterany:$S1 --export=ALL,STAGE=fs_wave2 "$SELF"
     ;;
   fs_wave2)
     N=$(wc -l < GJ_fs2)
@@ -40,10 +45,10 @@ case "$STAGE" in
         postprocess_firstorder.sh)
     echo "fs post: $P"
     G=$(sbatch --parsable $A --dependency=afterany:$P --array=1-50%40 \
-        --export=ALL,WORKDIR=$W,CSV=params/rve_colseeds_extra.csv,OUTDIR=out_cse,SPAX_SEED=20260723,PYTHONUSERBASE=/projappl/project_2019020/spax_py \
+        --export=ALL,WORKDIR=$W,CSV=params/rve_colseeds_extra.csv,OUTDIR=out_cse,SPAX_SEED=20260723,PYTHONUSERBASE=$PUB \
         generate_array.sh)
     echo "cs gen: $G"
-    sbatch $A --dependency=afterany:$G --export=ALL,STAGE=cs_solve rerun_chain.sh
+    sbatch $A --dependency=afterany:$G --export=ALL,STAGE=cs_solve "$SELF"
     ;;
   cs_solve)
     N=$(collect out_cse 'Job-CSEED_*.inp' GJ_cse)

@@ -27,6 +27,7 @@ and the decks are staged in `WORKDIR`.
 | `submit_nlgeom.sh` | Solve the large-deformation study [#8] decks. |
 | `submit_tilt.sh` | Solve the channel-tilt study [#6] decks. |
 | `submit_colseeds.sh` | Solve the seeded C-shape column (`rve_colseeds.csv`, 100 decks) for the depth-profile scatter envelopes, then postprocess to `results_colseeds.csv`. |
+| `rerun_fieldseeds_colseeds.sh` | Staged controller for the ten-packing re-run after the seeding fix: solves the 300 fieldseeds decks in two waves, then generates and solves the 100 colseeds-extra decks. Re-submits itself per `$STAGE`, so it must be staged in `WORKDIR`. Chained because the `small` partition caps submitted jobs at 200. |
 | `postprocess_firstorder.sh` | `abaqus python SpaX_PostProcess.py` over the solved first-order ODBs. |
 | `postprocess_coltensor.sh` | Extract the per-slice 6×6 elasticity tensors. |
 | `postprocess_nlgeom.sh` | Extract nlgeom reference-point curves. |
