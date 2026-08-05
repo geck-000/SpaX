@@ -37,17 +37,9 @@ These are **research-scale** solves. `L/d=12` already **OOM'd at 40 GB**; the
 bending case is RAM-bound (Lesicar second-order constraints + direct solver).
 Rough memory: `L/d=12` ~150 GB, `L/d=14` ~250 GB, `L/d=16` ~400 GB+.
 
-- **Puhti has no `bigmem` partition** — the node tiers are: standard **384 GB**
-  nodes via `--partition=large` (`--mem=360G`), and the **hugemem BigMem** nodes
-  via `--partition=hugemem`/`hugemem_longrun`. `bend_02_solve.sh` defaults to
-  **`--partition=hugemem --mem=1000G`** so every size fits, but that's wasteful on
-  the smaller boxes. **To save the scarce hugemem allocation, run the sizes
-  separately**: filter `GlobalJobList` by size (`grep L096` / `L112` / `L128`) and
-  submit **L/d=12 (and likely 14) on `--partition=large --mem=360G`**, reserving
-  **`hugemem` for L/d=16** (and 14 if it exceeds 384 GB).
 - **Abaqus scratch on node-local NVMe.** `bend_02` requests `--gres=nvme:1500`
   and points Abaqus `scratch="$LOCAL_SCRATCH"`: the direct solver's out-of-core
-  files are huge and must NOT sit on Lustre `/scratch`. Puhti hugemem nodes have
+  files are huge and must NOT sit on Lustre `/scratch`. hugemem nodes have
   up to ~6 TB NVMe — raise the `nvme` request if a solve runs out of scratch. The
   script falls back to a WORKDIR scratch dir if NVMe wasn't granted.
 - `L/d=16` (~4.6 M elements) is the stretch goal — **start with 12 and 14**; if
