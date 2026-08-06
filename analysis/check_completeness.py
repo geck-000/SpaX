@@ -27,7 +27,64 @@ step.
 import csv
 import glob
 import os
+import re
 import sys
+
+
+_SOLVE_RC = {}
+
+
+def solve_outcomes(work):
+    """deck -> exit code of its most recent solve, read from the solve logs.
+
+    An Abaqus killed for memory or walltime still leaves an ODB behind, and it
+    is indistinguishable from a good one by existence or by size -- a partly
+    written 60 MB file looks exactly like a small complete one. The solve array
+    then skips that deck on any resubmit, because its ODB is present, so the
+    loss is silent and the post-processor reads whatever is in the file.
+    Counting ODBs cannot catch this.
+
+    The solver prunes everything but the deck and the ODB, so the .sta is gone
+    and the only durable record is the array task's own log, which names the
+    deck and ends with 'Abaqus exit: <rc>'. A task killed by Slurm never
+    reaches that line, so a missing exit code is exactly the signature wanted.
+    """
+    if work in _SOLVE_RC:
+        return _SOLVE_RC[work]
+    out = {}
+    logs = glob.glob(os.path.join(work, 'logs', 'csc_solve_*.out'))
+    for path in sorted(logs, key=lambda p: os.path.getmtime(p)):
+        deck, rc = None, None
+        try:
+            with open(path, encoding='utf8', errors='replace') as fh:
+                for line in fh:
+                    if line.startswith('====='):
+                        m = re.match(r'=====\s+(\S+)\s', line)
+                        if m and deck is None:
+                            deck = m.group(1)
+                    elif line.startswith('Abaqus exit:'):
+                        try:
+                            rc = int(line.split(':', 1)[1].strip())
+                        except ValueError:
+                            rc = None
+        except OSError:
+            continue
+        if deck:
+            out[deck] = rc            # later log wins: mtime-sorted
+    _SOLVE_RC[work] = out
+    return out
+
+
+def truncated_odbs(work, ids):
+    """ODBs present whose most recent solve did not exit cleanly."""
+    rc = solve_outcomes(work)
+    bad = []
+    for rid in ids:
+        for odb in glob.glob(os.path.join(work, 'Job-%s-*.odb' % rid)):
+            deck = os.path.basename(odb)[:-4]
+            if deck in rc and rc[deck] != 0:
+                bad.append('%s (exit %s)' % (deck, rc[deck]))
+    return bad
 
 
 def deck_ids(path):
@@ -102,6 +159,8 @@ def main():
         stale = (since is not None and os.path.isfile(rpath)
                  and os.path.getmtime(rpath) < since)
 
+        trunc = truncated_odbs(work, ids)
+
         status = 'ok'
         if res is None:
             status = 'NO RESULTS FILE'
@@ -109,6 +168,8 @@ def main():
             status = 'STALE (predates this run)'
         elif nres < len(ids):
             status = 'INCOMPLETE'
+        elif trunc:
+            status = 'TRUNCATED ODBs (%d)' % len(trunc)
         elif len(odb) < len(ids):
             status = 'results ok, some ODBs absent'
 
@@ -116,8 +177,11 @@ def main():
               % (name, len(ids), len(gen), len(odb), nres, status))
 
         if status != 'ok' and not status.startswith('results ok'):
-            missing = [r for r in ids if res is None or r not in set(res)]
-            bad.append((name, status, missing))
+            if status.startswith('TRUNCATED'):
+                bad.append((name, status, trunc))
+            else:
+                missing = [r for r in ids if res is None or r not in set(res)]
+                bad.append((name, status, missing))
 
     print()
     if not bad:

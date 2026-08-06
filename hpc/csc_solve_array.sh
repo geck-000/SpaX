@@ -36,9 +36,27 @@ RC=$?
 echo "Abaqus exit: ${RC}"
 
 # Keep only this job's deck + ODB; drop .dat/.sta/.msg/.com/.prt/.sim/.lck.
+#
+# ...unless the solve failed. Abaqus reports errors as "Please see the message
+# file", and pruning it removes the only description of what went wrong: the
+# job log carries the generic line and nothing else, so a failure that needs
+# diagnosing has to be reproduced blind. Keep .msg, .sta and .dat when the exit
+# code is non-zero. They cost little, there should be few of them, and a later
+# successful solve of the same deck prunes them anyway.
+if [ "$RC" -eq 0 ]; then
+    KEEP='inp|odb'
+else
+    KEEP='inp|odb|msg|sta|dat'
+    echo "solve failed (rc=$RC) -- keeping .msg/.sta/.dat for diagnosis"
+fi
 for f in "${JOBNAME}".*; do
     [ -e "$f" ] || continue
-    case "${f##*.}" in inp|odb) ;; *) rm -f "$f" 2>/dev/null ;; esac
+    ext="${f##*.}"
+    case "$ext" in
+        inp|odb) ;;
+        msg|sta|dat) [ "$RC" -eq 0 ] && rm -f "$f" 2>/dev/null ;;
+        *) rm -f "$f" 2>/dev/null ;;
+    esac
 done
 [ "$SCR" != "$LOCAL_SCRATCH" ] && rm -rf "$SCR"
 echo "===== ${JOBNAME}  done $(date)  (odb: $([ -f ${JOBNAME}.odb ] && echo yes || echo NO)) ====="
