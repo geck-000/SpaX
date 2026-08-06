@@ -36,3 +36,9 @@ lowbase	rve_lowbase.csv	out_lb2	Job-LBASE_*	results_lowbase.csv	postprocess_firs
 eringen_homog	rve_eringen_homog.csv	out_ergh	Job-ERGH_*	results_eringen_homog.csv	postprocess_firstorder.sh	SPAX_MESH_ORDER=2
 eringen	rve_eringen.csv	out_erg	Job-ERG_*	results_eringen.csv	postprocess_firstorder.sh	SPAX_MESH_ORDER=2
 fieldseeds	rve_fieldseeds.csv	out_fs3	Job-MSEED_* Job-NSEED_* Job-N2SEED_*	results_fieldseeds.csv	postprocess_firstorder.sh	-
+
+# Case study 3: the Novik Bay cantilever beams of Gogolaze et al. (2026).
+# Appended 2026-08-06. Twelve slices on their measured brine profile at one
+# brine partition, plus the partition sweep at the base that sets the error bar.
+gogo_column	rve_gogo_column.csv	out_gogo	Job-GOGO_*	results_gogo_column.csv	postprocess_firstorder.sh	-
+gogo_chanfrac	rve_gogo_chanfrac.csv	out_goch	Job-GOCH_*	results_gogo_chanfrac.csv	postprocess_firstorder.sh	-

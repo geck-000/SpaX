@@ -19,6 +19,10 @@ that must share a single mesh.
 | `make_eringen.py` | Nonlocal length-scale study: extends the bending sweep across cell sizes. |
 | `make_skeletal.py` | Skeletal basal layer — resolves the bottom few percent of the sheet as sub-laminae. |
 | `make_weibull.py` | Weibull / weakest-link sensitivity of the stress-localisation measure. |
+| `make_ice_studies3.py` … `make_ice_studies6.py` | Later batteries of column studies (percolation, morphology, orientation, brine `K(T)`, large deformation). |
+| `make_lowbase.py` | C-shape column with the basal brine reduced to what the field profile implies, to test whether the basal parameterisation drives the disagreement there. |
+| `make_meshconv.py` | Mesh-convergence deck: two slices at three mesh sizes, generation only — the meshed volume is a property of the deck, so nothing needs solving. |
+| `make_cantilever.py` | Decks for case study 3, the cantilever beam comparison. |
 | `patch_brine.py` | Utility to patch brine material cards in existing decks. |
 
 **Running:** the `make_*` scripts import each other, so run them from *this*
