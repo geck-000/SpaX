@@ -89,7 +89,24 @@ case "$STAGE" in
     }
     find "$OUTDIR" -name 'Job-*.inp' -exec mv -t "$W" {} + 2>/dev/null || true
     find "$OUTDIR" -name '*_periodic_pairs.csv' -exec mv -t "$W" {} + 2>/dev/null || true
-    ls $GLOB.inp 2>/dev/null | sed 's/\.inp$//' | sort > "GJ_$NAME"
+    # Build the job list from the deck's own run_ids, not from a filename glob.
+    # A glob cannot always separate two campaigns: colseeds and colseeds_extra
+    # are both Job-CSEED_*, so the second would collect the first's decks as
+    # well -- harmless while they run in sequence, because the solve array skips
+    # decks whose ODB exists and the post-processor filters by the deck's
+    # run_ids, but wasteful, and wrong outright if the two ever run at the same
+    # time. The deck is the authority on which RVEs belong to the campaign.
+    python3 - "params/$DECK" > "GJ_$NAME" <<'PYEOF'
+import csv, glob, os, sys
+seen = set()
+for row in csv.DictReader(open(sys.argv[1], encoding='utf8', errors='replace')):
+    rid = (row.get('run_id') or '').strip()
+    if not rid or rid in seen:
+        continue
+    seen.add(rid)
+    for f in sorted(glob.glob('Job-%s-*.inp' % rid)):
+        print(os.path.basename(f)[:-4])
+PYEOF
     N=$(wc -l < "GJ_$NAME")
     echo "decks collected: $N"
     if [ "$N" -lt 1 ]; then
