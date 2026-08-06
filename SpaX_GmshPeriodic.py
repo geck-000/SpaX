@@ -95,15 +95,6 @@ class _TolIndex(object):
         return best
 
 
-# Build inclusions as the ellipsoids the packer placed, rather than as their
-# bounding spheres. SPAX_TRUE_ELLIPSOIDS=0 restores the old behaviour, which is
-# retained only to reproduce previously published runs: a bounding sphere
-# carries 1/sphericity^2 the volume of the ellipsoid it encloses -- 1.6x in the
-# cold cells of the ice column, 2.2x in the warm ones -- and discards pocket
-# shape and orientation entirely.
-_TRUE_ELLIPSOIDS = os.environ.get('SPAX_TRUE_ELLIPSOIDS', '1') != '0'
-
-
 def _add_periodic_sphere_copies(cx, cy, cz, r, L, tol=1e-10):
     """
     For an inclusion at (cx,cy,cz) in an RVE [0,L]^3, determine which periodic
@@ -753,7 +744,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         erx, ery, erz = radii
         base = max(erx, ery, erz)
         tag = gmsh.model.occ.addSphere(ox, oy, oz, base)
-        if _TRUE_ELLIPSOIDS and min(erx, ery, erz) < base * (1.0 - 1e-12):
+        if min(erx, ery, erz) < base * (1.0 - 1e-12):
             gmsh.model.occ.dilate([(3, tag)], ox, oy, oz,
                                   erx / base, ery / base, erz / base)
         return tag
