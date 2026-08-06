@@ -1274,7 +1274,16 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     print("    Total elements:   {}".format(n_elem_matrix + n_elem_sphere))
     
     # ---- Verify periodicity ----
-    tol_match = 1e-10
+    # Tolerance for "this node lies on a face" and for pairing across it.
+    # 1e-10 was tight enough while every boundary node sat on an analytic
+    # circle or a straight cube edge. Nodes on an ellipsoid's cut curve are
+    # placed by evaluating a spline parametrisation, so the coordinate normal
+    # to the face comes back a few 1e-10 off zero rather than exactly on it;
+    # the node then fails the membership test, its partner is left unpaired,
+    # and a mesh that is periodic by construction gets rejected. Mesh node
+    # spacing is ~1e-2, so this stays five orders of magnitude clear of
+    # pairing two genuinely distinct nodes.
+    tol_match = 1e-7 * max(L, 1.0)
     periodicity = {}
     
     for axis_name, axis_idx in [('X', 0), ('Y', 1), ('Z', 2)]:
