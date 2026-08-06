@@ -112,8 +112,22 @@ PYEOF
     if [ "$N" -lt 1 ]; then
       echo "!!! no decks for $NAME -- chain stopped."; exit 1
     fi
-    S=$(sbatch --parsable $A --partition=small --cpus-per-task=4 --mem=16G \
-        --time=00:40:00 --array=1-${N}%30 \
+    # Bending is memory-bound in a way the uniaxial cases are not: the mesh
+    # grows as (L/d)^3 and the direct solver dominates. Four eringen bending
+    # solves were killed at 16.3-16.7 GB against a 16 GB allocation, and an
+    # Abaqus killed for memory still leaves an ODB behind -- which the solve
+    # array reads as success, so the loss is silent until the results table
+    # comes up short. Give any campaign carrying bending decks real headroom
+    # rather than discovering the ceiling one cell at a time.
+    SOLVE_MEM=16G
+    SOLVE_TIME=00:40:00
+    if grep -q -- '-ben$' "GJ_$NAME"; then
+      SOLVE_MEM=${SPAX_BEND_MEM:-48G}
+      SOLVE_TIME=${SPAX_BEND_TIME:-01:30:00}
+      echo "bending decks present -> mem $SOLVE_MEM, walltime $SOLVE_TIME"
+    fi
+    S=$(sbatch --parsable $A --partition=small --cpus-per-task=4 --mem=$SOLVE_MEM \
+        --time=$SOLVE_TIME --array=1-${N}%30 \
         --export=ALL,WORKDIR=$W,JOBLIST=GJ_$NAME csc_solve_array.sh)
     echo "solve: $S"
     sbatch $A --dependency=afterany:$S \
