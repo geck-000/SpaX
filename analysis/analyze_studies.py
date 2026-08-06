@@ -30,11 +30,14 @@ def load(path):
             df[c] = num(df[c])
     return df
 
-# ---- Marchenko (2024) vibrating-beam fit ----------------------------------
+# ---- Marchenko (2024) through-thickness profile ---------------------------
+# Eq. (17) of Marchenko (2024), p.11: a Kerr & Palmer (1972) form fitted to
+# E(z) computed from *measured* brine content via his empirical formula (5).
+# It is not the vibrating-beam moduli themselves.  E0 is the surface value and
+# alpha the base/surface ratio, so E_bot = E0*alpha = 1.67 GPa.
 def marchenko(depth_from_top):
-    Ebot, M, n = 1.67, 2.63, 0.5
-    zeta = 1.0 - depth_from_top          # normalized height above base
-    return Ebot * ((M - 1) * zeta**n + 1.0)
+    E0, alpha, n = 4.4, 0.38, 0.6
+    return E0 * (1.0 - (1.0 - alpha) * depth_from_top**n)
 
 # ===========================================================================
 def do_morphology():

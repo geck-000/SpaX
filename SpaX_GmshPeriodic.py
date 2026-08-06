@@ -46,32 +46,91 @@ except ImportError:
 # Geometry construction
 # =====================================================================
 
+class _TolIndex(object):
+    """Look points up by position, within a tolerance.
+
+    Both periodic correspondences here -- curve to curve by centre of mass, and
+    end node to end node by translated coordinate -- used to hash coordinates
+    rounded to a fixed number of decimals and match on exact key equality. That
+    works only while the coordinates being compared are exact.
+
+    They are exact for spheres: a plane cuts a sphere in a true circle, and OCC
+    returns its centre of mass analytically, so a curve and its translate agree
+    to machine precision. They are not exact for ellipsoids, whose cut curves
+    are splines with centres of mass obtained by numerical quadrature; the
+    original and its translate then differ in the last few digits. Two values
+    either side of a rounding boundary land in different buckets, the lookup
+    silently misses, and the slave curve never receives its master's mesh --
+    surfacing later as "slave boundary node(s) unmatched".
+
+    Bucketing on a grid coarser than the tolerance, and searching the 27
+    neighbouring cells, removes the boundary sensitivity while staying O(1) per
+    query.
+    """
+
+    def __init__(self, tol):
+        self.tol = float(tol)
+        self.cell = max(self.tol * 4.0, 1e-12)
+        self.buckets = {}
+
+    def _key(self, p):
+        c = self.cell
+        return (int(math.floor(p[0] / c)),
+                int(math.floor(p[1] / c)),
+                int(math.floor(p[2] / c)))
+
+    def add(self, p, value):
+        self.buckets.setdefault(self._key(p), []).append((tuple(p[:3]), value))
+
+    def get(self, p, default=None):
+        bx, by, bz = self._key(p)
+        best, bestd = default, self.tol
+        for dx in (-1, 0, 1):
+            for dy in (-1, 0, 1):
+                for dz in (-1, 0, 1):
+                    for q, value in self.buckets.get((bx + dx, by + dy, bz + dz), ()):
+                        d = max(abs(q[0] - p[0]), abs(q[1] - p[1]), abs(q[2] - p[2]))
+                        if d <= bestd:
+                            best, bestd = value, d
+        return best
+
+
 def _add_periodic_sphere_copies(cx, cy, cz, r, L, tol=1e-10):
     """
-    For a sphere at (cx,cy,cz) with radius r in an RVE [0,L]^3,
-    determine which periodic copies are needed and return their centres.
-    
-    A copy is needed in direction +d if the sphere crosses the d=0 face,
+    For an inclusion at (cx,cy,cz) in an RVE [0,L]^3, determine which periodic
+    copies are needed and return their centres.
+
+    A copy is needed in direction +d if the inclusion crosses the d=0 face,
     and in -d if it crosses the d=L face. Corner/edge copies are also
     generated for multi-axis crossings.
+
+    `r` may be a scalar radius or a per-axis triple (rx, ry, rz). The triple
+    form is required for ellipsoids: testing every face against the *largest*
+    semi-axis generates copies for faces the inclusion does not actually reach,
+    which the Boolean fragment then has to cut away for nothing.
     """
     from itertools import product
-    
+
+    try:
+        rx, ry, rz = r
+    except TypeError:
+        rx = ry = rz = r
+
     shifts_x = [0]
     shifts_y = [0]
     shifts_z = [0]
-    
-    if cx - r < tol:
+
+    if cx - rx < tol:
         shifts_x.append(L)
-    if cx + r > L - tol:
+    if cx + rx > L - tol:
         shifts_x.append(-L)
-    if cy - r < tol:
+    if cy - ry < tol:
         shifts_y.append(L)
-    if cy + r > L - tol:
+    if cy + ry > L - tol:
         shifts_y.append(-L)
-    if cz - r < tol:
+    if cz - rz < tol:
         shifts_z.append(L)
-    if cz + r > L - tol:
+    if cz + rz > L - tol:
         shifts_z.append(-L)
     
     copies = []
@@ -152,7 +211,7 @@ def _match_periodic_surfaces(L, eps=None):
     return pairs
 
 
-def _periodic_curve_pairs(L, eps=1e-6):
+def _periodic_curve_pairs(L, eps=None):
     """Single-axis periodic curve correspondence for the RVE boundary.
 
     A curve lying on one or more *max* faces is slaved, along the LOWEST such
@@ -174,6 +233,16 @@ def _periodic_curve_pairs(L, eps=1e-6):
 
     Returns list of (master_curve, slave_curve, [tx, ty, tz]).
     """
+    # "Lies on the max face" is decided from an OCC bounding box, which carries
+    # a tolerance gap. For a sphere the cut is an analytic circle and the box is
+    # exact, so a very tight eps worked. For an ellipsoid the cut is a spline
+    # and OCC's gap exceeds 1e-6: the curve is then not recognised as lying on
+    # the face, is never paired, and its slave mesh is never copied -- which
+    # surfaces much later as "slave boundary node(s) unmatched". Use the same
+    # scale as _match_periodic_surfaces, which pairs reliably; it stays orders
+    # of magnitude below the separation of distinct boundary curves.
+    if eps is None:
+        eps = 1e-4 * L
     info = {}
     for dim, c in gmsh.model.getEntities(1):
         bb = gmsh.model.getBoundingBox(1, c)
@@ -182,10 +251,15 @@ def _periodic_curve_pairs(L, eps=1e-6):
                  if abs(bb[a] - L) < eps and abs(bb[a + 3] - L) < eps]
         info[c] = (com, onmax)
 
-    def key(p):
-        return (round(p[0], 7), round(p[1], 7), round(p[2], 7))
+    # Tolerant, not exact-key: an ellipsoid's cut curves have centres of mass
+    # from numerical quadrature, so a curve and its translate agree only to
+    # within quadrature noise. The tolerance is orders of magnitude below the
+    # separation of distinct curves (inclusion radii and mesh sizes are ~1e-2),
+    # so a match remains unambiguous.
+    idx = _TolIndex(1e-5 * L)
+    for c, (com, _onmax) in info.items():
+        idx.add(com, c)
 
-    idx = {key(v[0]): c for c, v in info.items()}
     pairs = []
     for c, (com, onmax) in info.items():
         if not onmax:
@@ -193,8 +267,7 @@ def _periodic_curve_pairs(L, eps=1e-6):
         axis = min(onmax)
         trans = [0.0, 0.0, 0.0]
         trans[axis] = L
-        m = idx.get(key([com[0] - trans[0], com[1] - trans[1],
-                         com[2] - trans[2]]))
+        m = idx.get([com[0] - trans[0], com[1] - trans[1], com[2] - trans[2]])
         if m is not None and m != c:
             pairs.append((m, c, trans))
     return pairs
@@ -232,11 +305,14 @@ def _manual_periodic_surface_copy(L, face_pairs):
     total_missing = 0
     for master, slave, trans in face_pairs:
         # Index slave boundary-curve nodes by coordinate.
-        snode = {}
+        # Tolerant, for the same reason as the 1D copy: nodes on an ellipsoid's
+        # cut curve sit on a spline, and a master node translated by L lands
+        # within round-off of its slave counterpart rather than exactly on it.
+        snode = _TolIndex(1e-6 * L)
         for d, cv in gmsh.model.getBoundary([(2, slave)], oriented=False):
             nt, co, _ = gmsh.model.mesh.getNodes(1, cv, includeBoundary=True)
             for i, t in enumerate(nt):
-                snode[key(co[3 * i:3 * i + 3])] = int(t)
+                snode.add(co[3 * i:3 * i + 3], int(t))
 
         # Master interior nodes -> new translated slave interior nodes.
         mnt, mco, _ = gmsh.model.mesh.getNodes(2, master, includeBoundary=False)
@@ -258,9 +334,9 @@ def _manual_periodic_surface_copy(L, face_pairs):
                 if int(t) in nodemap:
                     continue
                 p = co[3 * i:3 * i + 3]
-                k = key([p[0] + trans[0], p[1] + trans[1], p[2] + trans[2]])
-                if k in snode:
-                    nodemap[int(t)] = snode[k]
+                hit = snode.get([p[0] + trans[0], p[1] + trans[1], p[2] + trans[2]])
+                if hit is not None:
+                    nodemap[int(t)] = hit
                 else:
                     total_missing += 1
                     if _dbg:
@@ -323,9 +399,6 @@ def _manual_periodic_curve_copy(L, curve_pairs, eps=1e-6):
 
     Returns (n_pairs, n_missing_end_nodes); n_missing must be 0.
     """
-    def key(p):
-        return (round(p[0], 7), round(p[1], 7), round(p[2], 7))
-
     def depth(curve):
         bb = gmsh.model.getBoundingBox(1, curve)
         return sum(1 for a in range(3)
@@ -345,11 +418,15 @@ def _manual_periodic_curve_copy(L, curve_pairs, eps=1e-6):
     total_missing = 0
     for master, slave, trans in ordered:
         # Index slave end-point (vertex) nodes by coordinate.
-        send = {}
+        # Tolerant for the same reason as the curve pairing above: for an
+        # ellipsoid the curve end points are numerically computed surface
+        # intersections, so a master vertex translated by L lands within
+        # quadrature noise of its slave counterpart rather than exactly on it.
+        send = _TolIndex(1e-6 * L)
         for d, pt in gmsh.model.getBoundary([(1, slave)], oriented=False):
             nt, co, _ = gmsh.model.mesh.getNodes(0, pt)
             for i, t in enumerate(nt):
-                send[key(co[3 * i:3 * i + 3])] = int(t)
+                send.add(co[3 * i:3 * i + 3], int(t))
 
         # Master interior nodes -> new translated slave interior nodes.
         mnt, mco, _ = gmsh.model.mesh.getNodes(1, master, includeBoundary=False)
@@ -370,9 +447,9 @@ def _manual_periodic_curve_copy(L, curve_pairs, eps=1e-6):
                 if int(t) in nodemap:
                     continue
                 p = co[3 * i:3 * i + 3]
-                k = key([p[0] + trans[0], p[1] + trans[1], p[2] + trans[2]])
-                if k in send:
-                    nodemap[int(t)] = send[k]
+                hit = send.get([p[0] + trans[0], p[1] + trans[1], p[2] + trans[2]])
+                if hit is not None:
+                    nodemap[int(t)] = hit
                 else:
                     total_missing += 1
 
@@ -563,6 +640,28 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     # the master face mesh onto the slave exactly. This is the key to periodicity.
     gmsh.option.setNumber("Mesh.MeshSizeExtendFromBoundary", 0)
     gmsh.option.setNumber("Mesh.MeshSizeFromPoints", 0)
+
+    # Resolve curved surfaces well enough that the mesh carries the volume the
+    # packer placed. A tet mesh inscribes a convex body, so it always
+    # under-represents it, by roughly (2*pi/n)^2/6 for n elements around the
+    # circumference: at the ~14 the background field alone gives here, that is
+    # a systematic 4-5% volume deficit, which is what the audit was seeing.
+    # Curvature is a geometric invariant -- an inclusion and its periodic image
+    # have identical curvature -- so unlike point sizes or boundary extension
+    # (both disabled above for exactly this reason) it stays symmetric across
+    # opposite faces and does not disturb the periodic copy.
+    # 32 elements around a full circle. Measured on the validation column, as
+    # meshed volume over the volume the packer actually placed:
+    #   background field alone  0.95    (the deficit the audit first showed)
+    #   24 elements             0.981 +- 0.005
+    #   40 elements             ~0.99, at 1.7x the element count
+    # 32 keeps most of the gain for a modest cost. The residual deficit is the
+    # irreducible one of a polyhedron inscribed in a curved body; it is
+    # systematic, and analyses use the realised phi_inclusion rather than the
+    # nominal target, so it does not bias any result.
+    _curv = float(os.environ.get('SPAX_CURV_ELEMS', '32'))
+    if _curv > 0:
+        gmsh.option.setNumber("Mesh.MeshSizeFromCurvature", _curv)
     
     print("\n" + "=" * 70)
     print("GMSH PERIODIC MESH GENERATION")
@@ -590,8 +689,14 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                       sphere_array[i, 5] >= 0.4 * L)
         if is_channel:
             r = sphere_array[i, 3]
+            radii = (r, r, r)
         else:
-            r = max(sphere_array[i, 3], sphere_array[i, 4], sphere_array[i, 5])
+            # The three semi-axes, carried through so the inclusion can be built
+            # as the ellipsoid the packer placed. `r` remains the bounding radius
+            # and is used only as a representative scale for nearest-parent
+            # matching below.
+            radii = (sphere_array[i, 3], sphere_array[i, 4], sphere_array[i, 5])
+            r = max(radii)
 
         # Check if this is a parent (centre inside or on boundary of RVE)
         if (-tol_inside <= cx <= L + tol_inside and
@@ -602,7 +707,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             key = (round(cx, 8), round(cy, 8), round(cz, 8), round(r, 8))
             if key not in seen:
                 seen.add(key)
-                parents.append((cx, cy, cz, r, i, is_channel))
+                parents.append((cx, cy, cz, r, radii, i, is_channel))
 
     print("  Parent spheres: {}".format(len(parents)))
 
@@ -643,7 +748,30 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                       "{:.0f} deg".format(math.degrees(_az_fixed))
                       if _az_fixed is not None else "per-channel random"))
 
-    for cx, cy, cz, r, parent_idx, is_channel in parents:
+    def _add_inclusion(ox, oy, oz, radii):
+        """Build one inclusion as the ellipsoid the packer placed.
+
+        OCC has no ellipsoid primitive, so a sphere is built at the largest
+        semi-axis and squashed along the other two. The packer only ever
+        produces axis-aligned ellipsoids -- the long axis is assigned to
+        whichever of x/y/z the orientation sampling made dominant, which is why
+        the rotation columns of the sphere array are all zero -- so no rotation
+        is needed here.
+
+        Building the bounding sphere instead, as this did previously, inflates
+        each inclusion by 1/sphericity^2 in volume (a cell at sphericity 0.62
+        carries 2.6x the intended brine) and silently discards pocket shape and
+        orientation altogether.
+        """
+        erx, ery, erz = radii
+        base = max(erx, ery, erz)
+        tag = gmsh.model.occ.addSphere(ox, oy, oz, base)
+        if min(erx, ery, erz) < base * (1.0 - 1e-12):
+            gmsh.model.occ.dilate([(3, tag)], ox, oy, oz,
+                                  erx / base, ery / base, erz / base)
+        return tag
+
+    for cx, cy, cz, r, radii, parent_idx, is_channel in parents:
         if is_channel:
             if _chan_amp > 0.0:
                 # Wavy channels stay clear of the x/y faces (packing margin += amp)
@@ -669,15 +797,22 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                 sphere_tags.append((3, cc))
                 sphere_to_parent[cc] = parent_idx
             continue
-        # Main sphere (clipped to RVE later via fragment)
-        s = gmsh.model.occ.addSphere(cx, cy, cz, r)
+        # Main inclusion (clipped to RVE later via fragment)
+        s = _add_inclusion(cx, cy, cz, radii)
         sphere_tags.append((3, s))
         sphere_to_parent[s] = parent_idx
 
-        # Periodic copies
-        copies = _add_periodic_sphere_copies(cx, cy, cz, r, L)
+        # Periodic copies, made by copying and translating the parent rather
+        # than rebuilding at the shifted centre. A non-uniformly scaled sphere
+        # carries a parametric seam, and rebuilding gives no guarantee that the
+        # seam lands identically on both members of a face pair; when the box
+        # cuts them the two faces then decompose into different curves and the
+        # manual periodic node copy has nothing to match. Copying guarantees
+        # each image is an exact translate, topology and all.
+        copies = _add_periodic_sphere_copies(cx, cy, cz, radii, L)
         for ccx, ccy, ccz in copies:
-            sc = gmsh.model.occ.addSphere(ccx, ccy, ccz, r)
+            (_, sc), = gmsh.model.occ.copy([(3, s)])
+            gmsh.model.occ.translate([(3, sc)], ccx - cx, ccy - cy, ccz - cz)
             sphere_tags.append((3, sc))
             sphere_to_parent[sc] = parent_idx
     
@@ -777,7 +912,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             # Find closest parent sphere
             best_parent = 0
             best_dist = 1e30
-            for pi, (scx, scy, scz, sr, _pidx, p_is_channel) in enumerate(parents):
+            for pi, (scx, scy, scz, sr, _sradii, _pidx, p_is_channel) in enumerate(parents):
                 if p_is_channel:
                     # Channel match on XY only (cylinder spans full Z); compare
                     # against the nearest XY periodic image.
@@ -986,7 +1121,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             sx = 0.5*(bb[0]+bb[3]); sy = 0.5*(bb[1]+bb[4]); sz = 0.5*(bb[2]+bb[5])
             ext = (bb[3]-bb[0], bb[4]-bb[1], bb[5]-bb[2])
             best = None
-            for (px, py, pz, pr, pidx, pch) in parents:
+            for (px, py, pz, pr, _pradii, pidx, pch) in parents:
                 dx = sx-px; dx -= L*round(dx/L)
                 dy = sy-py; dy -= L*round(dy/L)
                 dz = sz-pz; dz -= L*round(dz/L)
@@ -1161,7 +1296,16 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     print("    Total elements:   {}".format(n_elem_matrix + n_elem_sphere))
     
     # ---- Verify periodicity ----
-    tol_match = 1e-10
+    # Tolerance for "this node lies on a face" and for pairing across it.
+    # 1e-10 was tight enough while every boundary node sat on an analytic
+    # circle or a straight cube edge. Nodes on an ellipsoid's cut curve are
+    # placed by evaluating a spline parametrisation, so the coordinate normal
+    # to the face comes back a few 1e-10 off zero rather than exactly on it;
+    # the node then fails the membership test, its partner is left unpaired,
+    # and a mesh that is periodic by construction gets rejected. Mesh node
+    # spacing is ~1e-2, so this stays five orders of magnitude clear of
+    # pairing two genuinely distinct nodes.
+    tol_match = 1e-7 * max(L, 1.0)
     periodicity = {}
     
     for axis_name, axis_idx in [('X', 0), ('Y', 1), ('Z', 2)]:

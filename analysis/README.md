@@ -35,6 +35,10 @@ Post-solve analysis: turn the `../results/*.csv` produced by
 | `aggregate_basetensor_seeds.py` | Aggregates the base-slice full-tensor replicates into an ensemble statement. |
 | `compare_basetensor_sizes.py` | Compares the warm-base full-tensor ensembles across cell size. |
 | `check_channel_isotropy.py` | Tests whether the channel generator is isotropic in the RVE plane. |
+| `audit_volume.py` | Checks that the mesh carries the inclusion volume the deck asked for, summing tetrahedra straight from the `.inp` so it is independent of both the generator and the extractor. Gates the re-run in `../hpc/rerun_paper.sh`. |
+| `plot_brine_comparison.py` | Compares the realised brine profile against the one implied by the published field correlation, with no fitted scalar anywhere. |
+| `case_study_3_scoping.py` | Scoping calculation for case study 3: RVE-derived `E(z)` in a cantilever ice beam. |
+| `plot_cantilever.py` | Figures for case study 3, the cantilever beam comparison. |
 | `prose_audit.py` | Locates the hardest-to-read prose in a LaTeX manuscript. Editorial aid, not part of the analysis chain. |
 
 **Running:** most analyzers read result CSVs by bare filename (e.g.

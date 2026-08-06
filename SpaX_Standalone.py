@@ -1113,18 +1113,27 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         #   - a shallow grazing of a cube EDGE or CORNER (the sphere surface
         #     skims the edge/corner without crossing it deeply), which leaves a
         #     wedge/needle the surface mesher cannot triangulate.
+        # The cap left at a face is governed by the semi-axis NORMAL to that
+        # face, not by the bounding radius. Testing every face against
+        # max(rx,ry,rz) overestimates the cap height on the two short axes of a
+        # prolate inclusion -- a genuine sliver reads as comfortably thick and
+        # is accepted, and the mesher then fails to build a consistent periodic
+        # boundary. (Harmless while inclusions were meshed as bounding spheres,
+        # since then the bounding radius *was* the geometry.)
         r_check = max(rx, ry, rz)
+        r_axis = (rx, ry, rz)
         reject_portion = False
         cc = [cx, cy, cz]
         for i, v in enumerate(cc):
+            r_ax = r_axis[i]
             for face_dist in [v, L - v]:  # distance to each face pair
-                if face_dist < r_check:  # sphere crosses this face
-                    cap_height = r_check - face_dist
+                if face_dist < r_ax:  # inclusion crosses this face
+                    cap_height = r_ax - face_dist
                     if cap_height < sep:
                         reject_portion = True
                         break
                     # Also check the body (portion inside RVE)
-                    body_height = 2 * r_check - cap_height
+                    body_height = 2 * r_ax - cap_height
                     if body_height < sep:
                         reject_portion = True
                         break

@@ -7,10 +7,12 @@ d = np.array([int(r[5:]) for r in df.run_id])/100.0     # depth from top, 0..1
 Eeff = df.E_eff.values/GPa
 Ez, Exy = df.E_z.values/GPa, 0.5*(df.E_x.values+df.E_y.values)/GPa
 
-# Marchenko (2024) fit
-Ebot, M, n = 1.67, 2.63, 0.5
-zeta = 1.0 - d                       # normalized height from bottom
-E_march = Ebot*((M-1)*zeta**n + 1.0)
+# Marchenko (2024) Eq. (17), p.11 -- a Kerr & Palmer (1972) form fitted to
+# E(z) computed from measured brine content via his empirical formula (5),
+# not to the vibrating-beam moduli themselves.  d is depth from the top.
+E0, alpha, n = 4.4, 0.38, 0.6
+E_march = E0*(1.0 - (1.0 - alpha)*d**n)
+M = 1.0/alpha                        # surface/base ratio, for the caption
 
 k = np.mean(Eeff/E_march)            # mean overprediction factor
 fig, ax = plt.subplots(1,2, figsize=(13,6))

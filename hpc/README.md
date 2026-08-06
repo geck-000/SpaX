@@ -28,9 +28,13 @@ and the decks are staged in `WORKDIR`.
 | `submit_tilt.sh` | Solve the channel-tilt study [#6] decks. |
 | `submit_colseeds.sh` | Solve the seeded C-shape column (`rve_colseeds.csv`, 100 decks) for the depth-profile scatter envelopes, then postprocess to `results_colseeds.csv`. |
 | `rerun_fieldseeds_colseeds.sh` | Staged controller for the ten-packing re-run after the seeding fix: solves the 300 fieldseeds decks in two waves, then generates and solves the 100 colseeds-extra decks. Re-submits itself per `$STAGE`, so it must be staged in `WORKDIR`. Chained because the `small` partition caps submitted jobs at 200. |
+| `rerun_paper.sh`, `rerun_paper_manifest.tsv` | Re-runs every campaign the paper rests on, one per manifest row, chaining generate → solve → post → next campaign by job dependency. Gated by `../analysis/audit_volume.py`: if the meshed inclusion volume does not match what the deck asked for, the chain stops rather than spending the remaining solves. Re-submits itself per `$STAGE`, so it must be staged in `WORKDIR`. |
+| `generate_array.sh` | Slurm array that generates decks, one task per deck row. The per-task seed must derive from the **global** row index — see `../docs/USER_DOCS.md` §5. |
 | `postprocess_firstorder.sh` | `abaqus python SpaX_PostProcess.py` over the solved first-order ODBs. |
 | `postprocess_coltensor.sh` | Extract the per-slice 6×6 elasticity tensors. |
 | `postprocess_nlgeom.sh` | Extract nlgeom reference-point curves. |
+| `postprocess_basesweep.sh`, `postprocess_basetensor.sh`, `postprocess_bt80.sh`, `postprocess_weibull_scf.sh` | Extraction for the size-convergence, base-tensor and stress-localisation campaigns. |
+| `submit_basesweep.sh`, `submit_basetensor.sh`, `submit_bt80.sh`, `submit_eringen.sh`, `submit_skeletal.sh` | Per-campaign submitters, superseded by `rerun_paper.sh` but kept as worked examples. |
 
 ### Earlier campaign scripts
 
