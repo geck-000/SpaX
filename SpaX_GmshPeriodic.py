@@ -48,30 +48,40 @@ except ImportError:
 
 def _add_periodic_sphere_copies(cx, cy, cz, r, L, tol=1e-10):
     """
-    For a sphere at (cx,cy,cz) with radius r in an RVE [0,L]^3,
-    determine which periodic copies are needed and return their centres.
-    
-    A copy is needed in direction +d if the sphere crosses the d=0 face,
+    For an inclusion at (cx,cy,cz) in an RVE [0,L]^3, determine which periodic
+    copies are needed and return their centres.
+
+    A copy is needed in direction +d if the inclusion crosses the d=0 face,
     and in -d if it crosses the d=L face. Corner/edge copies are also
     generated for multi-axis crossings.
+
+    `r` may be a scalar radius or a per-axis triple (rx, ry, rz). The triple
+    form is required for ellipsoids: testing every face against the *largest*
+    semi-axis generates copies for faces the inclusion does not actually reach,
+    which the Boolean fragment then has to cut away for nothing.
     """
     from itertools import product
-    
+
+    try:
+        rx, ry, rz = r
+    except TypeError:
+        rx = ry = rz = r
+
     shifts_x = [0]
     shifts_y = [0]
     shifts_z = [0]
-    
-    if cx - r < tol:
+
+    if cx - rx < tol:
         shifts_x.append(L)
-    if cx + r > L - tol:
+    if cx + rx > L - tol:
         shifts_x.append(-L)
-    if cy - r < tol:
+    if cy - ry < tol:
         shifts_y.append(L)
-    if cy + r > L - tol:
+    if cy + ry > L - tol:
         shifts_y.append(-L)
-    if cz - r < tol:
+    if cz - rz < tol:
         shifts_z.append(L)
-    if cz + r > L - tol:
+    if cz + rz > L - tol:
         shifts_z.append(-L)
     
     copies = []
@@ -590,8 +600,14 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                       sphere_array[i, 5] >= 0.4 * L)
         if is_channel:
             r = sphere_array[i, 3]
+            radii = (r, r, r)
         else:
-            r = max(sphere_array[i, 3], sphere_array[i, 4], sphere_array[i, 5])
+            # The three semi-axes, carried through so the inclusion can be built
+            # as the ellipsoid the packer placed. `r` remains the bounding radius
+            # and is used only as a representative scale for nearest-parent
+            # matching below.
+            radii = (sphere_array[i, 3], sphere_array[i, 4], sphere_array[i, 5])
+            r = max(radii)
 
         # Check if this is a parent (centre inside or on boundary of RVE)
         if (-tol_inside <= cx <= L + tol_inside and
@@ -602,7 +618,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             key = (round(cx, 8), round(cy, 8), round(cz, 8), round(r, 8))
             if key not in seen:
                 seen.add(key)
-                parents.append((cx, cy, cz, r, i, is_channel))
+                parents.append((cx, cy, cz, r, radii, i, is_channel))
 
     print("  Parent spheres: {}".format(len(parents)))
 
@@ -643,7 +659,30 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                       "{:.0f} deg".format(math.degrees(_az_fixed))
                       if _az_fixed is not None else "per-channel random"))
 
-    for cx, cy, cz, r, parent_idx, is_channel in parents:
+    def _add_inclusion(ox, oy, oz, radii):
+        """Build one inclusion as the ellipsoid the packer placed.
+
+        OCC has no ellipsoid primitive, so a sphere is built at the largest
+        semi-axis and squashed along the other two. The packer only ever
+        produces axis-aligned ellipsoids -- the long axis is assigned to
+        whichever of x/y/z the orientation sampling made dominant, which is why
+        the rotation columns of the sphere array are all zero -- so no rotation
+        is needed here.
+
+        Building the bounding sphere instead, as this did previously, inflates
+        each inclusion by 1/sphericity^2 in volume (a cell at sphericity 0.62
+        carries 2.6x the intended brine) and silently discards pocket shape and
+        orientation altogether.
+        """
+        erx, ery, erz = radii
+        base = max(erx, ery, erz)
+        tag = gmsh.model.occ.addSphere(ox, oy, oz, base)
+        if min(erx, ery, erz) < base * (1.0 - 1e-12):
+            gmsh.model.occ.dilate([(3, tag)], ox, oy, oz,
+                                  erx / base, ery / base, erz / base)
+        return tag
+
+    for cx, cy, cz, r, radii, parent_idx, is_channel in parents:
         if is_channel:
             if _chan_amp > 0.0:
                 # Wavy channels stay clear of the x/y faces (packing margin += amp)
@@ -669,15 +708,15 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                 sphere_tags.append((3, cc))
                 sphere_to_parent[cc] = parent_idx
             continue
-        # Main sphere (clipped to RVE later via fragment)
-        s = gmsh.model.occ.addSphere(cx, cy, cz, r)
+        # Main inclusion (clipped to RVE later via fragment)
+        s = _add_inclusion(cx, cy, cz, radii)
         sphere_tags.append((3, s))
         sphere_to_parent[s] = parent_idx
 
         # Periodic copies
-        copies = _add_periodic_sphere_copies(cx, cy, cz, r, L)
+        copies = _add_periodic_sphere_copies(cx, cy, cz, radii, L)
         for ccx, ccy, ccz in copies:
-            sc = gmsh.model.occ.addSphere(ccx, ccy, ccz, r)
+            sc = _add_inclusion(ccx, ccy, ccz, radii)
             sphere_tags.append((3, sc))
             sphere_to_parent[sc] = parent_idx
     
@@ -777,7 +816,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             # Find closest parent sphere
             best_parent = 0
             best_dist = 1e30
-            for pi, (scx, scy, scz, sr, _pidx, p_is_channel) in enumerate(parents):
+            for pi, (scx, scy, scz, sr, _sradii, _pidx, p_is_channel) in enumerate(parents):
                 if p_is_channel:
                     # Channel match on XY only (cylinder spans full Z); compare
                     # against the nearest XY periodic image.
@@ -986,7 +1025,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             sx = 0.5*(bb[0]+bb[3]); sy = 0.5*(bb[1]+bb[4]); sz = 0.5*(bb[2]+bb[5])
             ext = (bb[3]-bb[0], bb[4]-bb[1], bb[5]-bb[2])
             best = None
-            for (px, py, pz, pr, pidx, pch) in parents:
+            for (px, py, pz, pr, _pradii, pidx, pch) in parents:
                 dx = sx-px; dx -= L*round(dx/L)
                 dy = sy-py; dy -= L*round(dy/L)
                 dz = sz-pz; dz -= L*round(dz/L)
