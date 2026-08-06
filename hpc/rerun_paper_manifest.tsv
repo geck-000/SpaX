@@ -1,0 +1,38 @@
+# Every campaign the paper's results rest on, to be re-run against the fixed
+# mesher (inclusions built as ellipsoids, not bounding spheres).
+#
+# Columns, tab separated:
+#   name    deck (under params/)    outdir    deck glob    results file    postprocess script    extra env
+#
+# Order matters only in that cheap campaigns come first, so a systematic
+# problem shows up in minutes rather than after the expensive ones have run.
+# The validation campaign is first and the chain stops if it fails.
+#
+# Not listed, and deliberately: rve_eringen_homog is the phi=0 control and
+# contains no inclusions at all, so the mesher fix cannot change it. It is
+# re-run anyway (it is six cells) to keep the whole of 4.3.1 on one build.
+#
+tilt00	rve_tilt00.csv	out_tlt00	Job-TLT00_*	results_tilt00.csv	postprocess_firstorder.sh	-
+tilt15	rve_tilt15.csv	out_tlt15	Job-TLT15_*	results_tilt15.csv	postprocess_firstorder.sh	-
+tilt30	rve_tilt30.csv	out_tlt30	Job-TLT30_*	results_tilt30.csv	postprocess_firstorder.sh	-
+nlgeom_lin	rve_nlgeom_lin.csv	out_nlglin	Job-NLGLIN_*	results_nlgeom_lin.csv	postprocess_nlgeom.sh	-
+nlgeom_ten	rve_nlgeom_ten.csv	out_nlgten	Job-NLGTEN_*	results_nlgeom_ten.csv	postprocess_nlgeom.sh	-
+nlgeom_cmp	rve_nlgeom_cmp.csv	out_nlgcmp	Job-NLGCMP_*	results_nlgeom_cmp.csv	postprocess_nlgeom.sh	-
+basetensor_seeds	rve_basetensor_seeds.csv	out_bten	Job-BTEN_*	results_basetensor_seeds.csv	postprocess_basetensor.sh	-
+basetensor_bt80	rve_basetensor_bt80.csv	out_bt80	Job-BT80_*	results_bt80.csv	postprocess_bt80.sh	-
+basetensor_bs65	rve_basetensor_bs65.csv	out_bs65	Job-BS65_*	results_basesweep_L065.csv	postprocess_firstorder.sh	-
+basetensor_bs10	rve_basetensor_bs10.csv	out_bs10	Job-BS10_*	results_basesweep_L100.csv	postprocess_firstorder.sh	-
+brineKconst	rve_brineKconst.csv	out_bkc	Job-BKC_*	results_brineKconst.csv	postprocess_firstorder.sh	-
+brineKtemp	rve_brineKtemp.csv	out_bkt	Job-BKT_*	results_brineKtemp.csv	postprocess_firstorder.sh	-
+coltensor	rve_coltensor.csv	out_cten	Job-CTEN_*	results_coltensor.csv	postprocess_coltensor.sh	-
+skeletal_laminae	rve_skeletal_laminae.csv	out_sklm	Job-SKLM_*	results_skeletal_laminae.csv	postprocess_firstorder.sh	-
+basesweep	rve_basesweep.csv	out_bsw	Job-BSW_*	results_basesweep_new.csv	postprocess_basesweep.sh	-
+skeletal	rve_skeletal.csv	out_skel	Job-SKEL_*	results_skeletal.csv	postprocess_firstorder.sh	-
+weibull	rve_weibull.csv	out_wbl	Job-WBL_*	results_weibull.csv	postprocess_weibull_scf.sh	-
+steep_column	rve_steep_column.csv	out_steep	Job-STEEP_*	results_steep_column.csv	postprocess_firstorder.sh	-
+colseeds	rve_colseeds.csv	out_cs1	Job-CSEED_*	results_colseeds.csv	postprocess_firstorder.sh	-
+colseeds_extra	rve_colseeds_extra.csv	out_cs2	Job-CSEED_*	results_colseeds_extra.csv	postprocess_firstorder.sh	-
+lowbase	rve_lowbase.csv	out_lb2	Job-LBASE_*	results_lowbase.csv	postprocess_firstorder.sh	-
+eringen_homog	rve_eringen_homog.csv	out_ergh	Job-ERGH_*	results_eringen_homog.csv	postprocess_firstorder.sh	SPAX_MESH_ORDER=2
+eringen	rve_eringen.csv	out_erg	Job-ERG_*	results_eringen.csv	postprocess_firstorder.sh	SPAX_MESH_ORDER=2
+fieldseeds	rve_fieldseeds.csv	out_fs3	Job-MSEED_* Job-NSEED_* Job-N2SEED_*	results_fieldseeds.csv	postprocess_firstorder.sh	-
