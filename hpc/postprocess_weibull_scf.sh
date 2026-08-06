@@ -14,7 +14,11 @@
 # means analysis/weibull_sensitivity.py can be re-run for any Weibull modulus,
 # on any machine, without touching the cluster again.
 set -e
+# Common post-processing contract (see hpc/README.md): WORKDIR, CSV, RESULTS,
+# OUTDIR, each used where relevant, so one caller can drive every
+# postprocess_*.sh the same way.
 WORKDIR=${WORKDIR:-/scratch/project_XXXXXX/test_rve}
+CSV=${CSV:-rve_weibull.csv}
 DUMPDIR=${DUMPDIR:-$WORKDIR/weibull_dumps}
 L=${L:-0.50}
 cd "$WORKDIR"
@@ -26,14 +30,14 @@ mkdir -p "$DUMPDIR" logs
 # instead, exactly as csc_solve_array.sh does.
 source "$HOME/abaqus_env.sh"
 
-OUT=results_weibull_scf.csv
+OUT=${RESULTS:-results_weibull_scf.csv}
 n=0
 for odb in Job-WBL_*-utx.odb; do
   [ -e "$odb" ] || { echo "no Job-WBL_*-utx.odb in $WORKDIR"; exit 1; }
   rid=$(basename "$odb" -utx.odb); rid=${rid#Job-}
   # cell edge is a per-deck property; read it back from the deck rather than
   # assuming, since the six WBL cases inherit different L from their sources
-  Lr=$(awk -F, -v id="$rid" 'NR==1{for(i=1;i<=NF;i++){if($i=="run_id")c=i; if($i=="L")l=i}; next} $c==id{print $l; exit}' rve_weibull.csv 2>/dev/null || true)
+  Lr=$(awk -F, -v id="$rid" 'NR==1{for(i=1;i<=NF;i++){if($i=="run_id")c=i; if($i=="L")l=i}; next} $c==id{print $l; exit}' "$CSV" 2>/dev/null || true)
   Lr=${Lr:-$L}
   echo "== $rid  (L=$Lr)"
   abaqus python scf_extract.py "$odb" "$Lr" "$rid" "$OUT" "$DUMPDIR/$rid.npz"

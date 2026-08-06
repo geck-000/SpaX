@@ -19,6 +19,30 @@ working value — set them for your own site:
 otherwise assume the core modules (`SpaX_Standalone.py`, `SpaX_PostProcess.py`)
 and the decks are staged in `WORKDIR`.
 
+### The post-processing contract
+
+Every `postprocess_*.sh` takes the same four variables and uses whichever of
+them it needs, so one caller can drive them all:
+
+| Variable | Meaning |
+|---|---|
+| `WORKDIR` | where the decks and solved ODBs live (required everywhere) |
+| `CSV` | the parameter deck for this campaign |
+| `RESULTS` | the primary output table |
+| `OUTDIR` | the campaign's generation directory |
+
+Anything further a script needs is *derived* from those rather than demanded
+separately — `postprocess_nlgeom.sh` takes its curves file from `RESULTS`
+unless `CURVES` overrides it, and the tensor extractors default `TENSOR_DIR`,
+`PREFIX` and `CELL`. Scripts that write per-RVE tensor files rather than a
+single table simply ignore `RESULTS`.
+
+This matters because the interfaces used to differ: `postprocess_nlgeom.sh`
+demanded `SUMM` and `CURVES` and failed outright when driven with `RESULTS`,
+and `postprocess_basesweep.sh` ignored `CSV` entirely and re-extracted a
+hard-coded pair of campaigns. Both would leave a stale results file in place
+while the job appeared to succeed.
+
 | File | Role |
 |------|------|
 | `submit_firstorder.sh` | Slurm array: solve the first-order (uniaxial/shear) decks. |

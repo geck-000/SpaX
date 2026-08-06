@@ -16,18 +16,23 @@ unset SLURM_GTIDS
 export CSC_ENV_INIT_NON_INTERACTIVE=yes
 source /etc/profile.d/zz-csc-env.sh
 module load abaqus/2026
+# Common post-processing contract (see hpc/README.md): WORKDIR, CSV, RESULTS,
+# OUTDIR. This one writes per-RVE tensor files rather than a single results
+# table, so RESULTS is unused; TENSOR_DIR and PREFIX may be overridden.
 WORKDIR=${WORKDIR:?set WORKDIR}
+TENSOR_DIR=${TENSOR_DIR:-tensors/column}
+PREFIX=${PREFIX:-CTEN}
 cd "$WORKDIR" || exit 1
-mkdir -p tensors/column
+mkdir -p "$TENSOR_DIR"
 
 for z in 05 15 25 35 45 55 65 75 85 95; do
-    RID="CTEN_z${z}"
+    RID="${PREFIX}_z${z}"
     # need all 6 ODBs for a full tensor; extractor skips missing columns but warn here
     n=$(ls Job-${RID}-*.odb 2>/dev/null | wc -l)
     echo "===== ${RID}: ${n}/6 ODBs present ====="
     [ "$n" -ge 1 ] || { echo "  SKIP ${RID}: no ODBs"; continue; }
-    abaqus python SpaX_PostProcess.py elasticity "$WORKDIR" tensors/column 0.50 "$RID"
+    abaqus python SpaX_PostProcess.py elasticity "$WORKDIR" "$TENSOR_DIR" 0.50 "$RID"
 done
 
 echo "===== tensors written ====="
-ls -1 tensors/column/elasticity_tensor_CTEN_z*.csv 2>/dev/null
+ls -1 "$TENSOR_DIR"/elasticity_tensor_${PREFIX}_z*.csv 2>/dev/null
