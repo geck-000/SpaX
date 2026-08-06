@@ -5,10 +5,10 @@ new = pd.read_csv("results_marchenko.csv").sort_values("run_id").reset_index(dro
 d = np.array([int(r[5:]) for r in new.run_id])/100.0
 Eold, Enew = old.E_eff.values/GPa, new.E_eff.values/GPa
 
-Ebot, M, n = 1.67, 2.63, 0.5
-zeta = 1.0 - d
-E_march = Ebot*((M-1)*zeta**n + 1.0)
-zz=np.linspace(0.001,1,200); E_march_c = Ebot*((M-1)*zz**n+1.0); d_c=1-zz
+# Marchenko (2024) Eq. (17), p.11; d is depth from the top.
+E0, alpha, n = 4.4, 0.38, 0.6
+E_march = E0*(1.0 - (1.0 - alpha)*d**n)
+d_c = np.linspace(0.0, 1.0, 200); E_march_c = E0*(1.0 - (1.0 - alpha)*d_c**n)
 
 rms = np.sqrt(np.mean((Enew-E_march)**2))
 rms_pct = 100*np.sqrt(np.mean(((Enew-E_march)/E_march)**2))

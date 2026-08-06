@@ -32,10 +32,13 @@ import numpy as np
 COLUMN = 'results_column_ensemble.csv'
 SEEDS = 'results_colseeds_all.csv'
 BEAM_FACTOR = 0.49
-OFFSET = 2.3
+# Column-mean ratio of the uncalibrated RVE column to the field profile.
+# 2.3 before the Marchenko curve was corrected to his Eq. (17); 3.11 after.
+OFFSET = 3.11
 
-# Marchenko (2024) vibrating-beam fit, as used by plot_marchenko_match.py
-M_EBOT, M_M, M_N = 1.67, 2.63, 0.5
+# Marchenko (2024) Eq. (17), p.11, as used by plot_marchenko_match.py.
+# E0 is the surface modulus and alpha the base/surface ratio.
+M_E0, M_ALPHA, M_N = 4.4, 0.38, 0.6
 
 # (label, quoted value, tolerance). Section numbers refer to the manuscript.
 QUOTED = {
@@ -65,10 +68,13 @@ QUOTED = {
     'alpha':            (0.55, 0.005),
     'grad_ratio':       (1.18, 0.005),
     'k7_alpha':         (1.32, 0.005),
-    'residual':         (1.94, 0.005),
-    'matrix_factor':    (0.52, 0.005),
-    'offset_top':       (2.0,  0.05),
-    'offset_max':       (2.6,  0.05),
+    # These five moved when the Marchenko profile was corrected to his Eq. (17)
+    # (see the note on OFFSET above). They are the corrected values; the
+    # manuscript still carries the pre-correction ones.
+    'residual':         (2.63, 0.005),
+    'matrix_factor':    (0.38, 0.005),
+    'offset_top':       (2.22, 0.05),
+    'offset_max':       (3.78, 0.05),
 }
 
 
@@ -183,7 +189,7 @@ def main():
     got['matrix_factor'] = 1.0 / got['residual']
 
     # ---- offset against the vibrating-beam fit ---------------------------
-    Em = M_EBOT * ((M_M - 1) * (1 - z) ** M_N + 1.0)
+    Em = M_E0 * (1.0 - (1.0 - M_ALPHA) * z ** M_N)
     ratio = Eeff / Em
     got['offset_top'] = ratio[0]
     got['offset_max'] = ratio.max()

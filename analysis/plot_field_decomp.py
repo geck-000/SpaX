@@ -32,8 +32,9 @@ import figstyle as fs
 fs.apply()
 import matplotlib.pyplot as plt
 
-# Marchenko (2024) first-year vibrating-beam fit, as used throughout.
-M_EBOT, M_M, M_N = 1.67, 2.63, 0.5
+# Marchenko (2024) Eq. (17): the fitted through-thickness profile, as used
+# throughout.  E0 is the surface modulus, alpha the base/surface ratio.
+M_E0, M_ALPHA, M_N = 4.4, 0.38, 0.6
 
 CAMPAIGNS = [('MSEED', 'C-shape', fs.BLUE),
              ('NSEED', 'monotonic', fs.GREEN),
@@ -58,7 +59,7 @@ def prof(pref, path='results_fieldseeds.csv'):
 
 def main():
     z = np.arange(0.05, 1.0, 0.1)
-    Em = M_EBOT * ((M_M - 1) * (1 - z) ** M_N + 1.0)
+    Em = M_E0 * (1.0 - (1.0 - M_ALPHA) * z ** M_N)
 
     fig, ax = plt.subplots(1, 2, figsize=(12.2, 5.0))
 
