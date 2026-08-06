@@ -1305,7 +1305,15 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     # and a mesh that is periodic by construction gets rejected. Mesh node
     # spacing is ~1e-2, so this stays five orders of magnitude clear of
     # pairing two genuinely distinct nodes.
-    tol_match = 1e-7 * max(L, 1.0)
+    # 1e-7 was still marginally too tight for the dense channelled cells. The
+    # diagnostic below reports, for every node it fails to pair, how far the
+    # nearest candidate on the opposite face actually was: on the base slice
+    # those distances came out at 1.2-2.1e-7 -- partners that exist and are
+    # correct, missed by a factor under three. All of them lay on the Z faces,
+    # which is where the channels cut. At 1e-6 there is five times the headroom
+    # those cases need, while still sitting four orders of magnitude below the
+    # element size, so it cannot pair two genuinely distinct nodes.
+    tol_match = 1e-6 * max(L, 1.0)
     periodicity = {}
     
     for axis_name, axis_idx in [('X', 0), ('Y', 1), ('Z', 2)]:
@@ -1478,7 +1486,8 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         
         n_pairs_written = 0
         n_pairs_skipped = 0
-        
+        _unmatched_report = []
+
         for axis_name, axis_idx in [('X', 0), ('Y', 1), ('Z', 2)]:
             ip = [j for j in range(3) if j != axis_idx]
             
@@ -1501,9 +1510,30 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                         break
                 if not matched:
                     n_pairs_skipped += 1
+                    # Record how far the nearest candidate on the opposite face
+                    # actually was. This distinguishes the two ways this gate
+                    # fires, which need opposite responses: a near miss of
+                    # order the geometric tolerance means the partner exists
+                    # and the match is too strict, whereas a miss of order the
+                    # element size means there is genuinely no partner -- a
+                    # void on one face against material on the other -- and the
+                    # placement has to be rejected instead.
+                    if len(_unmatched_report) < 12 and pos_data:
+                        dmin = min(max(abs(ny - py), abs(nz - pz))
+                                   for _pt, py, pz in pos_data)
+                        _unmatched_report.append((axis_name, ntag, dmin))
     
     print("  Periodic pairs written: {}, skipped: {}".format(
         n_pairs_written, n_pairs_skipped))
+    if _unmatched_report:
+        worst = max(d for _a, _t, d in _unmatched_report)
+        print("  Unmatched nodes: nearest partner was this far away "
+              "(tol {:.2e}, element size ~{:.2e})".format(tol_match, L_mesh))
+        for a, t, d in _unmatched_report[:8]:
+            print("    axis {}  node {:<8} nearest {:.3e}  {}".format(
+                a, t, d,
+                "NEAR MISS -> tolerance" if d < 100 * tol_match
+                else "NO PARTNER -> geometry"))
     print("  Periodic pairs: {}".format(match_path))
     
     gmsh.finalize()
