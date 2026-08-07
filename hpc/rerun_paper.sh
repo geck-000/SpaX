@@ -153,11 +153,28 @@ print('%dG %02d:%02d:00' % (int(mem), h, m))
 ")
 EOF
     echo "cell edge $LMAX -> mem $SOLVE_MEM, walltime $SOLVE_TIME"
-    S=$(sbatch --parsable $A --partition=small --cpus-per-task=4 --mem=$SOLVE_MEM \
-        --time=$SOLVE_TIME --array=1-${N}%30 \
-        --export=ALL,WORKDIR=$W,JOBLIST=GJ_$NAME csc_solve_array.sh)
-    echo "solve: $S"
-    sbatch $A --dependency=afterany:$S \
+    # Submit in chunks under the account's job-submission cap. Throttling with
+    # %N limits how many tasks RUN, not how many are submitted, so a campaign
+    # with more decks than the cap is rejected outright with
+    # AssocMaxSubmitJobLimit however it is throttled -- which is how fieldseeds
+    # (150 RVEs, 300 decks, against a 200 cap) killed its own controller after
+    # generating every deck and passing the audit.
+    CHUNK=${SPAX_MAX_ARRAY:-150}
+    DEP=""
+    LAST=""
+    lo=1
+    while [ "$lo" -le "$N" ]; do
+      hi=$(( lo + CHUNK - 1 ))
+      [ "$hi" -gt "$N" ] && hi=$N
+      S=$(sbatch --parsable $A $DEP --partition=small --cpus-per-task=4 \
+          --mem=$SOLVE_MEM --time=$SOLVE_TIME --array=${lo}-${hi}%30 \
+          --export=ALL,WORKDIR=$W,JOBLIST=GJ_$NAME csc_solve_array.sh)
+      echo "solve ${lo}-${hi}: $S"
+      DEP="--dependency=afterany:$S"
+      LAST=$S
+      lo=$(( hi + 1 ))
+    done
+    sbatch $A --dependency=afterany:$LAST \
       --export=ALL,WORKDIR=$W,STAGE=post,IDX=$IDX,MANIFEST=$MAN "$SELF"
     ;;
 
