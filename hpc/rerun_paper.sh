@@ -82,11 +82,23 @@ case "$STAGE" in
       exit 1
     fi
     echo "--- volume audit ---"
-    python3 audit_volume.py "params/$DECK" "$OUTDIR" "$TOL" || {
+    # Distinguish "the geometry is wrong" from "the auditor could not run".
+    # audit_volume.py exits 2 when the meshed fraction exceeds TOL; any other
+    # non-zero status is the script itself failing (a missing PYTHONUSERBASE
+    # leaves numpy unimportable, which previously read as a volume failure and
+    # stopped a chain over an environment problem).
+    python3 audit_volume.py "params/$DECK" "$OUTDIR" "$TOL"
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
       echo "!!! VOLUME AUDIT FAILED for $NAME -- chain stopped."
       echo "!!! The meshed inclusion fraction still exceeds what the deck asks for."
       exit 1
-    }
+    elif [ "$rc" -ne 0 ]; then
+      echo "!!! audit_volume.py could not run (exit $rc) -- chain stopped."
+      echo "!!! This is an environment fault, not a geometry fault."
+      echo "!!! PYTHONUSERBASE=$PYTHONUSERBASE"
+      exit 1
+    fi
     find "$OUTDIR" -name 'Job-*.inp' -exec mv -t "$W" {} + 2>/dev/null || true
     find "$OUTDIR" -name '*_periodic_pairs.csv' -exec mv -t "$W" {} + 2>/dev/null || true
     # Build the job list from the deck's own run_ids, not from a filename glob.

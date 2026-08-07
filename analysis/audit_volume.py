@@ -136,7 +136,9 @@ def main():
           % (len(ratios), m, tol))
     if m > tol:
         print('FAIL: the mesh still carries more inclusion than the deck asks for.')
-        return 1
+        # 2, not 1, so a caller can tell a real gate failure from this script
+        # failing to run at all (an unimportable numpy also exits non-zero).
+        return 2
     print('PASS')
     return 0
 
