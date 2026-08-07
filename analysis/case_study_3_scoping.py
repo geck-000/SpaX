@@ -98,6 +98,16 @@ def load_database():
                            "VoF_incl_sphere", "channel_vof_target", "E_matrix", "E_x"]])
     a = pd.concat(rows).dropna(subset=["E_x", "VoF_sphere"])
     a = a.drop_duplicates(subset=["run_id", "VoF_sphere", "E_x"])
+    # Coerce before dividing. The extractor writes MISSING for a load case it
+    # could not read -- a bending-only deck has no E_x, and a cell whose solve
+    # was killed has none either -- so these columns arrive as object dtype the
+    # moment any such row is present, and E_x / E_matrix then raises on the
+    # string rather than propagating a NaN.
+    a = a.assign(E_x=pd.to_numeric(a.E_x, errors="coerce"),
+                 E_matrix=pd.to_numeric(a.E_matrix, errors="coerce"),
+                 VoF_sphere=pd.to_numeric(a.VoF_sphere, errors="coerce"))
+    a = a.dropna(subset=["E_x", "E_matrix", "VoF_sphere"])
+    a = a[a.E_matrix > 0]
     cvt = pd.to_numeric(a.channel_vof_target, errors="coerce").fillna(0.0)
     incl = pd.to_numeric(a.VoF_incl_sphere, errors="coerce").fillna(0.0)
     return a.assign(r=a.E_x / a.E_matrix,

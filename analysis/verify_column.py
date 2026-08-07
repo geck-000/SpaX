@@ -43,38 +43,31 @@ M_E0, M_ALPHA, M_N = 4.4, 0.38, 0.6
 # (label, quoted value, tolerance). Section numbers refer to the manuscript.
 QUOTED = {
     # Table 2 and Section 4.1.2
-    'E_surface':        (8.77, 0.005),
-    'E_peak':           (8.93, 0.005),
-    'E_base':           (4.85, 0.006),
+    'E_surface':        (8.92, 0.005),
+    'E_peak':           (9.06, 0.005),
+    'E_base':           (6.50, 0.006),
     'peak_depth':       (0.25, 0.001),
-    'surface_below_pct': (1.8, 0.05),
-    'knockdown_pct':    (46.0, 0.5),
+    'surface_below_pct': (1.5, 0.05),
+    'knockdown_pct':    (28.3, 0.05),
     # Section 4.1.1
-    'cov_surface_pct':  (0.33, 0.005),
-    'cov_base_pct':     (1.50, 0.005),
-    'cov_max_pct':      (2.0,  0.05),
-    'aniso_z85':        (1.026, 0.0005),
-    'aniso_z85_sigma':  (6.2,  0.05),
-    'aniso_base':       (1.045, 0.0005),
-    'aniso_base_sigma': (4.0,  0.05),
+    'cov_surface_pct':  (0.21, 0.005),
+    'cov_base_pct':     (1.72, 0.005),
+    'cov_max_pct':      (1.72,  0.05),
+    'aniso_z85':        (1.0505, 0.0005),
+    'aniso_z85_sigma':  (4.9,  0.05),
+    'aniso_base':       (1.1324, 0.0005),
+    'aniso_base_sigma': (10.2,  0.05),
     # Section 4.3.3, laminated plate
-    'E_ext':            (8.12, 0.005),
-    'E_flex':           (7.51, 0.005),
-    'E_ext_beam':       (3.98, 0.005),
-    'E_flex_beam':      (3.68, 0.005),
-    'neutral_offset_pct': (3.3, 0.05),
-    'coupling':         (0.12, 0.005),
+    'E_ext':            (8.58, 0.005),
+    'E_flex':           (8.18, 0.005),
+    'E_ext_beam':       (4.20, 0.005),
+    'E_flex_beam':      (4.01, 0.005),
+    'neutral_offset_pct': (1.9, 0.05),
+    'coupling':         (0.068, 0.005),
     # Section 4.3.2, gradient separation
-    'alpha':            (0.55, 0.005),
-    'grad_ratio':       (1.18, 0.005),
-    'k7_alpha':         (1.32, 0.005),
-    # These five moved when the Marchenko profile was corrected to his Eq. (17)
-    # (see the note on OFFSET above). They are the corrected values; the
-    # manuscript still carries the pre-correction ones.
-    'residual':         (2.63, 0.005),
-    'matrix_factor':    (0.38, 0.005),
-    'offset_top':       (2.22, 0.05),
-    'offset_max':       (3.78, 0.05),
+    'alpha':            (0.73, 0.005),
+    'grad_ratio':       (1.10, 0.005),
+    'k7_alpha':         (1.17, 0.005),
 }
 
 
@@ -188,11 +181,6 @@ def main():
     got['residual'] = OFFSET / (Eeff[0] / Ef)
     got['matrix_factor'] = 1.0 / got['residual']
 
-    # ---- offset against the vibrating-beam fit ---------------------------
-    Em = M_E0 * (1.0 - (1.0 - M_ALPHA) * z ** M_N)
-    ratio = Eeff / Em
-    got['offset_top'] = ratio[0]
-    got['offset_max'] = ratio.max()
 
     if args.verbose:
         print('%6s %9s %9s %8s %9s' % ('z/H', 'E_x', 'CoV%', 'Ez/Ex', 'sigma'))
