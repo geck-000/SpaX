@@ -30,6 +30,17 @@ SCR="${LOCAL_SCRATCH:-$WORKDIR/scratch_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}}"
 mkdir -p "$SCR"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
+# Clear debris a killed predecessor left behind. Abaqus writes a .lck while a
+# job is live and removes it on exit; a job killed by Slurm for memory or
+# walltime never gets that far, and the stale lock then makes every subsequent
+# attempt fail instantly with "Detected lock file", six seconds in. Because the
+# cleanup below is likewise never reached when the job is killed, nothing else
+# removes it either, so a deck that dies once stays dead until cleared by hand.
+if [ -f "${JOBNAME}.lck" ]; then
+    echo "clearing stale lock from a previous killed run: ${JOBNAME}.lck"
+    rm -f "${JOBNAME}.lck"
+fi
+
 abaqus job="${JOBNAME}" cpus=$SLURM_CPUS_PER_TASK scratch="$SCR" \
        ask_delete=OFF mp_mode=threads memory="90%" interactive
 RC=$?

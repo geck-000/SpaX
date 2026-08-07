@@ -119,13 +119,40 @@ PYEOF
     # array reads as success, so the loss is silent until the results table
     # comes up short. Give any campaign carrying bending decks real headroom
     # rather than discovering the ceiling one cell at a time.
-    SOLVE_MEM=16G
-    SOLVE_TIME=00:40:00
-    if grep -q -- '-ben$' "GJ_$NAME"; then
-      SOLVE_MEM=${SPAX_BEND_MEM:-48G}
-      SOLVE_TIME=${SPAX_BEND_TIME:-01:30:00}
-      echo "bending decks present -> mem $SOLVE_MEM, walltime $SOLVE_TIME"
-    fi
+    # Size the solve from the cell edge, not from the load case. Element count
+    # goes as L^3, and so does the direct solver's appetite, so a campaign at
+    # L=1.00 needs roughly eight times what one at L=0.50 does. Keying this on
+    # bending alone was wrong: the uniaxial L=1.00 campaigns ran out of memory
+    # at 16 GB (MaxRSS 16.7 GB) and out of walltime at forty minutes, while the
+    # bending flag never applied to them. Bending on top costs about another
+    # factor of three. Nodes carry 762 GB, so being generous costs nothing but
+    # queue position.
+    LMAX=$(python3 - "params/$DECK" <<'PYEOF'
+import csv, sys
+vals = []
+for r in csv.DictReader(open(sys.argv[1], encoding='utf8', errors='replace')):
+    try:
+        vals.append(float(r.get('L') or 0))
+    except ValueError:
+        pass
+print('%.3f' % (max(vals) if vals else 0.5))
+PYEOF
+)
+    read SOLVE_MEM SOLVE_TIME <<EOF
+$(python3 -c "
+import sys
+L=float('$LMAX') or 0.5
+bend=$(grep -qc -- '-ben\$' "GJ_$NAME" 2>/dev/null && echo 1 || echo 0)
+s=(L/0.5)**3
+mem=16*s*(3 if bend else 1)
+mem=max(16,min(360,mem))
+hrs=(40/60.0)*s*(2 if bend else 1)
+hrs=max(0.67,min(8.0,hrs))
+h=int(hrs); m=int(round((hrs-h)*60))
+print('%dG %02d:%02d:00' % (int(mem), h, m))
+")
+EOF
+    echo "cell edge $LMAX -> mem $SOLVE_MEM, walltime $SOLVE_TIME"
     S=$(sbatch --parsable $A --partition=small --cpus-per-task=4 --mem=$SOLVE_MEM \
         --time=$SOLVE_TIME --array=1-${N}%30 \
         --export=ALL,WORKDIR=$W,JOBLIST=GJ_$NAME csc_solve_array.sh)
