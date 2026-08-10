@@ -37,6 +37,87 @@ PHI_C = 0.05            # Golden rule of fives; Pringle 4.6 +/- 0.7% vertical
 # Measured at fixed geometry this session (b = 0.03, phi = 0.179, two layers).
 LAYER_UNDRAINED, LAYER_DRAINED = 4.605, 0.671
 
+# Layered cells across the column's porosity range, one layer, b = 0.03,
+# solved at both ends of the bracket. E_z came out within 0.6% at every
+# porosity, which is the confinement signature repeated three more times.
+BRACKET = [
+    # phi     drained  undrained
+    (0.100,   1.150,   4.705),
+    (0.150,   1.039,   2.866),
+    (0.227,   0.724,   2.127),
+]
+
+# Pocket cells, for the cold end where the morphology is pockets not layers.
+POCKET_TOP_PHI, POCKET_TOP_E = 0.1038, 7.684
+
+# Kujala et al. (1990), four strain-gauged beams, Table 2.
+K_TOP_MEAN, K_BOT_MEAN = 8.05, 1.27
+K_TOP, K_BOT = (7.18, 8.60), (0.86, 1.56)
+
+
+def weeks_assur(v):
+    return 9.5 * (1.0 - np.sqrt(v)) ** 4
+
+
+def containment():
+    """Does the bracket contain the measurement at each end of the column?"""
+    print('\n' + '=' * 68)
+    print('DOES THE BRACKET CONTAIN THE MEASUREMENTS?')
+    print('=' * 68)
+    print('%8s %10s %11s %11s %11s' % (
+        'phi', 'drained', 'undrained', 'W&A 1967', 'width'))
+    for p, d, u in BRACKET:
+        print('%8.3f %10.3f %11.3f %11.3f %10.2fx' % (
+            p, d, u, weeks_assur(p), u / d))
+
+    print('\nCOLD TOP -- morphology is isolated pockets, so the layered')
+    print('bracket does not apply and the pocket cell stands alone.')
+    print('  pocket cell at phi = %.4f : %.3f GPa' % (
+        POCKET_TOP_PHI, POCKET_TOP_E))
+    print('  Kujala top surface        : %.2f GPa (range %.2f-%.2f)'
+          % (K_TOP_MEAN, K_TOP[0], K_TOP[1]))
+    print('  -> inside the measured range' if K_TOP[0] <= POCKET_TOP_E <= K_TOP[1]
+          else '  -> OUTSIDE the measured range')
+
+    print('\nWARM BASE -- morphology is connected layers, bracket applies.')
+    p, d, u = BRACKET[-1]
+    print('  bracket at phi = %.3f      : %.3f to %.3f GPa' % (p, d, u))
+    print('  Kujala bottom surface     : %.2f GPa (range %.2f-%.2f)'
+          % (K_BOT_MEAN, K_BOT[0], K_BOT[1]))
+    inside = d <= K_BOT_MEAN <= u
+    print('  -> %s' % ('CONTAINED' if inside else 'not contained'))
+    if inside:
+        f = (np.log(K_BOT_MEAN) - np.log(d)) / (np.log(u) - np.log(d))
+        print('     and it sits %.0f%% of the way across the bracket on a log'
+              % (100 * f))
+        print('     scale, so it is not being rescued by one extreme end.')
+
+    print('\nThe whole measured range %.2f-%.2f also lies inside %.3f-%.3f.'
+          % (K_BOT[0], K_BOT[1], d, u))
+    print('\nWeeks & Assur at the base asks %.3f against the drained cell\'s'
+          % weeks_assur(0.227))
+    print('%.3f -- agreement to %.0f%%.'
+          % (BRACKET[-1][1],
+             100 * abs(weeks_assur(0.227) - BRACKET[-1][1]) / weeks_assur(0.227)))
+
+    print('\nWHAT IS AND IS NOT A PREDICTION HERE. b = 0.03 was not neutral:')
+    print('it was chosen at the outset from a series estimate aimed at the')
+    print('measured base modulus. So the bracket CONTAINING 1.27, and the 1%')
+    print('agreement with Weeks & Assur at the base, both inherit that choice')
+    print('and must not be reported as free predictions. What does not depend')
+    print('on b is: the bracket WIDTH, which is the drained/undrained ratio and')
+    print('follows from confinement; the insensitivity of E_z, measured at')
+    print('every porosity; and the cold-end agreement, since pocket cells have')
+    print('no bridge fraction in them at all. Those three stand on their own.')
+    print('At lower porosity the drained cell falls BELOW Weeks & Assur (%.3f'
+          % BRACKET[0][1])
+    print('against %.3f at phi = 0.10), because the bridge fraction is held at'
+          % weeks_assur(0.10))
+    print('0.03 throughout. Real ice must have more ice left in the layer plane')
+    print('when there is less brine, so b should rise as phi falls; holding it')
+    print('fixed makes the cold end too soft. That is the next thing to pin,')
+    print('and it should be pinned by tomography, not by these moduli.')
+
 # brine transport properties, for the Deborah number
 MU_BRINE = 2.0e-3       # Pa s
 K_FILL = 2.2e9          # Pa
@@ -127,6 +208,7 @@ def main():
             print('The transition falls INSIDE this column, so the profile')
             print('carries a drained base and a sealed top, which is a')
             print('monotonic change with depth over a C-shaped porosity.')
+    containment()
     return 0
 
 
