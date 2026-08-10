@@ -1063,12 +1063,26 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                 coords[i] = L - r * 0.5
         cx, cy, cz = coords
         
-        # Random sphericity
-        sph = np.clip(np.random.normal(sphericity_avg, sphericity_std), 0.5, 1.0)
-        
-        # Compute semi-axes from equivalent radius and sphericity
+        # Random sphericity. `sphericity` here is the ratio of the two equal
+        # semi-axes to the distinct one, so s<1 is a PROLATE needle (one long
+        # axis, two short) and s>1 an OBLATE plate (one short axis, two long).
+        # The ceiling used to sit at 1.0, which made plates unreachable: every
+        # inclusion was a needle however the deck was written. Columnar sea ice
+        # carries much of its basal brine in LAYERS between ice platelets, which
+        # are oblate with the short axis horizontal, so the range must extend
+        # above 1 for that morphology to be expressible at all.
+        # Upper limit is generous rather than physical: high-aspect plates are
+        # what the sliver rejection below and the mesher decide on, not this
+        # clip. Basal brine layers are reported at aspect ratios of order ten.
+        sph = np.clip(np.random.normal(sphericity_avg, sphericity_std), 0.3, 12.0)
+
+        # Compute semi-axes from equivalent radius and sphericity. The algebra
+        # is unchanged for s<1, so prolate packings are bit-identical to before;
+        # for s>1 it simply returns r_long < r_short, and the assignment below
+        # then puts the SHORT axis along the growth direction, giving a plate
+        # whose plane contains the other two axes.
         r_eq = r
-        if sph < 0.999:
+        if abs(sph - 1.0) > 1e-3:
             r_long = r_eq / (sph ** (1.0/3.0))
             r_short = r_long * sph
         else:
