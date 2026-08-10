@@ -1107,19 +1107,39 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         # Assign semi-axes using Von Mises-Fisher orientation distribution
         # Maps growth_concentration to vMF concentration parameter kappa
         if growth_direction != 'Random' and growth_concentration > 0.01:
-            # Sample direction biased toward preferred axis via vMF-like distribution
-            kappa_vmf = growth_concentration * 30.0  # 0.6 -> kappa=18, 0.8 -> 24
-            
-            # Preferred axis unit vector
+            # Orientation is drawn from a von Mises-Fisher distribution about the
+            # preferred axis and then snapped to the nearest Cartesian axis,
+            # because the mesher builds axis-aligned ellipsoids only. The snap
+            # means the fabric is represented as a MIXTURE of three aligned
+            # populations whose weights the concentration controls; it is not a
+            # continuous orientation distribution, which is a limitation of the
+            # geometry kernel rather than of the sampling.
+            kappa_vmf = growth_concentration * 30.0
+
             if growth_direction == 'Z': mu = np.array([0., 0., 1.])
             elif growth_direction == 'X': mu = np.array([1., 0., 0.])
             elif growth_direction == 'Y': mu = np.array([0., 1., 0.])
             else: mu = np.array([0., 0., 1.])
-            
-            # Sample direction: mix preferred + random, weighted by kappa
-            rand_dir = np.random.randn(3)
-            rand_dir /= np.linalg.norm(rand_dir)
-            d = kappa_vmf * mu + rand_dir
+
+            # Wood's exact vMF sampler, in the form that closes for p=3.
+            # The previous draw, d = kappa*mu + unit_random, was NOT a vMF
+            # sample: with kappa >= 3 the mu term dominates a unit vector
+            # absolutely, so every draw landed within arcsin(1/kappa) of the
+            # preferred axis and the snap below always returned it. Measured
+            # over 200k draws the aligned fraction was 1.0000 at every
+            # concentration from 0.1 to 0.9 -- the parameter did nothing.
+            u = np.random.rand()
+            w = 1.0 + (1.0 / kappa_vmf) * np.log(
+                u + (1.0 - u) * np.exp(-2.0 * kappa_vmf))
+            # a unit vector in the plane orthogonal to mu
+            tmp = np.array([1.0, 0.0, 0.0])
+            if abs(np.dot(tmp, mu)) > 0.9:
+                tmp = np.array([0.0, 1.0, 0.0])
+            e1 = np.cross(mu, tmp); e1 /= np.linalg.norm(e1)
+            e2 = np.cross(mu, e1)
+            phi = 2.0 * np.pi * np.random.rand()
+            v = np.cos(phi) * e1 + np.sin(phi) * e2
+            d = w * mu + np.sqrt(max(0.0, 1.0 - w * w)) * v
             d /= np.linalg.norm(d)
             
             # Assign semi-axes: r_long along d, r_short perpendicular
