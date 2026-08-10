@@ -1361,7 +1361,13 @@ def compute_lesicar_constraints(nodes, elements, L, bending_plane='xz'):
                 x = nodes[n]
                 x_c = [x[0]-L/2, x[1]-L/2, x[2]-L/2]
                 
-                if bending_plane == 'xz':
+                if bending_plane == 'torsion':
+                    # twist about z: u_x = -alpha*z*y, u_y = +alpha*z*x
+                    if dof == 1:
+                        rp_K_coeff += a * (-x_c[2]*x_c[1])
+                    elif dof == 2:
+                        rp_K_coeff += a * (x_c[2]*x_c[0])
+                elif bending_plane == 'xz':
                     if dof == 1:
                         rp_E_coeff += a * x_c[0]  # membrane: x1
                         rp_K_coeff += a * (-x_c[0]*x_c[2])  # bending: -x1*x3
@@ -1398,9 +1404,27 @@ def bending_pbc_coeffs(xp, xn, L, bending_plane):
     on each pair is  u_pos[dof] - u_neg[dof] = c_mem*RP_E + c_bend*RP_K , where
     RP_E is the macroscopic membrane strain and RP_K the prescribed curvature.
     Coordinates are taken relative to the RVE centre (L/2).
+
+    `bending_plane='torsion'` selects the torsion mode instead, for which the
+    macroscopic field is a rigid twist about z at rate alpha,
+
+        u_x = -alpha * z * y,   u_y = +alpha * z * x,   u_z = 0,
+
+    so RP_K carries alpha and there is no membrane term. Torsion is the
+    canonical couple-stress probe and, unlike bending, imposes no plate-like
+    kinematic on the cube -- which is the point of having it: the cube-versus-
+    plate extraction bias that dominates the bending control should be absent.
+    The field is not periodic, but its DIFFERENCE across a face pair is, which
+    is the same property the bending modes rely on.
     """
     x1p, x2p, x3p = xp[0]-L/2, xp[1]-L/2, xp[2]-L/2
     x1n, x2n, x3n = xn[0]-L/2, xn[1]-L/2, xn[2]-L/2
+    if bending_plane == 'torsion':
+        return {
+            1: (0.0, -(x3p*x2p - x3n*x2n)),
+            2: (0.0,  (x3p*x1p - x3n*x1n)),
+            3: (0.0, 0.0),
+        }
     if bending_plane == 'xz':
         return {
             1: (x1p-x1n, -(x1p*x3p-x1n*x3n)),
@@ -1714,15 +1738,23 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
     elif mode == 'bend':
         step_name = 'Step-Bending'
         step_desc = 'Second-Order Bending ({})'.format(bending_plane)
+    elif mode == 'tors':
+        step_name = 'Step-Torsion'
+        step_desc = 'Second-Order Torsion (twist about z)'
     else:
         raise ValueError(
-            "Unsupported mode: {}. Use one of utx/uty/utz/ss12/ss13/ss23 or bend.".format(mode))
-    
-    # ---- Bending-specific setup ----
-    # For bending mode, we need coordinate-dependent PBC equations
-    # instead of the standard RP-based ones
-    is_bending = (mode == 'bend')
-    
+            "Unsupported mode: {}. Use one of utx/uty/utz/ss12/ss13/ss23, "
+            "bend or tors.".format(mode))
+
+    # ---- Second-order setup ----
+    # Bending and torsion share all of the machinery below and differ only in
+    # the prescribed macroscopic field, which enters through the coefficient
+    # functions keyed on `so_plane`. In torsion RP_K carries the twist rate
+    # alpha and the membrane reference point RP_E is unused.
+    is_torsion = (mode == 'tors')
+    is_bending = (mode == 'bend') or is_torsion
+    so_plane = 'torsion' if is_torsion else bending_plane
+
     if is_bending:
         # Compute coordinate-dependent coefficients for each pair
         # RP_E: membrane strain (free, DOF 1)
@@ -1731,10 +1763,15 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         rp_E_id = rp_base_bend + 1
         rp_K_id = rp_base_bend + 2
         
+        # Torsion has no membrane term, so every RP_E coefficient is zero and
+        # the node would appear in no equation. Abaqus then treats it as
+        # inactive and rejects the boundary condition on it, so it is simply
+        # not created in that mode.
         rp_nodes_bend = {
-            'RP_E': (rp_E_id, 2.5*L, 2.0*L, 2.0*L),
             'RP_K': (rp_K_id, 2.0*L, 2.0*L, 2.0*L),
         }
+        if not is_torsion:
+            rp_nodes_bend['RP_E'] = (rp_E_id, 2.5*L, 2.0*L, 2.0*L)
     
     # ---- Write complete .inp ----
     inst_name = 'PART-1-1'
@@ -1838,12 +1875,13 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         face_rp = {'X': 'RP-1', 'Y': 'RP-2', 'Z': 'RP-3'}
         
         if is_bending:
-            f.write('** Second-Order Bending PBCs\n')
+            f.write('** Second-Order {} PBCs\n'.format(
+                'Torsion' if is_torsion else 'Bending'))
             # Build the periodic *Equation set. `used_dep` (the (node,dof) pairs
             # eliminated as dependent DOFs) is shared with the Lesicar integral
             # constraints below so the two never claim the same dependent DOF.
             bend_eqs, used_dep, n_dropped = build_bending_pbc_equations(
-                pairs, nodes, L, bending_plane)
+                pairs, nodes, L, so_plane)
             for terms in bend_eqs:
                 f.write('*Equation\n{}\n'.format(len(terms)))
                 for is_node, name, dof, coeff in terms:
@@ -1861,7 +1899,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             # cycle) lives in build_lesicar_equations and is unit-tested.
             f.write('** Lesicar Eq.14 integral constraints\n')
             lesicar_constraints = compute_lesicar_constraints(
-                nodes, elements, L, bending_plane)
+                nodes, elements, L, so_plane)
             lesicar_eqs, n_lesicar_skipped = build_lesicar_equations(
                 lesicar_constraints, used_dep, nodes, L)
             for terms in lesicar_eqs:
@@ -1971,7 +2009,8 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             # DOFs (which would make the stiffness matrix singular). Only DOFs 1-3
             # exist on a plain node, so constraining 2-3 (not 2-6) avoids spurious
             # "boundary condition on inactive dof" warnings.
-            f.write('RP_E, 2, 3\n')
+            if not is_torsion:
+                f.write('RP_E, 2, 3\n')
             f.write('RP_K, 2, 3\n')
         f.write('**\n')
         
@@ -2020,7 +2059,10 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             for d in [1, 2, 3]:
                 if d != cfg['shear_dof']:
                     f.write('RP-4, {}, {}\n'.format(d, d))
-        elif mode == 'bend':
+        elif mode in ('bend', 'tors'):
+            # In torsion RP_K carries the twist rate alpha (radians per unit
+            # length); `kappa` is reused as its magnitude, so a torsion deck
+            # needs no new column.
             f.write('*Boundary, amplitude=LoadRamp\n')
             f.write('RP_K, 1, 1, {}\n'.format(kappa))
         
@@ -2035,7 +2077,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         # which the post-processor doesn't read -> KeyError 'EVOL'.)
         f.write('S, E, LE, EVOL\n' if not is_bending else 'S, E, EVOL, COORD\n')
         f.write('*Output, history, frequency=1\n')
-        if mode == 'bend':
+        if mode in ('bend', 'tors'):
             f.write('*Node Output, nset=RP_K\n')
         elif is_shear:
             f.write('*Node Output, nset=RP-4\n')
@@ -2548,11 +2590,20 @@ def _generate_one_row(task):
             write_complete_inp(gmsh_inp, pairs_csv, path2,
                 mode=ms2, disp=Disp2, **common)
 
-    # Bending (always if Kappa > 0)
+    # Second-order probe (always if Kappa > 0). Bending_Plane selects which:
+    # 'xz'/'yz'/'xy' give the bending modes, 'torsion' the twist probe. The two
+    # are mutually exclusive per deck, so no existing deck changes behaviour.
     if Kappa_val > 0:
-        path_ben = os.path.join(output_dir, 'Job-{}-ben.inp'.format(run_id))
-        write_complete_inp(gmsh_inp, pairs_csv, path_ben,
-            mode='bend', disp=0, bending_plane=bp, kappa=Kappa_val, **common)
+        if str(bp).strip().lower() == 'torsion':
+            path_tor = os.path.join(output_dir, 'Job-{}-tor.inp'.format(run_id))
+            write_complete_inp(gmsh_inp, pairs_csv, path_tor,
+                mode='tors', disp=0, bending_plane='torsion',
+                kappa=Kappa_val, **common)
+        else:
+            path_ben = os.path.join(output_dir, 'Job-{}-ben.inp'.format(run_id))
+            write_complete_inp(gmsh_inp, pairs_csv, path_ben,
+                mode='bend', disp=0, bending_plane=bp, kappa=Kappa_val,
+                **common)
 
     # Remove the Gmsh mesh .inp and periodic-pairs .csv now that they have
     # been folded into the solver-ready Job-*.inp files. The output_dir is
