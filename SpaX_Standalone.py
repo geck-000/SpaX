@@ -1081,10 +1081,25 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         # for s>1 it simply returns r_long < r_short, and the assignment below
         # then puts the SHORT axis along the growth direction, giving a plate
         # whose plane contains the other two axes.
+        # Volume-preserving: the ellipsoid must have the volume of a sphere of
+        # radius r_eq whatever its shape, so that r_avg means the size the deck
+        # asks for and the inclusion COUNT is not a function of sphericity.
+        #
+        #   distinct axis a = r_eq s^(-2/3),  pair axis b = r_eq s^(1/3)
+        #   a b^2 = r_eq^3  for every s,      and b/a = s  (the aspect ratio)
+        #
+        # The previous form (a = r_eq s^(-1/3), b = a s) gave V = V_sphere * s:
+        # 40% under-volume at the s=0.6 of the warm slices and, once s>1 became
+        # reachable, eight times over-volume at s=8. The packer iterates on the
+        # volume FRACTION so the achieved VoF was still met, and effective
+        # properties are scale-invariant at fixed fraction and shape, so earlier
+        # prolate results are unaffected; what was wrong is the size and hence
+        # the number of inclusions per cell, which is what sets the realisation
+        # scatter -- and, for plates, the morphology outright.
         r_eq = r
         if abs(sph - 1.0) > 1e-3:
-            r_long = r_eq / (sph ** (1.0/3.0))
-            r_short = r_long * sph
+            r_long = r_eq * (sph ** (-2.0/3.0))   # distinct axis
+            r_short = r_eq * (sph ** (1.0/3.0))   # the two equal axes
         else:
             r_long = r_eq
             r_short = r_eq
