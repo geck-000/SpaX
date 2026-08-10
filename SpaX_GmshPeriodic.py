@@ -954,8 +954,19 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         for pidx in parent_list:
             parent_vol = sum(v for _, v, _ in parent_groups[pidx])
             parent_vof = parent_vol / V_RVE
-            
-            if void_vof_accum < VoF_void_sphere:
+
+            # Take this parent as void only if doing so brings the running total
+            # CLOSER to the requested gas fraction than leaving it out.
+            #
+            # The rule used to be `accum < target`, i.e. keep adding until the
+            # total crossed the target, which then kept the whole of the parent
+            # that crossed it -- an overshoot of up to one inclusion. On the
+            # column that showed as realised gas fractions 3-36% above target,
+            # much worse than the brine, and it biases the softer phase upward.
+            # Continuing through the whole shuffled list rather than stopping at
+            # the crossing also lets a later small inclusion trim the residual.
+            if abs(void_vof_accum + parent_vof - VoF_void_sphere) < \
+               abs(void_vof_accum - VoF_void_sphere):
                 # Assign to void (air — unmeshed)
                 for vtag, _, _ in parent_groups[pidx]:
                     void_vols.append(vtag)

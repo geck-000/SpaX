@@ -1316,6 +1316,27 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         print("    [Densify] VoF {:.4f} -> {:.4f} by growing {} inclusions".format(
             vof_before, current_vof, len(spheres)))
 
+    # Land on the target fraction rather than the first value past it.
+    #
+    # The grow/densify rounds stop as soon as the running VoF crosses the
+    # target, so the packing keeps whatever the last growth step added -- an
+    # overshoot of several percent, which then propagates into every modulus
+    # through the knockdown law. A single uniform scaling of the semi-axes
+    # removes it exactly, since VoF goes as the cube of the scale factor.
+    #
+    # Only ever applied downwards. Shrinking increases every pair clearance and
+    # every distance to a face, so it cannot create an overlap or a sliver that
+    # the placement tests already accepted; growing could do both, so an
+    # undershooting pack (the packer stalled and could not reach the target) is
+    # left alone and reported as it stands.
+    if VoF_target > 0 and current_vof > VoF_target and spheres:
+        f = (VoF_target / current_vof) ** (1.0 / 3.0)
+        spheres = [(cx, cy, cz, rx * f, ry * f, rz * f)
+                   for (cx, cy, cz, rx, ry, rz) in spheres]
+        print("    [Trim] VoF {:.4f} -> {:.4f} by scaling semi-axes x{:.4f}".format(
+            current_vof, VoF_target, f))
+        current_vof = VoF_target
+
     # Build sphere array
     N = len(spheres)
     Sphere_array = np.zeros((N, 10))
