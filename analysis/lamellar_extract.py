@@ -39,9 +39,12 @@ def modulus(odb_path, mode, L):
 def main():
     d = sys.argv[1] if len(sys.argv) > 1 else '.'
     L = float(sys.argv[2]) if len(sys.argv) > 2 else 0.50
+    # Third argument selects the campaign: LAM_ for the ellipsoid aspect-ratio
+    # sweep, SLAB_ for the spanning-layer bridge-fraction sweep.
+    pre = sys.argv[3] if len(sys.argv) > 3 else 'LAM_'
     rows = {}
-    for f in sorted(glob.glob(os.path.join(d, 'Job-LAM_*-ut?.odb'))):
-        m = re.match(r'Job-LAM_(\w+)-(ut[xz])\.odb', os.path.basename(f))
+    for f in sorted(glob.glob(os.path.join(d, 'Job-%s*-ut?.odb' % pre))):
+        m = re.match(r'Job-%s(\w+)-(ut[xz])\.odb' % pre, os.path.basename(f))
         if not m:
             continue
         tag, mode = m.group(1), m.group(2)
@@ -49,7 +52,8 @@ def main():
 
     print('%-10s %10s %10s %10s' % ('case', 'E_x GPa', 'E_z GPa', 'E_z/E_x'))
     order = ['needle', 'plate2', 'plate4', 'plate8']
-    for tag in [t for t in order if t in rows] + [t for t in rows if t not in order]:
+    for tag in [t for t in order if t in rows] + sorted(
+            t for t in rows if t not in order):
         r = rows[tag]
         ex, ez = r.get('utx', float('nan')), r.get('utz', float('nan'))
         print('%-10s %10.3f %10.3f %10.3f' % (tag, ex / 1e9, ez / 1e9, ez / ex))
