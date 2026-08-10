@@ -30,9 +30,13 @@ import numpy as np
 K_BRINE = 2.2            # GPa, salt water
 K_GAS = 1.4e-4           # GPa, air at 1 atm, adiabatic (gamma*P)
 
-# bulk-modulus sweep, this session: identical geometry, b = 0.03, phi = 0.179
-SWEEP_K = np.array([2.2, 0.22, 0.022])
-SWEEP_EX = np.array([4.605, 1.612, 0.780])
+# bulk-modulus sweep, this session: identical geometry, b = 0.03, phi = 0.179.
+# The last point saturates -- below K ~ 0.02 GPa the fill carries nothing and
+# the bridges finally set the modulus, at 0.671 GPa. That is the floor this
+# geometry can reach, and the measured 1.27 sits comfortably above it, so the
+# comparison does not rest on driving the fill to a drained extreme.
+SWEEP_K = np.array([2.2, 0.22, 0.022, 0.0022])
+SWEEP_EX = np.array([4.605, 1.612, 0.780, 0.671])
 E_MEASURED = 1.27        # GPa, Kujala base, mean of four beams
 
 
