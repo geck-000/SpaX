@@ -240,7 +240,16 @@ EOF
   reclaim)
     reclaim "$DECK" "$RESULTS"
     NEXT=$(( IDX + 1 ))
-    sbatch $A --export=ALL,WORKDIR=$W,STAGE=gen,IDX=$NEXT,MANIFEST=$MAN,SPAX_ACCOUNT=${SPAX_ACCOUNT},PYTHONUSERBASE=$PUB "$SELF"
+    # SPAX_STOP_AFTER halts the chain at a chosen campaign instead of running
+    # to the end of the manifest. Needed when a campaign is a GATE rather than
+    # a study -- the layer-count sweep decides whether the two bracket
+    # campaigns behind it are worth spending, and a controller that chained
+    # past it would spend them before anyone had read the answer.
+    if [ "${SPAX_STOP_AFTER:-0}" -gt 0 ] && [ "$IDX" -ge "${SPAX_STOP_AFTER}" ]; then
+      echo "SPAX_STOP_AFTER=${SPAX_STOP_AFTER} reached at IDX=$IDX; not chaining."
+      exit 0
+    fi
+    sbatch $A --export=ALL,WORKDIR=$W,STAGE=gen,IDX=$NEXT,MANIFEST=$MAN,SPAX_ACCOUNT=${SPAX_ACCOUNT},PYTHONUSERBASE=$PUB,SPAX_STOP_AFTER=${SPAX_STOP_AFTER:-0} "$SELF"
     ;;
 
   *)
