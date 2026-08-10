@@ -77,9 +77,50 @@ def build(layered):
     return rows
 
 
+def build_nlayers():
+    """Layer count at FIXED porosity -- separating two variables that were
+    confounded in the exploratory runs.
+
+    Series theory says the number of layers cannot matter at fixed total layer
+    thickness: the compliances add and only the sum enters. Three dimensions
+    need not agree, because a thinner layer is more strongly confined by the
+    ice on either side, and confinement is exactly what makes an undrained
+    layer stiff. The exploratory cells hint that it does matter -- two layers at
+    phi = 0.179 came out at 5.23 GPa against one layer at phi = 0.150 at 2.87,
+    stiffer on more brine, which cannot be a porosity effect.
+
+    If the count matters undrained and not drained, that is confinement and it
+    belongs in the model as the lamellar spacing, a real measurable length.
+    If it matters at both ends it is a discretisation artefact and the bracket
+    numbers need re-basing. Either way it has to be resolved before the layered
+    moduli can be quoted, so phi, b, L and the mesh are all held fixed and only
+    the count moves.
+    """
+    rows = []
+    phi = 0.15
+    for n in (1, 2, 3, 4):
+        for tag, K in (('und', K_UND), ('drn', K_DRN)):
+            for s in SEEDS:
+                r = row('BRKN_n%d_%s_s%d' % (n, tag, s), phi, K, True, 0.024)
+                p = r.split(',')
+                p[36] = str(n)                                  # n_slabs
+                p[37] = '%.4f' % (phi * LAYER_SHARE)             # unchanged total
+                rows.append(','.join(p))
+    return rows
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, 'params')
+
+    rows = build_nlayers()
+    p = os.path.join(out, 'rve_bracket_nlayers.csv')
+    with open(p, 'w') as f:
+        f.write(HDR + '\n')
+        for r in rows:
+            f.write(r + '\n')
+    print('wrote %s : %d cells (%d solves)' % (p, len(rows), 2 * len(rows)))
+
     for layered, name in ((True, 'rve_bracket_layer.csv'),
                           (False, 'rve_bracket_pocket.csv')):
         rows = build(layered)

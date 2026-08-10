@@ -157,20 +157,35 @@ PYEOF
       exit 1
     fi
 
-    LMAX=$(python3 - "params/$DECK" <<'PYEOF'
+    # Cell edge AND element size, because the solve cost scales with the
+    # element COUNT, which is (L/L_mesh)^3. Sizing on L alone silently assumed
+    # every deck used the column's 0.033; the layered bracket decks run at
+    # 0.024 to resolve a layer, which is 2.6x the elements at the same L and
+    # would have been given a third of the memory it needs.
+    read LMAX LMESH <<PYEOF
+$(python3 - "params/$DECK" <<'PYIN'
 import csv, sys
-v = []
+v, m = [], []
 for r in csv.DictReader(open(sys.argv[1], encoding='utf8', errors='replace')):
     try: v.append(float(r.get('L') or 0))
     except ValueError: pass
-print('%.3f' % (max(v) if v else 0.5))
-PYEOF
+    try: m.append(float(r.get('L_mesh') or 0))
+    except ValueError: pass
+v = [x for x in v if x > 0] or [0.5]
+m = [x for x in m if x > 0] or [0.033]
+# worst case: the largest cell at the finest mesh anywhere in the deck
+print('%.4f %.4f' % (max(v), min(m)))
+PYIN
 )
+PYEOF
+    LMAX=${LMAX:-0.5}; LMESH=${LMESH:-0.033}
     BEND=$(grep -cE -- '-(ben|tor)$' "GJ_$NAME" 2>/dev/null || echo 0)
     read SOLVE_MEM SOLVE_TIME <<EOF
 $(python3 -c "
 L=float('$LMAX') or 0.5
-s=(L/0.5)**3
+lm=float('$LMESH') or 0.033
+# element count relative to the reference cell (L=0.5 at L_mesh=0.033)
+s=(L/0.5)**3 * (0.033/lm)**3
 heavy = $BEND > 0
 mem=max(16,min(360, 16*s*(3 if heavy else 1)))
 hrs=max(0.67,min(8.0,(40/60.0)*s*(2 if heavy else 1)))

@@ -56,5 +56,6 @@ eringen_homog	rve_eringen_homog.csv	out_ergh	Job-ERGH_*	results_eringen_homog.cs
 eringen	rve_eringen.csv	out_erg	Job-ERG_*	results_eringen.csv	postprocess_firstorder.sh	SPAX_MESH_ORDER=2
 torsion_homog	rve_torsion_homog.csv	out_torh	Job-TORH_*	results_torsion_homog.csv	postprocess_firstorder.sh+postprocess_torsion.sh	SPAX_MESH_ORDER=2
 torsion	rve_torsion.csv	out_tor	Job-TOR_*	results_torsion.csv	postprocess_firstorder.sh+postprocess_torsion.sh	SPAX_MESH_ORDER=2
+bracket_nlayers	rve_bracket_nlayers.csv	out_brkn	Job-BRKN_*	results_bracket_nlayers.csv	postprocess_firstorder.sh	-
 bracket_pocket	rve_bracket_pocket.csv	out_brkp	Job-BRKP_*	results_bracket_pocket.csv	postprocess_firstorder.sh	-
 bracket_layer	rve_bracket_layer.csv	out_brkl	Job-BRKL_*	results_bracket_layer.csv	postprocess_firstorder.sh	-
