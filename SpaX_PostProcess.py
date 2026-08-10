@@ -385,6 +385,16 @@ def extract_second_order(odb_path, L, Kappa, Bending_Plane):
             step_name = sname
             break
     if step_name is None:
+        # A torsion ODB has no bending step. Falling through to steps[0] would
+        # apply the bending moment arithmetic to a twist and return a D_rve
+        # that looks plausible and means nothing, so refuse instead. The
+        # torsional rigidity comes from analysis/torsion_extract.py, which
+        # reads the RP_K reaction directly.
+        if any('TORSION' in s.upper() for s in odb.steps.keys()):
+            odb.close()
+            raise ValueError(
+                'second-order bending extraction called on a torsion ODB (%s); '
+                'use torsion_extract.py' % odb_path)
         step_name = list(odb.steps.keys())[0]
     step = odb.steps[step_name]
     
