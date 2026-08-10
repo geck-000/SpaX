@@ -539,6 +539,90 @@ def _add_wavy_channel(cx, cy, r, L, z_ext, amp, az_cos, az_sin, npts=25, zshift=
     return [t for (d, t) in fused if d == 3]
 
 
+def _add_brine_slab(x0, thickness, L, bridges, axis=0):
+    """A cell-spanning brine layer interrupted by ice bridges.
+
+    Every ellipsoidal inclusion leaves the matrix percolating around it, so no
+    packing of pockets -- however oblate -- can sever the load path: the
+    lamellar sweep moved E_x by under 3% from needle to 4:1 plate. A layer that
+    spans the cell cross-section does sever it, and the ice bridges piercing the
+    layer are then the only load path. Their area fraction b is the parameter
+    that sets the transverse modulus.
+
+    The slab spans the two in-plane directions completely, so its intersection
+    with each of those four faces is the same full rectangle and the periodic
+    face pairing is trivially satisfied. Bridges are required to sit clear of
+    the faces (the caller places them with a margin), which keeps every cut
+    curve interior; a bridge crossing a face would need its own periodic image
+    to keep the two decompositions identical, exactly the failure mode that
+    forced the sphere copies to be built by translation rather than rebuilt.
+
+    `axis` is the slab normal: 0=x, 1=y, 2=z. Bridges are (u, v, r) in the two
+    in-plane coordinates, ordered cyclically after the normal.
+    """
+    eps = 0.02 * max(thickness, 1e-9)
+    org = [0.0, 0.0, 0.0]
+    ext = [L, L, L]
+    org[axis] = x0
+    ext[axis] = thickness
+    slab = gmsh.model.occ.addBox(org[0], org[1], org[2], ext[0], ext[1], ext[2])
+    if not bridges:
+        return [slab]
+
+    tools = []
+    for (bu, bv, br) in bridges:
+        c = [0.0, 0.0, 0.0]
+        d = [0.0, 0.0, 0.0]
+        c[axis] = x0 - eps
+        c[(axis + 1) % 3] = bu
+        c[(axis + 2) % 3] = bv
+        d[axis] = thickness + 2.0 * eps
+        tools.append((3, gmsh.model.occ.addCylinder(
+            c[0], c[1], c[2], d[0], d[1], d[2], br)))
+
+    cut, _ = gmsh.model.occ.cut([(3, slab)], tools,
+                               removeObject=True, removeTool=True)
+    return [t for (d_, t) in cut if d_ == 3]
+
+
+def place_bridges(L, bridge_fraction, n_bridges, margin_mult=1.25, seed=None,
+                  max_tries=4000):
+    """Non-overlapping ice bridges of total area fraction `bridge_fraction`.
+
+    Equal radii, so N pi r^2 = b L^2 fixes r. They are kept clear of the cell
+    faces by `margin_mult * r` and clear of each other by the same, both to keep
+    the periodic faces uncut and to stop two bridges fusing into one larger
+    bridge of a different area than the caller asked for.
+    """
+    import random as _random
+    if bridge_fraction <= 0 or n_bridges <= 0:
+        return [], 0.0
+    r = L * math.sqrt(bridge_fraction / (math.pi * n_bridges))
+    rng = _random.Random(seed)
+    m = margin_mult * r
+    out = []
+    tries = 0
+    while len(out) < n_bridges and tries < max_tries:
+        tries += 1
+        u = rng.uniform(m, L - m)
+        v = rng.uniform(m, L - m)
+        if all((u - pu) ** 2 + (v - pv) ** 2 >= (2.0 * m) ** 2
+               for (pu, pv, _) in out):
+            out.append((u, v, r))
+    if len(out) < n_bridges:
+        # Falling back to a lattice rather than to fewer bridges: the area
+        # fraction is the physical quantity being controlled and must not
+        # silently come out low because the random placement jammed.
+        k = int(math.ceil(math.sqrt(n_bridges)))
+        step = L / k
+        out = []
+        for i in range(k):
+            for j in range(k):
+                if len(out) < n_bridges:
+                    out.append(((i + 0.5) * step, (j + 0.5) * step, r))
+    return out, sum(math.pi * br ** 2 for (_, _, br) in out) / (L * L)
+
+
 # =====================================================================
 # Main mesh generation
 # =====================================================================
@@ -547,7 +631,8 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                            Is_Porous='Composite', run_id='gmsh_rve',
                            mesh_order=1, optimise=True,
                            VoF_void_sphere=0.0, VoF_incl_sphere=0.0,
-                           Inclusion_Type='Solid', gap_balls=None):
+                           Inclusion_Type='Solid', gap_balls=None,
+                           slabs=None):
     """
     Generate a periodic RVE mesh using Gmsh.
     
@@ -816,8 +901,24 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             sphere_tags.append((3, sc))
             sphere_to_parent[sc] = parent_idx
     
+    # ---- Cell-spanning brine layers ----
+    # Appended to sphere_tags so they ride the same fragment and periodicity
+    # path as the pockets, but their positions in the list are recorded so the
+    # hybrid classifier can force them to brine: a slab assigned to the gas
+    # quota would be unmeshed and would cut the cell in two.
+    slab_positions = []
+    for sl in (slabs or []):
+        for t in _add_brine_slab(sl['origin'], sl['thickness'], L,
+                                 sl.get('bridges', []), axis=sl.get('axis', 0)):
+            slab_positions.append(len(sphere_tags))
+            sphere_tags.append((3, t))
+            sphere_to_parent[t] = -1
+    if slab_positions:
+        print("  Brine slabs: {} layer volume(s), {} bridge(s) each".format(
+            len(slab_positions), len((slabs or [{}])[0].get('bridges', []))))
+
     print("  Total sphere volumes (incl copies): {}".format(len(sphere_tags)))
-    
+
     # ---- Boolean fragment ----
     print("  Running Boolean fragment...")
     if sphere_tags:
@@ -854,6 +955,12 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         for dim, tag in outmap[i + 1]:
             if dim == 3:
                 sphere_children.add(tag)
+
+    slab_children = set()
+    for i in slab_positions:
+        for dim, tag in outmap[i + 1]:
+            if dim == 3:
+                slab_children.add(tag)
     
     matrix_vols = sorted(list(box_children - sphere_children))
     sphere_vols = sorted(list(box_children & sphere_children))
@@ -902,13 +1009,17 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         vol_data = []  # (vol_tag, parent_sphere_idx, volume, centroid)
         
         for vtag in sphere_vols:
+            # Slabs are brine by construction and never enter the gas lottery.
+            if vtag in slab_children:
+                incl_vols.append(vtag)
+                continue
             try:
                 com = gmsh.model.occ.getCenterOfMass(3, vtag)
                 vol = gmsh.model.occ.getMass(3, vtag)
             except:
                 com = (0, 0, 0)
                 vol = 0
-            
+
             # Find closest parent sphere
             best_parent = 0
             best_dist = 1e30
@@ -2028,6 +2139,7 @@ if __name__ == '__main__':
             VoF_incl_sphere=_p['VoF_incl_sphere'],
             Inclusion_Type=_p['Inclusion_Type'],
             gap_balls=_p.get('gap_balls'),
+            slabs=_p.get('slabs'),
             mesh_order=_p.get('mesh_order', 1))
         with open(out_pkl, 'wb') as _f:
             pickle.dump(_res, _f)

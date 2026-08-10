@@ -2165,8 +2165,57 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
 # BATCH PIPELINE
 # =====================================================================
 
+def build_slabs(params, L):
+    """Cell-spanning brine layers from the deck row, or [] if none are asked for.
+
+    `slab_vof` is the brine fraction carried by the layers; the pocket phase
+    keeps whatever `VoF_incl_sphere` still asks for, so a deck can run layers
+    only, pockets only, or both. Each layer is a box of thickness t pierced by
+    ice bridges of total area fraction b, and the brine it carries is
+    t*(1-b)*L^2, which is what fixes t:
+
+        n_slabs * t * (1 - b) / L = slab_vof
+
+    Layers are spread evenly through the cell on the slab normal. Even spacing
+    rather than random placement because in series the transverse modulus
+    depends only on the total layer thickness and the bridge fraction, not on
+    where the layers sit, and even spacing keeps them clear of each other and of
+    the faces without a rejection loop.
+    """
+    import SpaX_GmshPeriodic as _gp
+
+    n_slabs = int(float(params.get('n_slabs', 0) or 0))
+    slab_vof = float(params.get('slab_vof', 0.0) or 0.0)
+    if n_slabs <= 0 or slab_vof <= 0:
+        return []
+
+    b = float(params.get('bridge_fraction', 0.0) or 0.0)
+    n_bridges = int(float(params.get('n_bridges', 4) or 4))
+    axis = {'x': 0, 'y': 1, 'z': 2}.get(
+        str(params.get('slab_axis', 'x')).strip().lower(), 0)
+
+    t = slab_vof * L / (n_slabs * max(1.0 - b, 1e-6))
+    pitch = L / n_slabs
+    if t >= pitch:
+        raise ValueError(
+            'slab_vof %.3f needs thickness %.4f per layer but the pitch is only '
+            '%.4f: use more layers or a lower fraction' % (slab_vof, t, pitch))
+
+    slabs = []
+    for k in range(n_slabs):
+        bridges, b_real = _gp.place_bridges(
+            L, b, n_bridges, seed=(k + 1) * 7919)
+        slabs.append(dict(origin=(k + 0.5) * pitch - 0.5 * t,
+                          thickness=t, axis=axis, bridges=bridges))
+    print("    [Slabs] {} layer(s) normal to {}, t={:.4f} ({:.1f}% of L), "
+          "b={:.4f} over {} bridge(s)".format(
+              n_slabs, 'xyz'[axis], t, 100.0 * n_slabs * t / L, b_real, n_bridges))
+    return slabs
+
+
 def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
-                       VoF_void, VoF_incl, Inclusion_Type, gap_balls=None):
+                       VoF_void, VoF_incl, Inclusion_Type, gap_balls=None,
+                       slabs=None):
     """Run generate_periodic_mesh in an isolated child process.
 
     Gmsh's C++ mesher can SIGSEGV/SIGABRT on degenerate inclusion geometry
@@ -2187,6 +2236,7 @@ def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
                    output_dir=output_dir, Is_Porous=mode, run_id=run_id,
                    VoF_void_sphere=VoF_void, VoF_incl_sphere=VoF_incl,
                    Inclusion_Type=Inclusion_Type, gap_balls=gap_balls or [],
+                   slabs=slabs or [],
                    # SPAX_MESH_ORDER=2 -> quadratic C3D10 (locking-free in
                    # bending). Default 1 (C3D4) keeps existing runs unchanged.
                    mesh_order=int(os.environ.get('SPAX_MESH_ORDER', '1')))
@@ -2565,7 +2615,8 @@ def _generate_one_row(task):
                 VoF_void=VoF_void,
                 VoF_incl=VoF_incl,
                 Inclusion_Type=Inclusion_Type,
-                gap_balls=gap_balls)
+                gap_balls=gap_balls,
+                slabs=build_slabs(params, L))
 
             # Check for empty mesh
             n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
