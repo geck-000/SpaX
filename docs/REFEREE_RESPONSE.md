@@ -45,13 +45,16 @@ phases is the obvious candidate — it means the per-phase split is at or beyond
 the resolution of the data, and the claim of indistinguishability is being made
 on the wrong side of the physics.
 
-**M4. Second-order homogenisation is discussed but never performed.**
-Section 3.1 sets out the second-order scheme with its quadratic boundary
-condition, and Section 4.3.1 is presented as testing whether it is needed. But
-the test is a first-order size sweep in bending, not a second-order computation.
-The conclusion ("no warrant for nonclassical enrichment") may well be right, but
-the manuscript should be explicit that no higher-order boundary value problem was
-solved, and that the argument is indirect.
+**M4. The second-order scheme is implemented but not described.**
+[WITHDRAWN on inspection of the source. My original point asserted that no
+second-order boundary value problem was solved. That is wrong: the bending
+studies impose a quadratic macroscopic field driven by a curvature reference
+point, with Lesicar Eq. 14 integral constraints on the face-mean fluctuations,
+and Abaqus steps named accordingly. The real defect is that Section 3.2
+described only the first-order scheme, so a reader could not tell. The revision
+adds Eq. (5) and the accompanying description, which also strengthens the
+size-effect null: it comes from a scheme that carries a macroscopic curvature
+degree of freedom and could have returned a length scale.]
 
 ---
 
