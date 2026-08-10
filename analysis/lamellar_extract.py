@@ -48,6 +48,19 @@ def main():
         if not m:
             continue
         tag, mode = m.group(1), m.group(2)
+        # A killed solve leaves an .odb that opens but carries no steps, and
+        # reading it either raises here or -- worse -- returns a number from a
+        # partly written frame. The .sta is the authority on whether the job
+        # finished, so gate on it rather than on the .odb existing.
+        sta = f[:-4] + '.sta'
+        try:
+            done = 'COMPLETED SUCCESSFULLY' in open(sta).read()
+        except IOError:
+            done = False
+        if not done:
+            print('skipping %s: solve did not complete'
+                  % os.path.basename(f))
+            continue
         rows.setdefault(tag, {})[mode] = modulus(f, mode, L)
 
     print('%-10s %10s %10s %10s' % ('case', 'E_x GPa', 'E_z GPa', 'E_z/E_x'))
