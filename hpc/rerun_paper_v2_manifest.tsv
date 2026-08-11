@@ -60,3 +60,4 @@ bracket_nlayers	rve_bracket_nlayers.csv	out_brkn	Job-BRKN_*	results_bracket_nlay
 bracket_pocket	rve_bracket_pocket.csv	out_brkp	Job-BRKP_*	results_bracket_pocket.csv	postprocess_firstorder.sh	-
 bracket_layer	rve_bracket_layer.csv	out_brkl	Job-BRKL_*	results_bracket_layer.csv	postprocess_firstorder.sh	-
 bracket_spacing	rve_bracket_spacing.csv	out_brks	Job-BRKS_*	results_bracket_spacing.csv	postprocess_firstorder.sh	-
+bracket_bridge	rve_bracket_bridge.csv	out_brkb	Job-BRKB_*	results_bracket_bridge.csv	postprocess_firstorder.sh	-

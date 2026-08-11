@@ -143,9 +143,52 @@ def build_spacing():
     return rows
 
 
+def build_bridge():
+    """Drained bridge-fraction sweep: the exponent that decides the mechanism.
+
+    The earlier b-sweep was run undrained and showed no trend, because sealed
+    brine resists at its bulk modulus and the bridges never control anything.
+    In the drained limit they control everything, and E(b) has never been
+    measured there.
+
+    The exponent is the point. Weeks & Assur write E = 9.5 (1 - sqrt(v))^4,
+    which is a load-bearing area raised to the FOURTH power: at phi = 0.227
+    that area is 0.52, a large fraction, and the softness comes from the
+    exponent rather than from a near-severed plane. Our series-and-constriction
+    picture reaches the same modulus from b ~ 0.03 with a roughly linear
+    dependence. Those are different mechanisms agreeing by arithmetic, and
+    fitting E ~ b^n separates them: n near 4 means the cells reproduce the
+    empirical law and b can then be taken from Assur geometry with nothing left
+    free; n near 1 means the agreement was coincidence and the layered match
+    should not be claimed as a prediction.
+
+    Spacing is held at the physical value (four layers in a 0.5 cell) and phi
+    at the column's mid-range, so b is the only thing moving.
+    """
+    rows = []
+    phi = 0.15
+    for b in (0.02, 0.04, 0.08, 0.15, 0.28, 0.50):
+        for tag, K in (('drn', K_DRN), ('und', K_UND)):
+            for s in SEEDS:
+                r = row('BRKB_b%03d_%s_s%d' % (int(round(1000 * b)), tag, s),
+                        phi, K, True, 0.024).split(',')
+                r[36] = '4'                       # n_slabs, physical spacing
+                r[38] = '%.4f' % b                # bridge_fraction
+                rows.append(','.join(r))
+    return rows
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, 'params')
+
+    rows = build_bridge()
+    p = os.path.join(out, 'rve_bracket_bridge.csv')
+    with open(p, 'w') as f:
+        f.write(HDR + '\n')
+        for r in rows:
+            f.write(r + '\n')
+    print('wrote %s : %d cells (%d solves)' % (p, len(rows), 2 * len(rows)))
 
     rows = build_spacing()
     p = os.path.join(out, 'rve_bracket_spacing.csv')
