@@ -31,7 +31,8 @@ HDR = ('run_id,L,L_mesh,Is_Porous,E_matrix,nu_matrix,VoF_sphere,r_avg,r_std,'
        'Bending_PBC_Type,generate_channels,channel_vof_target,r_channel_avg,'
        'r_channel_std,Growth_Direction,Growth_Concentration,Inclusion_Type,'
        'K_inclusion,G_inclusion,full_tensor,'
-       'n_slabs,slab_vof,bridge_fraction,n_bridges,slab_axis')
+       'n_slabs,slab_vof,bridge_fraction,n_bridges,slab_axis,'
+       'bridge_correlation')
 
 K_UND, K_DRN = 2.2e9, 2.2e6
 G_BRINE = 440029.33528897085
@@ -58,7 +59,8 @@ def row(run_id, phi, K, layered, L_mesh):
         '0.002', '200000', 'OFF', 'Gmsh', '0', 'xz', 'Lesicar',
         'No', '0.0', '0.025', '0.006', 'Z', '0.40', 'Liquid',
         '%.6g' % K, '%.11f' % G_BRINE, 'No',
-        str(n_slabs), '%.4f' % slab_vof, '%.4f' % BRIDGE, '2', 'x'])
+        str(n_slabs), '%.4f' % slab_vof, '%.4f' % BRIDGE, '2', 'x',
+        '0.0000'])
 
 
 def build(layered):
@@ -143,6 +145,36 @@ def build_spacing():
     return rows
 
 
+def build_correlated():
+    """The size test again, with bridges aligned between layers.
+
+    Independent bridge positions make the load hop sideways by a distance that
+    scales with the cell edge, so the drained modulus falls as n^-1.14 and the
+    cell never homogenises. Aligning them gives a straight path whose
+    compliance per layer cannot know the cell size. This repeats the spacing
+    sweep -- pitch held at 0.125, cell edge over a factor 2.5 -- at correlation
+    one, so the only difference from the failing campaign is the alignment.
+
+    Flat E_x means the drained layered cell becomes a genuine RVE once bridges
+    are correlated, and the basal knockdown can be quoted after all; still
+    drifting means the tortuosity is not the cause and the drained branch
+    should be abandoned rather than patched further.
+    """
+    rows = []
+    phi, a0 = 0.15, 0.125
+    for L in (0.250, 0.375, 0.500, 0.625):
+        n = int(round(L / a0))
+        for tag, K in (('drn', K_DRN), ('und', K_UND)):
+            for s in SEEDS:
+                r = row('BRKC_L%03d_%s_s%d' % (int(round(1000 * L)), tag, s),
+                        phi, K, True, 0.024).split(',')
+                r[1] = '%.3f' % L
+                r[36] = str(n)
+                r[41] = '1.0000'          # bridges aligned across layers
+                rows.append(','.join(r))
+    return rows
+
+
 def build_bridge():
     """Drained bridge-fraction sweep: the exponent that decides the mechanism.
 
@@ -181,6 +213,14 @@ def build_bridge():
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, 'params')
+
+    rows = build_correlated()
+    p = os.path.join(out, 'rve_bracket_corr.csv')
+    with open(p, 'w') as f:
+        f.write(HDR + '\n')
+        for r in rows:
+            f.write(r + '\n')
+    print('wrote %s : %d cells (%d solves)' % (p, len(rows), 2 * len(rows)))
 
     rows = build_bridge()
     p = os.path.join(out, 'rve_bracket_bridge.csv')

@@ -623,6 +623,69 @@ def place_bridges(L, bridge_fraction, n_bridges, margin_mult=1.25, seed=None,
     return out, sum(math.pi * br ** 2 for (_, _, br) in out) / (L * L)
 
 
+def place_bridges_layers(L, bridge_fraction, n_bridges, n_layers,
+                         correlation=0.0, seed=None, max_tries=200):
+    """Bridge positions for every layer, correlated across layers.
+
+    Independent positions in each layer force the load to hop sideways from one
+    bridge to the next, and the hop length scales with the cell edge, so the
+    drained modulus falls as 1/n and the cell never homogenises: measured
+    E ~ n^-1.14 over a 2.5x change in cell size. Aligning the bridges gives a
+    straight load path whose compliance per layer does not know the cell size,
+    which should restore convergence.
+
+    Whether real bridges line up between adjacent ice plates is a
+    microstructural question, so it is exposed as a parameter rather than
+    assumed: `correlation` 0 reproduces the independent placement, 1 stacks
+    every layer's bridges at the same in-plane positions, and values between
+    jitter each layer off the shared template by an amplitude that grows as the
+    correlation falls. Non-overlap and the face margin are re-checked after
+    jittering, since a blend of two valid layouts need not itself be valid.
+    """
+    import random as _random
+
+    base, b_real = place_bridges(L, bridge_fraction, n_bridges, seed=seed)
+    if not base:
+        return [[] for _ in range(n_layers)], 0.0
+
+    c = min(max(float(correlation), 0.0), 1.0)
+    if c >= 0.999:
+        return [list(base) for _ in range(n_layers)], b_real
+    if c <= 1e-9:
+        # exactly the old behaviour, seeded per layer as before
+        return ([place_bridges(L, bridge_fraction, n_bridges,
+                               seed=(k + 1) * 7919)[0]
+                 for k in range(n_layers)], b_real)
+
+    r = base[0][2]
+    m = 1.25 * r
+    amp = (1.0 - c) * 0.5 * L
+    rng = _random.Random((seed or 0) + 13)
+    out = []
+    for _k in range(n_layers):
+        cand = list(base)
+        for _ in range(max_tries):
+            trial = []
+            for (u, v, rr) in base:
+                nu = min(max(u + rng.uniform(-amp, amp), m), L - m)
+                nv = min(max(v + rng.uniform(-amp, amp), m), L - m)
+                trial.append((nu, nv, rr))
+            ok = True
+            for i in range(len(trial)):
+                for j in range(i + 1, len(trial)):
+                    if ((trial[i][0] - trial[j][0]) ** 2 +
+                            (trial[i][1] - trial[j][1]) ** 2) < (2.0 * m) ** 2:
+                        ok = False
+                        break
+                if not ok:
+                    break
+            if ok:
+                cand = trial
+                break
+        out.append(cand)
+    return out, b_real
+
+
 # =====================================================================
 # Main mesh generation
 # =====================================================================

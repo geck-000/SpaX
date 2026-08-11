@@ -2201,15 +2201,24 @@ def build_slabs(params, L):
             'slab_vof %.3f needs thickness %.4f per layer but the pitch is only '
             '%.4f: use more layers or a lower fraction' % (slab_vof, t, pitch))
 
+    # Correlation of bridge positions between layers. Zero reproduces the
+    # independent placement, under which the drained modulus falls as n^-1.14
+    # with cell size and the cell does not homogenise; one stacks the bridges
+    # so the load path is straight. Default zero so existing decks are
+    # unchanged, and set explicitly where it is being tested.
+    corr = float(params.get('bridge_correlation', 0.0) or 0.0)
+
+    per_layer, b_real = _gp.place_bridges_layers(
+        L, b, n_bridges, n_slabs, correlation=corr, seed=7919)
+
     slabs = []
     for k in range(n_slabs):
-        bridges, b_real = _gp.place_bridges(
-            L, b, n_bridges, seed=(k + 1) * 7919)
         slabs.append(dict(origin=(k + 0.5) * pitch - 0.5 * t,
-                          thickness=t, axis=axis, bridges=bridges))
+                          thickness=t, axis=axis, bridges=per_layer[k]))
     print("    [Slabs] {} layer(s) normal to {}, t={:.4f} ({:.1f}% of L), "
-          "b={:.4f} over {} bridge(s)".format(
-              n_slabs, 'xyz'[axis], t, 100.0 * n_slabs * t / L, b_real, n_bridges))
+          "b={:.4f} over {} bridge(s), correlation {:.2f}".format(
+              n_slabs, 'xyz'[axis], t, 100.0 * n_slabs * t / L, b_real,
+              n_bridges, corr))
     return slabs
 
 
