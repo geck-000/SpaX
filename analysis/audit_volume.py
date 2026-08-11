@@ -119,9 +119,14 @@ def main():
             continue
         L = float(r['L'])
         # Target brine = meshed soft phase only. Gas voids are not meshed.
+        # slab_vof carries the cell-spanning layers, which are brine and ARE
+        # meshed; omitting it made a layered deck read as 6.5x over target when
+        # it was in fact 3% under, and halted the campaign on a gate that was
+        # measuring the wrong number.
         incl = float(r.get('VoF_incl_sphere', 0) or 0)
         chan = float(r.get('channel_vof_target', 0) or 0)
-        target = incl + chan
+        slab = float(r.get('slab_vof', 0) or 0)
+        target = incl + chan + slab
         got = meshed_fraction(f, L)
         if got is None or target <= 0:
             continue
