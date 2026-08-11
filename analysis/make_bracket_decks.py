@@ -175,6 +175,40 @@ def build_correlated():
     return rows
 
 
+def build_nbridges():
+    """Subdivide a fixed bridge area: the test of the bending interpretation.
+
+    Adopting Gibson and Ashby's b^2 asserts that the load path through a
+    lamellar plane is a network of slender ligaments carrying load by bending.
+    That is a claim about geometry and it can be falsified without measuring an
+    exponent at all. Hold the TOTAL bridge area fixed and split it over more,
+    thinner bridges:
+
+      pure area or stretch  -> only the total section matters, E is unchanged
+      bending-dominated     -> slender ligaments bend, E falls as they thin
+
+    So E falling with bridge count at fixed b is the signature of bending, and
+    E flat is the signature that our cells are stretch-dominated and the b^2
+    closure does not describe them. Either way the cells stop being a black box.
+
+    b = 0.15 rather than 0.03, so sixteen bridges are still resolvable: at that
+    count the radius is 0.027 against a fine element size of 0.0096, about
+    three elements per radius.
+    """
+    rows = []
+    phi, b = 0.15, 0.15
+    for nb in (1, 2, 4, 8, 16):
+        for tag, K in (('drn', K_DRN), ('und', K_UND)):
+            for s in SEEDS:
+                r = row('BRKG_n%02d_%s_s%d' % (nb, tag, s),
+                        phi, K, True, 0.024).split(',')
+                r[36] = '4'                # physical plate spacing
+                r[38] = '%.4f' % b
+                r[39] = str(nb)            # n_bridges
+                rows.append(','.join(r))
+    return rows
+
+
 def build_bridge():
     """Drained bridge-fraction sweep: the exponent that decides the mechanism.
 
@@ -213,6 +247,14 @@ def build_bridge():
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, 'params')
+
+    rows = build_nbridges()
+    p = os.path.join(out, 'rve_bracket_nbridges.csv')
+    with open(p, 'w') as f:
+        f.write(HDR + '\n')
+        for r in rows:
+            f.write(r + '\n')
+    print('wrote %s : %d cells (%d solves)' % (p, len(rows), 2 * len(rows)))
 
     rows = build_correlated()
     p = os.path.join(out, 'rve_bracket_corr.csv')
