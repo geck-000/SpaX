@@ -109,9 +109,51 @@ def build_nlayers():
     return rows
 
 
+def build_spacing():
+    """Fixed plate spacing, varying cell size: the homogenisation check.
+
+    The layer pitch is L/n_slabs, so the earlier count sweep at fixed L varied
+    the plate SPACING from 0.50 to 0.125 model units. The modulus moved because
+    the material changed, not because the cell failed to converge: each layer
+    contributes a constriction compliance where load funnels through its
+    bridges, independent of that layer's thickness, so n constrictions per cell
+    means compliance grows with n. Series theory misses it by summing only
+    thickness terms.
+
+    Spacing is therefore a physical parameter of the model, and the cell edge
+    maps to a few millimetres, which puts the tested range squarely on the
+    0.5-1 mm plate spacing of real sea ice. What has NOT been shown is that the
+    modulus depends on the spacing alone rather than on the cell size as well.
+    Holding a0 fixed and moving L over a factor 2.5, with n = L/a0 following,
+    tests exactly that. A flat result means the cell is a genuine RVE for this
+    morphology and a0 is its length parameter; a drifting one means it is not
+    homogenising and no spacing can be quoted.
+    """
+    rows = []
+    phi, a0 = 0.15, 0.125
+    for L in (0.250, 0.375, 0.500, 0.625):
+        n = int(round(L / a0))
+        for tag, K in (('und', K_UND), ('drn', K_DRN)):
+            for s in SEEDS:
+                r = row('BRKS_L%03d_%s_s%d' % (int(round(1000 * L)), tag, s),
+                        phi, K, True, 0.024).split(',')
+                r[1] = '%.3f' % L
+                r[36] = str(n)
+                rows.append(','.join(r))
+    return rows
+
+
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, 'params')
+
+    rows = build_spacing()
+    p = os.path.join(out, 'rve_bracket_spacing.csv')
+    with open(p, 'w') as f:
+        f.write(HDR + '\n')
+        for r in rows:
+            f.write(r + '\n')
+    print('wrote %s : %d cells (%d solves)' % (p, len(rows), 2 * len(rows)))
 
     rows = build_nlayers()
     p = os.path.join(out, 'rve_bracket_nlayers.csv')
