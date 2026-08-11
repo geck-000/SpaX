@@ -62,7 +62,8 @@ def panel_marchenko(ax, z):
     fs.depth_axis(ax)
     ax.set_xlim(0.8, 11)
     ax.set_xlabel("Young's modulus [GPa]")
-    ax.set_title('(a) Marchenko: shape matches, level is his intercept')
+    ax.text(0.015, 0.965, '(a)', transform=ax.transAxes,
+            fontsize=13, fontweight='bold', va='top')
     ax.legend(loc='lower left', fontsize=9.5)
     return n
 
@@ -93,9 +94,8 @@ def panel_gogolaze(ax, z):
     ax.set_yscale('log'); ax.set_ylim(0.6, 14)
     ax.set_xlabel('bridge exponent $n$ in $E\\propto b^{\\,n}$')
     ax.set_ylabel(r'beam rigidity $12D/H^3$ [GPa]')
-    ax.set_title('(b) Gogolaze: required exponent vs what theory allows')
-
-
+    ax.text(0.015, 0.965, '(b)', transform=ax.transAxes,
+            fontsize=13, fontweight='bold', va='top')
 def panel_kujala(ax, z):
     Et, Eb = K_TOP.mean(), K_BOT.mean()
     tgt = Et + (Eb - Et) * z
@@ -116,7 +116,8 @@ def panel_kujala(ax, z):
     fs.depth_axis(ax)
     ax.set_xlim(0, 0.55)
     ax.set_xlabel(r'brine volume fraction $\phi$')
-    ax.set_title('(c) Kujala: the porosity his beams imply')
+    ax.text(0.015, 0.965, '(c)', transform=ax.transAxes,
+            fontsize=13, fontweight='bold', va='top')
     ax.legend(loc='lower right', fontsize=9.5)
 
 

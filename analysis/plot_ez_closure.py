@@ -49,7 +49,8 @@ def panel_ephi(ax):
     ax.set_yscale('log'); ax.set_ylim(0.05, 12); ax.set_xlim(0, 0.24)
     ax.set_xlabel(r'brine volume fraction $\phi$')
     ax.set_ylabel(r'$E$  [GPa]')
-    ax.set_title('(a) the closure against measured laws')
+    ax.text(0.015, 0.965, '(a)', transform=ax.transAxes,
+            fontsize=13, fontweight='bold', va='top')
     ax.legend(fontsize=9, loc='lower left')
 
 
@@ -71,7 +72,8 @@ def panel_column(ax):
     fs.depth_axis(ax)
     ax.set_xscale('log'); ax.set_xlim(0.15, 14)
     ax.set_xlabel(r"Young's modulus  [GPa]")
-    ax.set_title(r'(b) $E(z)$: 1 m column, $-20\,^\circ$C, $S=6$ ppt')
+    ax.text(0.015, 0.965, '(b)', transform=ax.transAxes,
+            fontsize=13, fontweight='bold', va='top')
     ax.legend(fontsize=9.5, loc='lower left')
 
 
@@ -103,7 +105,8 @@ def panel_cases(ax):
                        fontsize=10)
     ax.set_xlim(-0.6, 4.3)
     ax.set_ylabel(r'beam rigidity  [GPa]'); ax.set_ylim(0, 2.4)
-    ax.set_title('(c) Gogolaze level (left) and Marchenko grading (right)')
+    ax.text(0.015, 0.965, '(c)', transform=ax.transAxes,
+            fontsize=13, fontweight='bold', va='top')
     ax.legend(fontsize=9, loc='upper left')
     ax.grid(axis='x', alpha=0)
 
@@ -134,7 +137,8 @@ def panel_sensitivity(ax):
     ax.set_yticklabels([r[0] for r in rows], fontsize=9.5)
     ax.set_xscale('log'); ax.set_xlim(0.2, 6)
     ax.set_xlabel(r'$E$ at $\phi=%.2f$  [GPa]' % phi_ref)
-    ax.set_title('(d) what each ingredient is worth')
+    ax.text(0.015, 0.965, '(d)', transform=ax.transAxes,
+            fontsize=13, fontweight='bold', va='top')
     ax.grid(axis='y', alpha=0)
 
 

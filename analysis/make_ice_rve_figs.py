@@ -70,10 +70,11 @@ def fig_rve(outdir):
         print('  fig3: missing data, skipped')
         return
     fig, ax = plt.subplots(1, 2, figsize=(12.4, 5.2), sharey=True)
-    for a, g, title, note in (
-            (ax[0], dens, '(a) bridge DENSITY held fixed',
-             'converged: CV 1.9% / 0.8%'),
-            (ax[1], spac, '(b) bridge COUNT held instead',
+    for a, g, letter, note in (
+            (ax[0], dens, 'a',
+             'bridge density held\nconverged: CV 1.9% / 0.8%'),
+            (ax[1], spac, 'b',
+             'bridge count held instead' '\n'
              r'drifts as $L^{-1.14}$, CV 39%')):
         for state, c, mk, lab in (('drn', fs.BLUE, 'o', 'drained'),
                                   ('und', fs.VERM, 's', 'undrained')):
@@ -81,14 +82,13 @@ def fig_rve(outdir):
             L, m, s = agg(sub, lambda k: int(k[0]) / 1000.0)
             a.errorbar(L, m, yerr=s, marker=mk, color=c, capsize=3, label=lab)
         a.set_xlabel(r'cell edge $L$   [model units]')
-        a.set_title(title)
         a.text(0.04, 0.06, note, transform=a.transAxes, fontsize=11,
                color='0.25')
+        a.text(0.015, 0.965, '(%s)' % letter, transform=a.transAxes,
+               fontsize=13, fontweight='bold', va='top')
         a.set_yscale('log'); a.set_ylim(0.15, 9)
         a.legend(fontsize=10.5, loc='center left')
     ax[0].set_ylabel(r'$E_x$   [GPa]')
-    fig.suptitle('The microstructure must be held, not the counts', y=1.0,
-                 fontsize=14)
     fig.tight_layout()
     p = os.path.join(outdir, 'fig3_rve.png')
     fig.savefig(p, dpi=170); print('  wrote %s' % p)
@@ -115,7 +115,6 @@ def fig_elimination(outdir):
     ax.set_yticks(y); ax.set_yticklabels([r[0] for r in rows], fontsize=10.5)
     ax.set_xscale('log'); ax.set_xlim(0.9, 9)
     ax.set_xlabel('factor by which the transverse modulus changes')
-    ax.set_title('No parametric explanation reaches the discrepancy')
     ax.grid(axis='y', alpha=0)
     fig.tight_layout()
     p = os.path.join(outdir, 'fig5_elimination.png')
@@ -140,7 +139,8 @@ def fig_confinement(outdir):
     a.set_xscale('log'); a.set_yscale('log'); a.set_ylim(0.4, 14)
     a.set_xlabel(r"fill bulk modulus $K$   [GPa]")
     a.set_ylabel(r'$E$   [GPa]')
-    a.set_title('(a) a layered cell, at fixed geometry')
+    a.text(0.015, 0.965, '(a)', transform=a.transAxes,
+            fontsize=13, fontweight='bold', va='top')
     a.legend(fontsize=10.5, loc='lower right')
 
     b = ax[1]
@@ -151,10 +151,9 @@ def fig_confinement(outdir):
         b.text(i, v * 1.04, r'$\times$%.2f' % v, ha='center', fontsize=12)
     b.set_yscale('log'); b.set_ylim(0.9, 12)
     b.set_ylabel('undrained / drained')
-    b.set_title('(b) the same release, two morphologies')
+    b.text(0.015, 0.965, '(b)', transform=b.transAxes,
+            fontsize=13, fontweight='bold', va='top')
     b.grid(axis='x', alpha=0)
-    fig.suptitle('A confined layer resists at its bulk modulus; a pocket does not',
-                 y=1.0, fontsize=13.5)
     fig.tight_layout()
     p = os.path.join(outdir, 'fig6_confinement.png')
     fig.savefig(p, dpi=170); print('  wrote %s' % p)
@@ -186,9 +185,6 @@ def fig_constriction(outdir):
     ax.set_xlabel('bridges per layer, at fixed total bridge area')
     ax.set_ylabel(r'$E_x$   [GPa]')
     ax.legend(fontsize=10.5, loc='center left')
-    ax.set_title('Constriction: the transverse path is contact-limited\n'
-                 'flat would mean area-limited; falling, bending-limited',
-                 fontsize=13)
     fig.tight_layout()
     p = os.path.join(outdir, 'fig7_constriction.png')
     fig.savefig(p, dpi=170); print('  wrote %s' % p)
@@ -222,8 +218,6 @@ def fig_spacing(outdir):
     ax.set_xscale('log'); ax.set_yscale('log')
     ax.set_xlabel(r'lamellar spacing $a_0$   [mm]')
     ax.set_ylabel(r'$E_x$   [GPa]')
-    ax.set_title('Spacing sets the scale, and the physical value is finer '
-                 'than we solved')
     ax.legend(fontsize=10.5, loc='upper left')
     fig.tight_layout()
     p = os.path.join(outdir, 'fig8_spacing.png')
