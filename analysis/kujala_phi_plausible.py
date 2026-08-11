@@ -58,10 +58,10 @@ def main():
     print('First-year bulk salinity runs about %.0f-%.0f ppt.\n'
           % S_PLAUSIBLE)
 
-    for exponent in (1.0, 2.0):
+    for exponent in (0.63, 0.99):
         phi = implied_phi(z, exponent)
         print('=' * 68)
-        print('IMPLIED BY KUJALA WITH b^%.0f : phi %.3f -> %.3f'
+        print('IMPLIED BY KUJALA WITH b^%.2f : phi %.3f -> %.3f'
               % (exponent, phi[0], phi[-1]))
         print('=' * 68)
         print('%-30s %9s %9s %9s %s'
@@ -86,11 +86,11 @@ def main():
           % S_BALTIC)
     print('  Baltic, grown from brackish water. He reports no salinity, but the')
     print('  basin does not supply oceanic values.')
-    for exponent in (1.0, 2.0):
+    for exponent in (0.63, 0.99):
         phi = implied_phi(z, exponent)
         best = min(np.nanmax(salinity_needed(phi, Ts + (Tb - Ts) * z))
                    for _, Ts, Tb in PROFILES)
-        print('\n  b^%.0f needs at least %.1f ppt somewhere in the column:'
+        print('\n  b^%.2f needs at least %.1f ppt somewhere in the column:'
               % (exponent, best))
         print('     against oceanic %.0f-%.0f ppt : %s'
               % (S_OCEANIC[0], S_OCEANIC[1],
