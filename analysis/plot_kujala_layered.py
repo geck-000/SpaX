@@ -85,8 +85,8 @@ def main():
     # Adopted closure: Assur's load-bearing area with Gibson-Ashby bending.
     # Scaled so the cold end matches this column's own pocket cells.
     k = Ep[0] / pocket(phi)[0]
-    E_ga = column(zf, phi, exponent=2.0) * k
-    E_ar = column(zf, phi, exponent=1.0) * k
+    E_ga = layered(phi, 2.0) * k
+    E_ar = layered(phi, 1.0) * k
 
     fig, ax = plt.subplots(1, 2, figsize=(12.6, 5.6))
 
@@ -95,12 +95,9 @@ def main():
     a.fill_betweenx(zf, E_ga, E_ar, color=fs.SKY, alpha=0.30, zorder=1,
                     label='bridge scaling $b^{1}$ to $b^{2}$')
     a.plot(E_ga, zf, color=fs.BLUE, lw=2.4, zorder=3,
-           label=r'layered, Assur $b$ with $b^2$ (Gibson-Ashby)')
+           label=r'Assur $b$, $b^2$ bending (adopted)')
     a.plot(E_ar, zf, color=fs.BLUE, lw=1.8, ls=(0, (4, 3)), zorder=3,
-           label=r'layered, Assur $b$ with $b^1$ (area)')
-    a.axhline(LAYER_TOP, color=fs.PURPLE, lw=1.3, ls=':', zorder=2)
-    a.text(0.24, LAYER_TOP - 0.03, r'$-5^\circ$C: brine connects',
-           fontsize=9.5, color=fs.PURPLE)
+           label=r'Assur $b$, $b^1$ stretch')
     a.errorbar(m, zc, xerr=s, marker='o', ms=5, capsize=2, color=fs.GREEN,
                zorder=4, label='pocket column (current Fig. 18)')
 

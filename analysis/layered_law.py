@@ -60,11 +60,21 @@ def switch_depth(T_surf=-20.0, T_base=-1.8, T_morph=T_MORPH):
 
 
 def column(z, phi, T_surf=-20.0, T_base=-1.8, exponent=2.0, sharpness=1.0):
-    """E(z) with pockets above the morphology switch and layers below.
+    """E(z) with pockets above a morphology switch and layers below.
 
-    The blend is linear in depth across the layered zone rather than a step:
-    both the porosity and the connectivity vary continuously through the
-    interval where the temperature runs from T_morph to the freezing point.
+    RETAINED FOR COMPARISON ONLY; `layered` applied at every depth is the
+    adopted form. Switching the layer geometry on at an isotherm puts a knee in
+    E(z) that no measured profile shows: on Marchenko's own porosity this gives
+    curvature +0.198 against his -0.073, where the unswitched closure gives
+    -0.033, the right sign.
+
+    The switch was also poorly motivated. Columnar ice carries its lamellar
+    substructure at every depth, set by the growth process; temperature changes
+    the brine volume in the lamellae, not whether they exist. Light et al.'s
+    pocket-to-sheet observation concerns connectivity WITHIN a layer and does
+    not license switching the layer off. And no switch is needed, since
+    b = 1 - sqrt(phi) tends to one as phi falls, so a cold layer stops
+    softening of its own accord.
     """
     z = np.asarray(z, dtype=float)
     zs = switch_depth(T_surf, T_base)

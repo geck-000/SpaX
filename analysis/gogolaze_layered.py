@@ -78,28 +78,31 @@ def main():
     line('pockets throughout (current)', pocket(phi))
     line('pockets x 0.49 matrix factor', pocket(phi) * MATRIX_FACTOR)
 
-    for zc in (0.85, 0.75, 0.60):
-        w = np.clip((z - zc) / (1.0 - zc), 0.0, 1.0)
-        line('layers below z/H = %.2f, drained' % zc, blend(w, phi, True))
-
-    # This beam is percolated over its whole depth -- phi stays above the
-    # rule-of-fives threshold even at its minimum -- so layers everywhere is
-    # the configuration the microstructure indicates, not a basal zone. That is
-    # a real difference from the Kujala column, whose upper half is sealed.
-    one = np.ones_like(z)
-    lo = line('layers everywhere, drained', blend(one, phi, True))
-    hi = line('layers everywhere, undrained', blend(one, phi, False))
+    # The adopted closure, applied at every depth. No morphology switch: it put
+    # a knee in E(z) that no measured profile shows, and columnar ice carries
+    # its lamellar substructure throughout in any case. b = 1 - sqrt(phi) makes
+    # the closure self-limiting where the ice is cold and clean.
+    import layered_law as law
+    lo = line(r'Assur b, $b^2$ bending (adopted)', law.layered(phi, 2.0))
+    hi = line(r'Assur b, $b^1$ stretch', law.layered(phi, 1.0))
 
     print('-' * 68)
     print('%-38s %9.3f' % ('Gogolaze measured (apparent)', E_MEAS_APPARENT))
     print('%-38s %9.3f' % ('Gogolaze root-corrected', E_MEAS_CORRECTED))
 
-    print('\nBRACKET, whole-depth layers')
-    for nm, v in (('apparent', E_MEAS_APPARENT), ('root-corrected', E_MEAS_CORRECTED)):
-        f = (np.log(v) - np.log(lo)) / (np.log(hi) - np.log(lo))
-        print('  %-16s %.3f GPa : %s (%.0f%% across on a log scale)'
-              % (nm, v, 'INSIDE %.3f-%.3f' % (lo, hi) if 0 < f < 1 else 'outside',
-                 100 * f))
+    print('\nSPAN BETWEEN THE TWO NAMED MECHANISMS: %.3f - %.3f GPa'
+          % (min(lo, hi), max(lo, hi)))
+    for nm, v in (('apparent', E_MEAS_APPARENT),
+                  ('root-corrected', E_MEAS_CORRECTED)):
+        inside = min(lo, hi) <= v <= max(lo, hi)
+        print('  %-16s %.3f GPa : %s, model is %.2fx above'
+              % (nm, v, 'inside' if inside else 'BELOW the span',
+                 min(lo, hi) / v))
+    print('\n  So with every parameter physical the closure does NOT reach this')
+    print('  beam. It goes from %.2fx to %.2fx of the root-corrected value,'
+          % (flexural(pocket(phi), z)[0] / E_MEAS_CORRECTED,
+             min(lo, hi) / E_MEAS_CORRECTED))
+    print('  which is worth having and is not agreement.')
 
     print('\nWHAT THIS SAYS')
     print('  The 0.49 matrix factor exists because the pocket column presents a')
