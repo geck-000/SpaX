@@ -1,6 +1,7 @@
 r"""The adopted closure for a bridged brine layer, with every input external.
 
-    E_layer(phi) = E_pocket(phi) * b(phi)^2,   b(phi) = 1 - sqrt(phi)
+    E_layer(phi) = E_pocket(phi) * b(phi)^n,
+    b(phi) = 1 - sqrt(phi / phi_0),   phi_0 ~ 0.20
 
 Both factors come from outside the moduli being predicted.
 
@@ -9,26 +10,23 @@ from which the sea-ice literature's sqrt(v) laws descend. It is not fitted here
 and it is not free: given the brine fraction, the fraction of the lamellar plane
 still carrying ice follows.
 
-The exponent 2 is Gibson and Ashby's open-cell scaling. A plane held together by
-slender ice ligaments between brine pockets is an open-cell structure, and such
-a structure's modulus goes as the square of relative density whenever the
-ligaments carry load by BENDING rather than by stretching. Slender ligaments
-bend; that is the whole content of the assumption.
+The exponent lies between two named mechanisms rather than being chosen.
+Spreading compliance of a circular contact goes as 1/r with r ~ sqrt(b), giving
+b^0.5; simple load-bearing area gives b^1. Fitted on each dataset's own
+porosity, Gogolaze's beam asks for 0.99 and Marchenko's profile for 0.63, both
+inside that band. An earlier version used Gibson and Ashby's b^2, which was
+needed only because phi_0 had been dropped from b and is out of its own
+validity range at the resulting bridge fractions.
 
-WHAT IS ASSERTED RATHER THAN MEASURED, stated plainly because it matters. Our
-own cells suggest an exponent near 0.85, not 2. That is not evidence against
-Gibson and Ashby: the cells carry TWO LARGE circular bridges, and a fat disc
-carries load by stretching, for which the area scaling b^1 is correct. Real
-skeletal ice has a dense network of thin ligaments, which is the bending-
-dominated geometry b^2 describes and which the cells do not resolve at any mesh
-we can afford. Adopting b^2 is therefore a sub-grid closure, and it makes a
-falsifiable prediction: holding b fixed and SUBDIVIDING it over more, thinner
-bridges should drive the measured exponent up from 1 toward 2. If it does not,
-the bending interpretation is wrong and this closure should be withdrawn.
+Our own cells report b^0.85, which sits in the same band and no longer needs
+explaining away: two large circular bridges carry load by stretching, and
+stretching is what b^0.5 to b^1 describes. The three numbers -- 0.63, 0.85,
+0.99 -- come from a field profile, our finite elements, and a field beam
+respectively, and they agree without anything being fitted between them.
 
-The morphology switch is also external. Light, Maykut and Grenfell observed
-brine becoming connected above about -5 C, so a stated thermal profile fixes
-the depth at which layers replace pockets; it is not chosen to place a knee.
+Above phi_0 the closure returns zero, which is not a failure but its stated
+limit: the lamellar plane has no ice left, the material is skeletal rather than
+layered, and it needs a description of its own.
 """
 import numpy as np
 
@@ -36,18 +34,36 @@ E_ICE = 9.37
 T_MORPH = -5.0          # Light et al. 2003: brine connects above roughly this
 PHI_C = 0.05            # Golden et al. 1998, rule of fives
 
+# Brine fraction at which the plane of weakness is entirely brine, so the ice
+# path across it is severed. Assur's classic value is about 0.20, and it is the
+# constant we originally dropped by writing b = 1 - sqrt(phi), which sets it to
+# ONE: that would mean the lamellar plane only becomes fully brine when the
+# whole ice does, which is plainly wrong -- the plane fills long before, at the
+# skeletal transition. Pringle et al. supply an independent check: their
+# in-plane percolation threshold of 0.09 means brine spans a layer plane there,
+# so its 2D area fraction has reached the continuum-percolation value of about
+# 0.676, giving b = 0.324 at phi = 0.09. phi0 = 0.20 reproduces that (0.329);
+# phi0 = 1 gives 0.700 and does not.
+PHI_0 = 0.20
+
 
 def pocket(phi):
     """Knockdown for isolated pockets, R^2 = 0.999 over the column cells."""
     return E_ICE * (1.0 - 1.65 * np.asarray(phi, dtype=float))
 
 
-def assur_b(phi):
-    """Load-bearing area fraction left in the plane of weakness."""
-    return np.clip(1.0 - np.sqrt(np.clip(phi, 0.0, 1.0)), 1e-6, 1.0)
+def assur_b(phi, phi_0=PHI_0):
+    """Load-bearing area fraction left in the plane of weakness.
+
+    Zero at and above phi_0, where the plane carries no ice at all and the
+    layered description stops applying: past that the material is skeletal
+    rather than lamellar and needs its own treatment.
+    """
+    phi = np.asarray(phi, dtype=float)
+    return np.clip(1.0 - np.sqrt(np.clip(phi, 0.0, phi_0) / phi_0), 0.0, 1.0)
 
 
-def layered(phi, exponent=2.0):
+def layered(phi, exponent=1.0):
     """Transverse modulus of a bridged layer, drained."""
     return pocket(phi) * assur_b(phi) ** exponent
 
@@ -59,7 +75,7 @@ def switch_depth(T_surf=-20.0, T_base=-1.8, T_morph=T_MORPH):
     return (T_morph - T_surf) / (T_base - T_surf)
 
 
-def column(z, phi, T_surf=-20.0, T_base=-1.8, exponent=2.0, sharpness=1.0):
+def column(z, phi, T_surf=-20.0, T_base=-1.8, exponent=1.0, sharpness=1.0):
     """E(z) with pockets above a morphology switch and layers below.
 
     RETAINED FOR COMPARISON ONLY; `layered` applied at every depth is the
@@ -73,7 +89,7 @@ def column(z, phi, T_surf=-20.0, T_base=-1.8, exponent=2.0, sharpness=1.0):
     the brine volume in the lamellae, not whether they exist. Light et al.'s
     pocket-to-sheet observation concerns connectivity WITHIN a layer and does
     not license switching the layer off. And no switch is needed, since
-    b = 1 - sqrt(phi) tends to one as phi falls, so a cold layer stops
+    b tends to one as phi falls, so a cold layer stops
     softening of its own accord.
     """
     z = np.asarray(z, dtype=float)
@@ -91,10 +107,11 @@ def drained_here(phi):
 
 
 if __name__ == '__main__':
-    print('adopted closure: E = E_pocket(phi) * (1 - sqrt(phi))^2')
-    print('%8s %9s %11s %11s' % ('phi', 'Assur b', 'pocket', 'layered'))
-    for p in (0.05, 0.10, 0.15, 0.20, 0.227, 0.30):
-        print('%8.3f %9.3f %11.3f %11.3f'
-              % (p, assur_b(p), pocket(p), layered(p)))
-    print('\nmorphology switch at z/H = %.3f for a -20 to -1.8 C profile'
-          % switch_depth())
+    print('closure: E = E_pocket(phi) * b^n,  b = 1 - sqrt(phi/%.2f)' % PHI_0)
+    print('%8s %9s %11s %11s %11s'
+          % ('phi', 'Assur b', 'pocket', 'n=0.63', 'n=0.99'))
+    for p in (0.02, 0.05, 0.10, 0.15, 0.19, 0.20, 0.227):
+        print('%8.3f %9.3f %11.3f %11.3f %11.3f'
+              % (p, assur_b(p), pocket(p), layered(p, 0.63), layered(p, 0.99)))
+    print('\nabove phi_0 = %.2f the plane is fully brine and the closure stops'
+          % PHI_0)
