@@ -112,7 +112,17 @@ def main():
     found = (sorted(glob.glob(os.path.join(outdir, '**', 'Job-*-utx.inp'),
                               recursive=True))
              or sorted(glob.glob(os.path.join(outdir, 'Job-*-utx.inp'))))
-    for f in found[:8]:
+    # Sample ACROSS the deck rather than taking the first eight. Deck rows are
+    # ordered, so the leading eight are the first one or two conditions: on the
+    # cell-size sweep that meant auditing only the two smallest cells, which are
+    # exactly where an integer channel count overshoots its target fraction
+    # hardest (a channel is pi r^2 / L^2 of the cell, so a 0.3 cell needs 1.5
+    # channels and can only place 1 or 2). The campaign was then failed on a
+    # figure that described its smallest cells rather than itself.
+    if len(found) > 8:
+        step = len(found) / 8.0
+        found = [found[int(i * step)] for i in range(8)]
+    for f in found:
         rid = os.path.basename(f)[4:].rsplit('-', 1)[0]
         r = rows.get(rid)
         if r is None:
