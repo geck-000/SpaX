@@ -45,6 +45,12 @@ TOL=${VOLUME_TOL:-1.15}
 IDX=${IDX:?set IDX}
 STAGE=${STAGE:?set STAGE}
 CHUNK=${SPAX_MAX_ARRAY:-150}        # tasks submitted at once; cap is 200
+# Concurrently RUNNING array tasks. The association allows 100 running against
+# 200 submitted, and the controller was throttling to 30, so two thirds of the
+# available throughput was going unused. Left configurable because a campaign
+# of large cells can exhaust memory on a node long before it exhausts the job
+# limit.
+CONC=${SPAX_CONCURRENT:-90}
 LO=${LO:-1}                          # first task of the chunk being submitted
 KEEP_ODB=${SPAX_KEEP_ODB:-0}         # 1 disables the cleanup, for debugging
 MIN_FREE_GB=${SPAX_MIN_FREE_GB:-60}  # refuse to solve with less headroom
@@ -114,7 +120,7 @@ case "$STAGE" in
 import csv,sys
 print(sum(1 for _ in csv.DictReader(open('params/$DECK',encoding='utf8',errors='replace'))))")
     echo "$NR RVEs"
-    G=$(sbatch --parsable $A --array=1-${NR}%40 \
+    G=$(sbatch --parsable $A --array=1-${NR}%${CONC} \
         --export=ALL,WORKDIR=$W,CSV=params/$DECK,OUTDIR=$OUTDIR,SPAX_SEED=$SEED,PYTHONUSERBASE=$PUB${EXTRA:+,$EXTRA} \
         generate_array.sh)
     echo "gen: $G"
@@ -196,7 +202,7 @@ EOF
     HI=$(( LO + CHUNK - 1 )); [ "$HI" -gt "$N" ] && HI=$N
     echo "cell edge $LMAX -> mem $SOLVE_MEM, walltime $SOLVE_TIME; free ${FREE} GB"
     S=$(sbatch --parsable $A --partition=small --cpus-per-task=4 \
-        --mem=$SOLVE_MEM --time=$SOLVE_TIME --array=${LO}-${HI}%30 \
+        --mem=$SOLVE_MEM --time=$SOLVE_TIME --array=${LO}-${HI}%${CONC} \
         --export=ALL,WORKDIR=$W,JOBLIST=GJ_$NAME csc_solve_array.sh)
     echo "solve ${LO}-${HI} of $N: $S"
 
