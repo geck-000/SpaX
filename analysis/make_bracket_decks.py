@@ -175,6 +175,44 @@ def build_correlated():
     return rows
 
 
+def build_density():
+    """The size test redone at fixed bridge DENSITY rather than fixed count.
+
+    The first attempt held n_bridges at two while the cell grew, so the bridge
+    density fell as 1/L^2 -- 6.2x across the sweep -- and the drained modulus
+    fell with it at L^-1.14. Constriction predicts exactly that for a falling
+    density (E ~ t sqrt(b nu), so L^-1 at fixed count), so the result measured a
+    microstructure that was changing under the test rather than a cell that
+    could not homogenise.
+
+    Here nu = 64 per unit area is held instead, which is what makes the counts
+    come out integer at every cell size: n_bridges = 64 L^2 gives 4, 9, 16, 25
+    for L = 0.25, 0.375, 0.5, 0.625, while the plate pitch stays at 0.125 so
+    n_slabs runs 2, 3, 4, 5. Bridge radius is then the same in every cell,
+    sqrt(b/(pi nu)) = 0.027 at b = 0.15, so the mesh resolves them equally.
+
+    Bridge correlation is left at zero, matching the campaign this replaces, so
+    the ONLY difference is the density. Flat E_x means the drained layered cell
+    is a genuine RVE and the earlier verdict was my error rather than the
+    model's; still drifting means the model really does not homogenise.
+    """
+    rows = []
+    phi, a0, nu, b = 0.15, 0.125, 64.0, 0.15
+    for L in (0.250, 0.375, 0.500, 0.625):
+        n_sl = int(round(L / a0))
+        n_br = int(round(nu * L * L))
+        for tag, K in (('drn', K_DRN), ('und', K_UND)):
+            for s in SEEDS:
+                r = row('BRKD_L%03d_%s_s%d' % (int(round(1000 * L)), tag, s),
+                        phi, K, True, 0.024).split(',')
+                r[1] = '%.3f' % L
+                r[36] = str(n_sl)
+                r[38] = '%.4f' % b
+                r[39] = str(n_br)
+                rows.append(','.join(r))
+    return rows
+
+
 def build_nbridges():
     """Subdivide a fixed bridge area: the test of the bending interpretation.
 
@@ -247,6 +285,14 @@ def build_bridge():
 def main():
     root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
     out = sys.argv[1] if len(sys.argv) > 1 else os.path.join(root, 'params')
+
+    rows = build_density()
+    p = os.path.join(out, 'rve_bracket_density.csv')
+    with open(p, 'w') as f:
+        f.write(HDR + chr(10))
+        for r in rows:
+            f.write(r + chr(10))
+    print('wrote %s : %d cells (%d solves)' % (p, len(rows), 2 * len(rows)))
 
     rows = build_nbridges()
     p = os.path.join(out, 'rve_bracket_nbridges.csv')
