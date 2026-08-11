@@ -1,0 +1,119 @@
+r"""The Gogolaze cantilever, with and without a layered basal zone.
+
+Gogolaze et al. (2026) report a whole-beam modulus rather than a profile, so
+the quantity to compare is the flexural modulus the beam presents,
+
+    E_flex = 12 D / H^3,    D = int E(z) (z - z0)^2 dz,
+
+which is what a cantilever test returns. Their beam 3 gives 0.785 GPa as
+measured and 1.421 GPa once corrected for root rotation, and their eq. (14)
+supplies the brine profile the cells are built from, so the porosity is theirs
+and not ours.
+
+The case study currently multiplies the matrix modulus by 0.49 to bring the
+computed beam onto the measurement. That factor is not microstructure; it is
+the admission that the cells are about twice too stiff for this beam. The
+question here is whether a layered basal zone supplies that softening for a
+physical reason, and so lets the factor be dropped rather than carried.
+"""
+import numpy as np
+
+E_ICE = 9.37
+H_BEAM = 0.32                     # m, their beam 3
+E_MEAS_APPARENT = 0.785           # GPa, their eq. (2)
+E_MEAS_CORRECTED = 1.421          # GPa, their eq. (19)
+MATRIX_FACTOR = 0.49              # what the case study currently applies
+
+VB_POLY = (0.29315, -5.124, 85.977)   # their eq. (14), z in cm, per-mille
+
+PHI_L = np.array([0.10, 0.15, 0.227])
+E_L_N1 = np.array([1.150, 1.039, 0.724])      # layered, drained, one layer
+SPACING_FACTOR = 0.357 / 0.942                # one layer -> four, at phi=0.15
+E_U_N1 = np.array([4.705, 2.866, 2.127])
+SPACING_FACTOR_U = 5.442 / 2.640
+
+
+def brine(zc):
+    a, b, c = VB_POLY
+    return (a * zc ** 2 + b * zc + c) / 1000.0
+
+
+def pocket(phi):
+    return E_ICE * (1.0 - 1.65 * phi)
+
+
+def layered(phi, drained=True):
+    if drained:
+        return np.interp(phi, PHI_L, E_L_N1) * SPACING_FACTOR
+    return np.minimum(np.interp(phi, PHI_L, E_U_N1) * SPACING_FACTOR_U, E_ICE)
+
+
+def blend(w, phi, drained):
+    Ep, El = pocket(phi), layered(phi, drained)
+    return np.exp((1 - w) * np.log(Ep) + w * np.log(np.maximum(El, 1e-6)))
+
+
+def flexural(E, z):
+    z0 = np.trapz(E * z, z) / np.trapz(E, z)
+    D = np.trapz(E * (z - z0) ** 2, z)
+    return 12.0 * D / (z[-1] - z[0]) ** 3, z0
+
+
+def main():
+    z = np.linspace(0, 1, 600)
+    phi = brine(z * H_BEAM * 100.0)
+    print('Gogolaze beam 3: H = %.2f m, brine from their eq. (14)' % H_BEAM)
+    print('  phi at top %.4f, minimum %.4f, base %.4f'
+          % (phi[0], phi.min(), phi[-1]))
+    print()
+    print('%-38s %9s %8s %9s' % ('', 'E_flex', 'z0/H', 'vs meas'))
+    print('-' * 68)
+
+    def line(name, E):
+        ef, z0 = flexural(E, z)
+        print('%-38s %9.3f %8.3f %8.2fx'
+              % (name, ef, z0, ef / E_MEAS_CORRECTED))
+        return ef
+
+    line('pockets throughout (current)', pocket(phi))
+    line('pockets x 0.49 matrix factor', pocket(phi) * MATRIX_FACTOR)
+
+    for zc in (0.85, 0.75, 0.60):
+        w = np.clip((z - zc) / (1.0 - zc), 0.0, 1.0)
+        line('layers below z/H = %.2f, drained' % zc, blend(w, phi, True))
+
+    # This beam is percolated over its whole depth -- phi stays above the
+    # rule-of-fives threshold even at its minimum -- so layers everywhere is
+    # the configuration the microstructure indicates, not a basal zone. That is
+    # a real difference from the Kujala column, whose upper half is sealed.
+    one = np.ones_like(z)
+    lo = line('layers everywhere, drained', blend(one, phi, True))
+    hi = line('layers everywhere, undrained', blend(one, phi, False))
+
+    print('-' * 68)
+    print('%-38s %9.3f' % ('Gogolaze measured (apparent)', E_MEAS_APPARENT))
+    print('%-38s %9.3f' % ('Gogolaze root-corrected', E_MEAS_CORRECTED))
+
+    print('\nBRACKET, whole-depth layers')
+    for nm, v in (('apparent', E_MEAS_APPARENT), ('root-corrected', E_MEAS_CORRECTED)):
+        f = (np.log(v) - np.log(lo)) / (np.log(hi) - np.log(lo))
+        print('  %-16s %.3f GPa : %s (%.0f%% across on a log scale)'
+              % (nm, v, 'INSIDE %.3f-%.3f' % (lo, hi) if 0 < f < 1 else 'outside',
+                 100 * f))
+
+    print('\nWHAT THIS SAYS')
+    print('  The 0.49 matrix factor exists because the pocket column presents a')
+    print('  flexural modulus several times the measured one. A layered basal')
+    print('  zone supplies softening of the same order for a stated physical')
+    print('  reason -- brine sheets at the plate spacing, drained because the')
+    print('  warm base is permeable -- so the factor can be retired rather than')
+    print('  carried as an unexplained calibration.')
+    print('\n  Estimates: the layered law is known across phi at one spacing and')
+    print('  across spacing at one phi. rve_bracket_layer at physical spacing')
+    print('  removes that. The depth at which layers switch on is also not yet')
+    print('  pinned, and it is doing real work here, so it must come from the')
+    print('  percolation threshold and not from matching the beam.')
+
+
+if __name__ == '__main__':
+    main()
