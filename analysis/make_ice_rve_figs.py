@@ -224,6 +224,59 @@ def fig_spacing(outdir):
     fig.savefig(p, dpi=170); print('  wrote %s' % p)
 
 
+# ---------------------------------------------------------------- Fig 9
+def fig_bridge(outdir):
+    """Bridge fraction at fixed brine content. The drained cell follows a power
+    law in b; the undrained one does not respond to b at all. Both had to be
+    measured, because the confinement argument predicts the second and the
+    Assur plane-of-weakness argument predicts only the first."""
+    g = load('results_bracket_bridge.csv', r'BRKB_b(\d+)_(und|drn)_s\d')
+    if not g:
+        print('  fig9: missing data, skipped')
+        return
+    fig, ax = plt.subplots(1, 2, figsize=(12.6, 5.3))
+    a = ax[0]
+    fits = {}
+    for state, c, mk, lab in (('drn', fs.BLUE, 'o', 'drained'),
+                              ('und', fs.VERM, 's', 'undrained')):
+        sub = {k: v for k, v in g.items() if k[1] == state}
+        b, m, s = agg(sub, lambda k: int(k[0]) / 1000.0)
+        a.errorbar(b, m, yerr=s, marker=mk, color=c, ms=9, capsize=3, label=lab)
+        p, cov = np.polyfit(np.log(b), np.log(m), 1, cov=True)
+        fits[state] = (p[0], np.sqrt(cov[0, 0]))
+        a.text(b[-1] * 1.1, m[-1], r'$b^{%.2f}$' % p[0], color=c, fontsize=12,
+               va='center')
+    a.set_xscale('log'); a.set_yscale('log'); a.set_ylim(0.15, 12)
+    a.set_xlabel(r'ice fraction of the layer plane $b$')
+    a.set_ylabel(r'$E_x$   [GPa]')
+    a.text(0.015, 0.965, '(a)', transform=a.transAxes, fontsize=13,
+           fontweight='bold', va='top')
+    a.legend(fontsize=10.5, loc='upper left')
+
+    # the drainage ratio: largest exactly where the bridges are sparsest
+    b2, md, _ = agg({k: v for k, v in g.items() if k[1] == 'drn'},
+                    lambda k: int(k[0]) / 1000.0)
+    _, mu, _ = agg({k: v for k, v in g.items() if k[1] == 'und'},
+                   lambda k: int(k[0]) / 1000.0)
+    r = mu / md
+    bb = ax[1]
+    bb.plot(b2, r, 'D-', color=fs.PURPLE, ms=9)
+    for x, y in zip(b2, r):
+        bb.text(x, y * 1.10, r'$\times%.1f$' % y, ha='center', fontsize=10.5)
+    bb.set_xscale('log'); bb.set_yscale('log'); bb.set_ylim(2, 32)
+    bb.set_xlabel(r'ice fraction of the layer plane $b$')
+    bb.set_ylabel('undrained / drained')
+    bb.text(0.015, 0.965, '(b)', transform=bb.transAxes, fontsize=13,
+            fontweight='bold', va='top')
+    bb.text(0.55, 0.80, 'drainage matters most\nwhere the bridges are sparsest',
+            transform=bb.transAxes, fontsize=10.5, color='0.25', ha='center')
+    fig.tight_layout()
+    p = os.path.join(outdir, 'fig9_bridge.png')
+    fig.savefig(p, dpi=170); print('  wrote %s' % p)
+    print('     drained  n = %.3f +- %.3f' % fits['drn'])
+    print('     undrained n = %.3f +- %.3f' % fits['und'])
+
+
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else RES
     print('writing ice_rve figures into %s' % outdir)
@@ -232,6 +285,7 @@ def main():
     fig_confinement(outdir)
     fig_constriction(outdir)
     fig_spacing(outdir)
+    fig_bridge(outdir)
     print('Fig 1 is ported from main_fix (tikz); Fig 2 needs mesh renders;')
     print('Figs 9 and 10 come from plot_ez_closure.py and plot_match_ez.py.')
 
