@@ -67,11 +67,13 @@ def panel_marchenko(ax, z):
     ax.plot(tgt, z, color=fs.VERM, lw=2.6, label='Marchenko 2024 (Kerr-Palmer)')
     ax.plot(E, z, color=fs.BLUE, lw=2.2,
             label=r'closure, $n=%.2f$ (calibrated band)' % ez.N_MID)
-    ax.plot(Eb, z, color=fs.PURPLE, lw=1.8, ls=(0, (4, 3)),
-            label=r'best shape, $n=%.2f$ (below the band)' % n)
+    Ehi = ez.E_of_phi(phi, n=ez.N_HI, floor=0.0)
+    ax.plot(Ehi, z, color=fs.PURPLE, lw=1.8, ls=(0, (4, 3)),
+            label=r'closure, $n=%.2f$: $\alpha=%.3f$ vs his $0.384$'
+                  % (ez.N_HI, Ehi[-1] / Ehi[0]))
     if zc is not None:
         ax.axhline(zc, color='0.45', lw=1.1, ls=':')
-        ax.text(0.85, zc - 0.03, r'$\phi_c$ crossed: closure changes branch',
+        ax.text(0.85, zc - 0.03, r'$\phi_c$: bridge factor begins to switch on',
                 fontsize=8.8, color='0.35', va='bottom')
     fs.depth_axis(ax)
     ax.set_xscale('log')
@@ -122,15 +124,10 @@ def panel_kujala(ax, z):
         req = []
         for t in tgt:
             f = lambda p: float(ez.E_of_phi(p, n=n, floor=0.0)) - t
-            root = np.nan
-            for lo, hi in ((ez.PHI_C + 1e-6, 0.95), (1e-6, ez.PHI_C - 1e-6)):
-                try:
-                    if f(lo) * f(hi) < 0:
-                        root = brentq(f, lo, hi)
-                        break
-                except ValueError:
-                    pass
-            req.append(root)
+            try:
+                req.append(brentq(f, 1e-9, ez.PHI_0 - 1e-9))
+            except ValueError:
+                req.append(np.nan)
         ax.plot(req, z, color=c, ls=ls, lw=2.4,
                 label=r'implied by Kujala, $n=%.2f$' % n)
     ax.plot(ours_phi(z), z, color=fs.VERM, lw=2.4, ls='-.',
@@ -139,20 +136,12 @@ def panel_kujala(ax, z):
     ax.text(0.40, 0.10, 'skeletal\nrange', fontsize=10, color=fs.ORANGE,
             ha='center')
 
-    # Where the inversion has no solution at all. The branches differ by
-    # b(phi_c)^n_eff at the threshold, so a band of moduli corresponds to no
-    # brine fraction. Kujala's upper column sits inside it, which is why the
-    # implied-porosity curves stop rather than continue.
-    n_eff = ez.N_MID * (ez.A0_REF_MM / ez.A0_MM) ** ez.SPACING_EXP
-    E_hi = ez.E_ICE * (1 - 1.65 * ez.PHI_C)
-    E_lo = E_hi * (1 - np.sqrt(ez.PHI_C / ez.PHI_0)) ** n_eff
-    zgap = z[(tgt > E_lo) & (tgt < E_hi)]
-    if len(zgap):
-        ax.axhspan(zgap.min(), zgap.max(), color='0.55', alpha=0.16, zorder=0)
-        ax.text(0.27, 0.5 * (zgap.min() + zgap.max()),
-                'no solution:\nKujala $E$ falls in the\nbranch gap %.1f--%.1f GPa'
-                % (E_lo, E_hi), fontsize=8.4, color='0.3', ha='center',
-                va='center')
+    # The ramped closure is continuous and strictly decreasing over 0..phi_0,
+    # so every measured modulus has exactly one preimage and the inversion runs
+    # the whole depth. The step form used earlier left a gap of moduli with no
+    # solution, which cut these curves off at mid-depth.
+    ax.text(0.055, 0.35, 'closure is monotone,\nso every $E$ inverts',
+            fontsize=8.6, color='0.35', ha='left')
     fs.depth_axis(ax)
     ax.set_xlim(0, 0.55)
     ax.set_xlabel(r'brine volume fraction $\phi$')

@@ -4,17 +4,28 @@ This is a CALIBRATED closure, not a prediction. Four of its ingredients are
 measured and two are not, and the two that are not carry most of its
 uncertainty. Using it is reasonable; quoting it without the band is not.
 
-    E(phi) = E_pocket(phi)                       phi <  phi_c
-           = E_pocket(phi) * b(phi)^n_eff        phi >= phi_c
+    E(phi) = E_pocket(phi) * b(phi)^(n_eff * w(phi))
     E_pocket(phi) = 9.37 (1 - 1.65 phi)          [GPa]
     b(phi) = 1 - sqrt(phi / phi_0)               zero at and above phi_0
     n_eff  = n * (a0_ref/a0)^0.69
+    w(phi) = clip((phi - phi_c)/(phi_0 - phi_c), 0, 1)
 
-The closure is PIECEWISE, and the branch point is the percolation threshold.
-The bridge factor describes ice bridging a lamellar plane; above phi_c no such
-plane exists, so the pocket law stands alone there. Applying b at every depth
--- as an earlier version of this file did -- knocks the cold surface to 6.3 GPa
-against a measured 7.18-8.60, by charging a mechanism that is not present.
+The bridge factor is switched on GRADUALLY between the percolation threshold,
+where brine first spans a layer plane, and phi_0, where the plane holds no ice.
+Two limits of w bracket this and both were used at some point:
+
+  w = 1 everywhere   applies b in cold ice where no lamellar plane exists,
+                     knocking E_top to 6.3 GPa against a measured 7.18-8.60.
+                     Wrong.
+  w = Heaviside      a step at phi_c. Reproduces Kujala's endpoint ratio well
+                     (alpha 0.129 against a measured 0.12-0.19) but leaves
+                     E(phi) discontinuous, so moduli between 4.6 and 8.6 GPa
+                     have no corresponding brine fraction and the closure
+                     cannot be inverted there.
+
+The ramp adopted here is continuous and monotone, so it inverts everywhere, at
+the cost of a milder basal knockdown (alpha 0.235). The transition width is not
+measured; the ramp and the step bracket it.
 
 INGREDIENT           VALUE            STATUS
 E_pocket             above            MEASURED. R^2 = 0.999 over the column
@@ -78,12 +89,19 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     # anyway charges a mechanism that is not present. At the cold surface, where
     # phi is about 0.022, b comes out at 0.67 and would knock the modulus down
     # by 30% for nothing -- taking E_top to 6.3 GPa against a measured
-    # 7.18-8.60 (Kujala). So the closure is piecewise, and the switch sits at
-    # the percolation threshold rather than being smoothed across it, because
-    # that is what a percolation transition is.
+    # 7.18-8.60 (Kujala).
+    #
+    # The mechanism is switched on by a weight rather than a step. w rises from
+    # 0 at phi_c, where the brine has only just begun to span the layer plane,
+    # to 1 at phi_0, where the plane holds no ice at all. A step at phi_c is the
+    # w -> Heaviside limit of this and was used earlier; it reproduces Kujala's
+    # endpoint ratio more closely but leaves E(phi) discontinuous, and hence a
+    # band of moduli with no corresponding brine fraction. The weight keeps the
+    # closure continuous and invertible at the cost of a milder basal knockdown.
     b = np.clip(1.0 - np.sqrt(np.clip(phi, 0.0, phi_0) / phi_0), 0.0, 1.0)
     n_eff = n * (A0_REF_MM / a0_mm) ** SPACING_EXP
-    E = np.where(phi >= PHI_C, E_pocket * b ** n_eff, E_pocket)
+    w = np.clip((phi - PHI_C) / (phi_0 - PHI_C), 0.0, 1.0)
+    E = E_pocket * b ** (n_eff * w)
     return np.maximum(E, floor)
 
 
