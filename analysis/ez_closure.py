@@ -4,9 +4,17 @@ This is a CALIBRATED closure, not a prediction. Four of its ingredients are
 measured and two are not, and the two that are not carry most of its
 uncertainty. Using it is reasonable; quoting it without the band is not.
 
-    E(phi) = E_pocket(phi) * b(phi)^(n * (a0_ref/a0)^0.69)
+    E(phi) = E_pocket(phi)                       phi <  phi_c
+           = E_pocket(phi) * b(phi)^n_eff        phi >= phi_c
     E_pocket(phi) = 9.37 (1 - 1.65 phi)          [GPa]
     b(phi) = 1 - sqrt(phi / phi_0)               zero at and above phi_0
+    n_eff  = n * (a0_ref/a0)^0.69
+
+The closure is PIECEWISE, and the branch point is the percolation threshold.
+The bridge factor describes ice bridging a lamellar plane; above phi_c no such
+plane exists, so the pocket law stands alone there. Applying b at every depth
+-- as an earlier version of this file did -- knocks the cold surface to 6.3 GPa
+against a measured 7.18-8.60, by charging a mechanism that is not present.
 
 INGREDIENT           VALUE            STATUS
 E_pocket             above            MEASURED. R^2 = 0.999 over the column
@@ -39,6 +47,7 @@ import numpy as np
 
 E_ICE = 9.37
 PHI_0 = 0.20
+PHI_C = 0.05            # Golden's rule of fives: where the lamellar plane begins
 N_MID, N_LO, N_HI = 0.53, 0.49, 0.59
 A0_MM, A0_REF_MM, SPACING_EXP = 0.35, 0.75, 0.69
 E_FLOOR = 0.05          # GPa, nominal skeletal residual; see caveat above
@@ -61,9 +70,20 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     dependence where b is small, which is the regime it was measured in.
     """
     phi = np.asarray(phi, dtype=float)
+    E_pocket = E_ICE * (1.0 - 1.65 * phi)
+
+    # The bridge factor applies only where the lamellar plane it describes
+    # actually exists. Below the percolation threshold the brine sits in
+    # isolated pockets: there is no plane, b has no referent, and evaluating it
+    # anyway charges a mechanism that is not present. At the cold surface, where
+    # phi is about 0.022, b comes out at 0.67 and would knock the modulus down
+    # by 30% for nothing -- taking E_top to 6.3 GPa against a measured
+    # 7.18-8.60 (Kujala). So the closure is piecewise, and the switch sits at
+    # the percolation threshold rather than being smoothed across it, because
+    # that is what a percolation transition is.
     b = np.clip(1.0 - np.sqrt(np.clip(phi, 0.0, phi_0) / phi_0), 0.0, 1.0)
     n_eff = n * (A0_REF_MM / a0_mm) ** SPACING_EXP
-    E = E_ICE * (1.0 - 1.65 * phi) * b ** n_eff
+    E = np.where(phi >= PHI_C, E_pocket * b ** n_eff, E_pocket)
     return np.maximum(E, floor)
 
 
