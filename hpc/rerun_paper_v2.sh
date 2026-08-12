@@ -251,11 +251,18 @@ EOF
     # a study -- the layer-count sweep decides whether the two bracket
     # campaigns behind it are worth spending, and a controller that chained
     # past it would spend them before anyone had read the answer.
-    if [ "${SPAX_STOP_AFTER:-0}" -gt 0 ] && [ "$IDX" -ge "${SPAX_STOP_AFTER}" ]; then
-      echo "SPAX_STOP_AFTER=${SPAX_STOP_AFTER} reached at IDX=$IDX; not chaining."
+    # A 0 arrives from chains launched before a stop was wanted, so it is
+    # coerced to the built-in default rather than meaning "never stop".
+    # Default 39: campaigns 37 and 40-44 already hold post-fix results and
+    # 38-39 are the only brackets still missing, so chaining past 39 would
+    # re-solve six campaigns for nothing.
+    STOP=${SPAX_STOP_AFTER:-0}
+    [ "$STOP" -eq 0 ] && STOP=${SPAX_DEFAULT_STOP:-39}
+    if [ "$STOP" -gt 0 ] && [ "$IDX" -ge "$STOP" ]; then
+      echo "stop-after=$STOP reached at IDX=$IDX; not chaining."
       exit 0
     fi
-    sbatch $A --export=ALL,WORKDIR=$W,STAGE=gen,IDX=$NEXT,MANIFEST=$MAN,SPAX_ACCOUNT=${SPAX_ACCOUNT},PYTHONUSERBASE=$PUB,SPAX_STOP_AFTER=${SPAX_STOP_AFTER:-0} "$SELF"
+    sbatch $A --export=ALL,WORKDIR=$W,STAGE=gen,IDX=$NEXT,MANIFEST=$MAN,SPAX_ACCOUNT=${SPAX_ACCOUNT},PYTHONUSERBASE=$PUB,SPAX_STOP_AFTER=$STOP "$SELF"
     ;;
 
   *)
