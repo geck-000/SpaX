@@ -133,6 +133,25 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     n_eff = n * (A0_REF_MM / a0_mm) ** SPACING_EXP
     w = np.clip((phi - PHI_C) / (phi_0 - PHI_C), 0.0, 1.0)
     E = E_pocket * b ** (n_eff * w)
+
+    # Third regime. Above PHI_CROSS the brine has percolated across the planes,
+    # so the ice left in a plane is no longer a perforated sheet but a scatter
+    # of isolated struts, and struts carry load by bending rather than by
+    # spreading stress into a contact. That is the open-cell cellular-solid
+    # limit, E ~ b^2.
+    #
+    # This law was tried in an earlier version of the closure and withdrawn,
+    # correctly: it was being applied at b = 0.52-0.78, far outside the b < 0.3
+    # range Gibson and Ashby state for it. Here b(PHI_CROSS) = 0.163 and falls
+    # to zero at phi_0, so the whole regime lies inside its validity range. The
+    # earlier withdrawal was about where it was used, not whether it holds.
+    #
+    # Matched at PHI_CROSS by construction, so E(phi) stays continuous.
+    b_c = 1.0 - np.sqrt(PHI_CROSS / phi_0)
+    w_c = (PHI_CROSS - PHI_C) / (phi_0 - PHI_C)
+    if b_c > 0:
+        E_hi = E_pocket * b_c ** (n_eff * w_c) * (b / b_c) ** 2
+        E = np.where(phi >= PHI_CROSS, E_hi, E)
     return np.maximum(E, floor)
 
 
