@@ -8,7 +8,14 @@ uncertainty. Using it is reasonable; quoting it without the band is not.
     E_pocket(phi) = 9.37 (1 - 1.65 phi)          [GPa]
     b(phi) = 1 - sqrt(phi / phi_0)               zero at and above phi_0
     n_eff  = n * (a0_ref/a0)^0.69
-    w(phi) = clip((phi - phi_c)/(phi_0 - phi_c), 0, 1)
+    w(phi) = clip((phi - phi_layer)/(phi_0 - phi_layer), 0, 1)
+
+The branch sits at the IN-PLANE percolation threshold, 0.09, not the vertical
+one at 0.046. Columnar ice carries its lamellar substructure at every depth --
+the plate spacing is fixed at the growth interface -- so nothing about the
+lamellae switches on with warming. What switches on is the brine within a plane
+becoming continuous, which is in-plane percolation and is measured. Vertical
+percolation governs drainage instead, and the two were previously conflated.
 
 The bridge factor is switched on GRADUALLY between the percolation threshold,
 where brine first spans a layer plane, and phi_0, where the plane holds no ice.
@@ -57,8 +64,32 @@ damage this elastic closure does not model.
 import numpy as np
 
 E_ICE = 9.37
-PHI_0 = 0.20
-PHI_C = 0.05            # Golden's rule of fives: where the lamellar plane begins
+
+# Pringle et al. measure percolation of the pore space in three directions, and
+# they control three different things. Using one number for two of them, as an
+# earlier version of this file did, conflates drainage with morphology.
+#
+#   PHI_DRAIN  0.046  vertical percolation. Brine can leave: the drained limit
+#                     applies at and above this. Golden's rule of fives.
+#   PHI_LAYER  0.09   in-plane percolation. Brine spans a lamellar plane, so
+#                     the plane becomes a plane of weakness and load must cross
+#                     it through ice bridges. THIS is what switches the layered
+#                     description on -- not vertical percolation, which is a
+#                     statement about permeability.
+#   PHI_CROSS  0.14   across-plane percolation. Brine finds a path across the
+#                     planes, so the bridge array no longer blocks. phi_0 must
+#                     exceed this, which is the only measurement bearing on
+#                     phi_0 at all and bounds it from below.
+PHI_DRAIN, PHI_LAYER, PHI_CROSS = 0.046, 0.09, 0.14
+PHI_0 = 0.20            # Assur; consistent with PHI_CROSS < phi_0 as required
+
+# The ordering matters and settles a question the closure used to assert.
+# PHI_LAYER > PHI_DRAIN, so wherever brine spans a layer plane it has already
+# percolated vertically and can drain. The layered branch is therefore ALWAYS
+# the drained one -- which is worth stating, because Section 4.4.3 measures
+# drainage at up to 19x in this morphology, the largest single factor in the
+# study.
+PHI_C = PHI_LAYER       # retained name: the threshold the closure branches at
 N_MID, N_LO, N_HI = 0.53, 0.49, 0.59
 A0_MM, A0_REF_MM, SPACING_EXP = 0.35, 0.75, 0.69
 E_FLOOR = 0.05          # GPa, nominal skeletal residual; see caveat above
