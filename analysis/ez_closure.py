@@ -81,6 +81,11 @@ E_ICE = 9.37
 #                     exceed this, which is the only measurement bearing on
 #                     phi_0 at all and bounds it from below.
 PHI_DRAIN, PHI_LAYER, PHI_CROSS = 0.046, 0.09, 0.14
+# Pringle quotes the vertical threshold as 4.6 +- 0.7 %. The drainage factor is
+# ramped over that stated uncertainty rather than stepped at the central value,
+# which keeps E(phi) continuous and, unlike the layered ramp of Eq. (5), uses a
+# width that is measured rather than chosen.
+PHI_DRAIN_SD = 0.007
 PHI_0 = 0.20            # Assur; consistent with PHI_CROSS < phi_0 as required
 
 # The ordering matters and settles a question the closure used to assert.
@@ -127,8 +132,13 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     # It is the smallest of the four transitions by an order of magnitude, and
     # was previously absorbed rather than represented; it is applied here so
     # that each measured threshold carries the mechanism that belongs to it.
-    E_pocket = E_ICE * (1.0 - 1.65 * phi)
-    E_pocket = np.where(phi >= PHI_DRAIN, E_pocket / DRAIN_FACTOR, E_pocket)
+    # Ramped over the threshold's own measurement uncertainty, 4.6 +- 0.7 %, so
+    # E(phi) stays continuous. Stepping at the central value left moduli
+    # between 8.33 and 8.66 GPa with no preimage, which cost the invertibility
+    # the ramped layered branch was adopted to secure.
+    u = np.clip((phi - (PHI_DRAIN - PHI_DRAIN_SD)) / (2.0 * PHI_DRAIN_SD),
+                0.0, 1.0)
+    E_pocket = E_ICE * (1.0 - 1.65 * phi) / (1.0 + (DRAIN_FACTOR - 1.0) * u)
 
     # The bridge factor applies only where the lamellar plane it describes
     # actually exists. Below the percolation threshold the brine sits in
