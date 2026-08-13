@@ -43,10 +43,30 @@ def panel_ephi(ax):
             label='Weeks & Assur 1967')
     ax.plot(phi, 7.23 * np.exp(-4.2 * np.sqrt(phi)), color=fs.PURPLE, lw=1.6,
             ls=':', label='Marchenko 2024')
-    ax.axvline(ez.PHI_0, color='0.45', lw=1.2, ls='-.')
-    ax.text(ez.PHI_0 * 1.02, 6.2, r'$\phi_0$: plane empties', fontsize=9.5,
-            color='0.35', rotation=90, va='top')
-    ax.set_yscale('log'); ax.set_ylim(0.05, 12); ax.set_xlim(0, 0.24)
+    # The four regimes, one per measured threshold. Shading them is the point
+    # of this panel now: the closure is not one curve but four laws joined
+    # continuously, and which one applies is set by a measurement rather than
+    # by a fit.
+    edges = [0.0, ez.PHI_DRAIN, ez.PHI_LAYER, ez.PHI_CROSS, ez.PHI_0]
+    shades = ['#f5f5f5', '#e8eef4', '#dbe6f0', '#c9d9ea']
+    names = ['sealed\npockets', 'drained\npockets', 'bridge\nconstriction',
+             'strut\nbending']
+    for lo, hi, c, nm in zip(edges[:-1], edges[1:], shades, names):
+        ax.axvspan(lo, hi, color=c, zorder=0)
+        # regime names sit under the threshold ticks at the top, clear of the
+        # legend in the lower left
+        ax.text(0.5 * (lo + hi), 6.4, nm, fontsize=7.6, color='0.4',
+                ha='center', va='top')
+    for x, lab in ((ez.PHI_DRAIN, r'$\phi_c^{\rm drain}$'),
+                   (ez.PHI_LAYER, r'$\phi_c^{\rm in}$'),
+                   (ez.PHI_CROSS, r'$\phi_c^{\rm across}$'),
+                   (ez.PHI_0, r'$\phi_0$')):
+        ax.axvline(x, color='0.45', lw=0.9, ls=':')
+        ax.text(x, 14.5, lab, fontsize=8.5, color='0.3', ha='center', va='top')
+    # the drainage threshold is ramped over its own measurement uncertainty
+    ax.axvspan(ez.PHI_DRAIN - ez.PHI_DRAIN_SD, ez.PHI_DRAIN + ez.PHI_DRAIN_SD,
+               color=fs.VERM, alpha=0.18, zorder=0)
+    ax.set_yscale('log'); ax.set_ylim(0.05, 16); ax.set_xlim(0, 0.24)
     ax.set_xlabel(r'brine volume fraction $\phi$')
     ax.set_ylabel(r'$E$  [GPa]')
     ax.text(0.015, 0.965, '(a)', transform=ax.transAxes,
