@@ -90,6 +90,13 @@ PHI_0 = 0.20            # Assur; consistent with PHI_CROSS < phi_0 as required
 # drainage at up to 19x in this morphology, the largest single factor in the
 # study.
 PHI_C = PHI_LAYER       # retained name: the threshold the closure branches at
+
+# Undrained/drained stiffness ratio for the POCKET morphology, measured in
+# Section 4.4 by releasing the brine bulk modulus at fixed geometry. Small
+# because an isolated pocket is barely confined; the same release is worth up
+# to 19x once the brine spans the cell, which is the whole point of that
+# section. Applied above PHI_DRAIN only.
+DRAIN_FACTOR = 1.04
 N_MID, N_LO, N_HI = 0.53, 0.49, 0.59
 A0_MM, A0_REF_MM, SPACING_EXP = 0.35, 0.75, 0.69
 E_FLOOR = 0.05          # GPa, nominal skeletal residual; see caveat above
@@ -112,7 +119,16 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     dependence where b is small, which is the regime it was measured in.
     """
     phi = np.asarray(phi, dtype=float)
+
+    # Eq. (2) was calibrated on the column cells, which seal the brine at
+    # K = 2.2 GPa, so E_pocket as measured is the UNDRAINED pocket law. Above
+    # PHI_DRAIN the brine percolates vertically and the pore pressure relaxes,
+    # and Section 4.4 measures that release as worth 1.04x in this morphology.
+    # It is the smallest of the four transitions by an order of magnitude, and
+    # was previously absorbed rather than represented; it is applied here so
+    # that each measured threshold carries the mechanism that belongs to it.
     E_pocket = E_ICE * (1.0 - 1.65 * phi)
+    E_pocket = np.where(phi >= PHI_DRAIN, E_pocket / DRAIN_FACTOR, E_pocket)
 
     # The bridge factor applies only where the lamellar plane it describes
     # actually exists. Below the percolation threshold the brine sits in
