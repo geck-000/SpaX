@@ -136,6 +136,28 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     return np.maximum(E, floor)
 
 
+def beyond_bridges(phi):
+    """True where the bridge geometry the closure assumes is past its measured
+    limit.
+
+    Above PHI_CROSS the brine percolates ACROSS the layer planes, which means it
+    has broken through the ice platelets and not merely widened the planes
+    between them. The load path the closure models -- platelet, bridge, platelet
+    -- is no longer the only thing being cut, so b(phi) understates what is
+    happening and the modulus here should be read as an upper bound.
+
+    This is deliberately NOT a third branch. A branch needs a model on the far
+    side and the skeletal regime has none here: no cell in this study sits above
+    PHI_CROSS with resolved bridges, so there is nothing to switch to. It is
+    reported as a validity flag instead.
+
+    It matters because the closure does its steepest work inside the flagged
+    band -- 3.44 GPa at PHI_CROSS falling to the floor by phi_0 -- and the basal
+    slice of every column in this study lies within it.
+    """
+    return np.asarray(phi, dtype=float) > PHI_CROSS
+
+
 def E_column(z, T_surf, T_base, S, **kw):
     """E(z) for a linear thermal profile and a salinity profile.
 
