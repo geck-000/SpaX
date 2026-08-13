@@ -80,12 +80,38 @@ def assur_b(phi, phi_0=PHI_0):
     return max(0.0, 1.0 - (min(phi, phi_0) / phi_0) ** 0.5)
 
 
+ELEM_ACROSS = 2.5      # elements across a brine layer, set by the mesh gate
+LM_MIN, LM_MAX = 0.005, 0.012
+
+
+def mesh_for(phi_slab, b):
+    """Element size giving ELEM_ACROSS elements across this cell's layer.
+
+    The gate (rve_layermesh) measured convergence against the finest mesh at
+    phi = 0.10, b = 0.293, where the layer spans t = 0.0177:
+
+        elements across   drained err   undrained err
+              3.0             0.0%          0.0%
+              2.2             0.3%          0.3%
+              1.5             1.0%         20.7%
+              0.7             8.7%         35.0%
+
+    So the undrained response needs roughly twice the resolution the drained
+    one does -- near-incompressible brine in a thin layer -- and a single fixed
+    element size cannot serve a deck whose layer thickness varies by a factor
+    of two. Sizing per cell puts every one at the same resolution instead.
+    """
+    t = thickness(phi_slab, b)
+    return min(max(t / ELEM_ACROSS, LM_MIN), LM_MAX)
+
+
 def row(rid, phi_slab, b, state):
     r = dict(BASE)
     r['run_id'] = rid
     r['slab_vof'] = '%.4f' % phi_slab
     r['bridge_fraction'] = '%.4f' % b
     r['K_inclusion'] = K[state]
+    r['L_mesh'] = '%.4f' % mesh_for(phi_slab, b)
     return [r[c] for c in COLS]
 
 
