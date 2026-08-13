@@ -150,6 +150,44 @@ def main():
           ' the swept range, so the sweep brackets the assumed value'
           % (assur_b(0.08), assur_b(0.15)))
 
+    # ---- LAYERSKEL: the skeletal layer, with the SAME primitive ------------
+    # The closure stops at phi_0 because Assur's b(phi) reaches zero there, and
+    # the paper has been saying the skeletal layer "needs its own description".
+    # That conflates two things. The slab primitive is a set of brine layers
+    # between ice platelets held apart by bridges, which is exactly what the
+    # skeletal layer IS; nothing about it breaks above phi_0. What breaks is
+    # the RELATION tying b to phi, since b is an independent parameter of the
+    # generator and only the closure ties it to Assur.
+    #
+    # So these cells decouple them: high brine fraction with bridges imposed
+    # directly. If they carry load, the floor above phi_0 is premature and what
+    # is missing is a measured b(phi) there rather than a model. Both load
+    # directions, because the interesting quantity is the anisotropy: along the
+    # platelets the ice is continuous and across them it is not, so E_z/E_x
+    # should diverge where the pocket cells have it saturating near 1.7.
+    p = os.path.join(out, 'rve_layerskel.csv')
+    n = 0
+    with open(p, 'w', newline='', encoding='utf8') as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS)
+        for phi in (0.22, 0.28, 0.35):
+            for b in (0.03, 0.07, 0.13):
+                for state in ('drn', 'und'):
+                    for s in (1, 2):
+                        w.writerow(row('LSK_p%03d_b%03d_%s_s%d'
+                                       % (round(phi * 1000), round(b * 100),
+                                          state, s), phi, b, state))
+                        n += 1
+    print('wrote %s  (%d cells)' % (p, n))
+    print('   all above phi_0 = %.2f, where Assur gives b = 0' % PHI_0)
+    for q in (0.22, 0.28, 0.35):
+        t = thickness(q, 0.03)
+        print('     phi %.2f: layer t = %.4f (%.1f elements), thinnest bridge '
+              'r = %.4f (%.1f elements)'
+              % (q, t, t / float(BASE['L_mesh']), (0.03 * 0.25 / 2 / 3.14159)
+                 ** 0.5, ((0.03 * 0.25 / 2 / 3.14159) ** 0.5)
+                 / float(BASE['L_mesh'])))
+
     # ---- LAYERMESH: is a layer this thin actually resolved? ----------------
     # One condition at three element sizes. Only one to two elements span a
     # brine layer at the production setting, so the moduli above are worth
