@@ -214,6 +214,74 @@ def main():
                  ** 0.5, ((0.03 * 0.25 / 2 / 3.14159) ** 0.5)
                  / float(BASE['L_mesh'])))
 
+    # ---- WBLLAYER: the localisation study, in the right morphology ---------
+    # rve_weibull.csv compares six morphologies for stress concentration, and
+    # its two warmest cases (WBL_CHAN at phi ~ 0.09, WBL_BASE at ~ 0.21) sit at
+    # or above the in-plane threshold, so both are meshed as pockets and
+    # channels where the layered description belongs. These are the layered
+    # counterparts at the same brine fractions, so the SCF comparison can be
+    # made morphology against morphology rather than assumed.
+    #
+    # The expectation worth testing: in a layered cell the entire transverse
+    # load path is the ice bridges, so the stress should concentrate there and
+    # the tail of the distribution should be far longer than any pocket case.
+    # Section 4.6.1 finds the ranking of morphologies to be m-independent, and
+    # this is the case most likely to disturb that.
+    p = os.path.join(out, 'rve_weibull_layer.csv')
+    n = 0
+    with open(p, 'w', newline='', encoding='utf8') as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS)
+        for tag, phi in (('chan', 0.09), ('base', 0.21)):
+            b = assur_b(phi) if phi < PHI_0 else 0.05
+            for state in ('drn', 'und'):
+                for s in range(1, 6):
+                    w.writerow(row('WBLL_%s_%s_s%d' % (tag, state, s),
+                                   phi, b, state))
+                    n += 1
+    print('wrote %s  (%d cells)' % (p, n))
+    print('   phi 0.09 -> b %.3f (Assur);  phi 0.21 -> b 0.05 (imposed, past '
+          'phi_0)' % assur_b(0.09))
+
+    # ---- TORLAYER: shear of a layered cell, swept in size ------------------
+    # rve_torsion.csv sweeps cell size at phi_soft ~ 0.142, again as pockets
+    # and channels. The layered counterpart has to hold the lamellar spacing
+    # AND the bridge density fixed while the cell grows, which is the trap
+    # Section 4.1 documents: holding counts instead changes the microstructure.
+    # Cell edges are therefore chosen so that n_slabs comes out integer at a
+    # fixed spacing a_0 = 0.125, and the bridge count is scaled with L^2 from a
+    # density of 32 per unit area, which is high enough that integer rounding
+    # costs a few percent rather than a factor.
+    p = os.path.join(out, 'rve_torsion_layer.csv')
+    n = 0
+    phi, b = 0.14, assur_b(0.14)
+    with open(p, 'w', newline='', encoding='utf8') as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS)
+        for L in (0.250, 0.375, 0.500, 0.625, 0.750):
+            n_sl = int(round(L / 0.125))
+            n_br = max(1, int(round(32.0 * L * L)))
+            for s in (1, 2, 3):
+                r = dict(BASE)
+                r['run_id'] = 'TORL_L%03d_s%d' % (round(L * 1000), s)
+                r['L'] = '%.3f' % L
+                r['n_slabs'] = str(n_sl)
+                r['n_bridges'] = str(n_br)
+                r['slab_vof'] = '%.4f' % phi
+                r['bridge_fraction'] = '%.4f' % b
+                r['K_inclusion'] = K['drn']
+                r['full_tensor'] = 'Yes'      # shear moduli are the point
+                t = phi * L / (n_sl * max(1.0 - b, 1e-6))
+                r['L_mesh'] = '%.4f' % min(max(t / ELEM_ACROSS, LM_MIN), LM_MAX)
+                w.writerow([r[c] for c in COLS])
+                n += 1
+    print('wrote %s  (%d cells)' % (p, n))
+    print('   a_0 held at 0.125, bridge density at 32/unit area, full tensor on')
+    for L in (0.250, 0.375, 0.500, 0.625, 0.750):
+        n_sl = int(round(L / 0.125)); n_br = max(1, int(round(32.0 * L * L)))
+        print('     L=%.3f: %d slabs (a_0=%.4f), %d bridges (density %.1f)'
+              % (L, n_sl, L / n_sl, n_br, n_br / (L * L)))
+
     # ---- LAYERMESH: is a layer this thin actually resolved? ----------------
     # One condition at three element sizes. Only one to two elements span a
     # brine layer at the production setting, so the moduli above are worth
