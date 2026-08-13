@@ -44,10 +44,10 @@ REGIMES = [
      'brine spans each PLANE; load crossing\nit must funnel through ice bridges,\n'
      'so stress spreads into each contact',
      r'$\times\, b^{\,n_{\rm eff}\,w}$, $n\!\approx\!0.5$'),
-    (r'$\phi > 0.14$', 'strut bending',
-     'brine crosses BETWEEN planes too:\nplatelets breached, ice left as sparse\n'
-     'struts that carry load by bending',
-     r'$\times\, b^{2}$'),
+    (r'$\phi > 0.14$', 'sparse bridges',
+     'brine crosses BETWEEN planes too:\nplatelets breached, but constriction\n'
+     'still governs -- measured, not assumed',
+     r'same law: $b^{\,0.86}$ measured'),
 ]
 
 

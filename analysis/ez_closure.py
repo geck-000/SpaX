@@ -160,24 +160,28 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     w = np.clip((phi - PHI_C) / (phi_0 - PHI_C), 0.0, 1.0)
     E = E_pocket * b ** (n_eff * w)
 
-    # Third regime. Above PHI_CROSS the brine has percolated across the planes,
-    # so the ice left in a plane is no longer a perforated sheet but a scatter
-    # of isolated struts, and struts carry load by bending rather than by
-    # spreading stress into a contact. That is the open-cell cellular-solid
-    # limit, E ~ b^2.
+    # There is deliberately NO separate strut regime above PHI_CROSS.
     #
-    # This law was tried in an earlier version of the closure and withdrawn,
-    # correctly: it was being applied at b = 0.52-0.78, far outside the b < 0.3
-    # range Gibson and Ashby state for it. Here b(PHI_CROSS) = 0.163 and falls
-    # to zero at phi_0, so the whole regime lies inside its validity range. The
-    # earlier withdrawal was about where it was used, not whether it holds.
+    # An earlier version added one, E ~ b^2, reasoning that sparse struts carry
+    # load by bending rather than by spreading stress into a contact, so Gibson
+    # and Ashby's open-cell law should take over once b drops below about 0.3.
+    # The layerskel campaign tested that directly -- layered cells at
+    # phi = 0.22, 0.28, 0.35 with b imposed at 0.03, 0.07 and 0.13, every one
+    # above phi_0 and well inside the b < 0.3 range -- and measured
     #
-    # Matched at PHI_CROSS by construction, so E(phi) stays continuous.
-    b_c = 1.0 - np.sqrt(PHI_CROSS / phi_0)
-    w_c = (PHI_CROSS - PHI_C) / (phi_0 - PHI_C)
-    if b_c > 0:
-        E_hi = E_pocket * b_c ** (n_eff * w_c) * (b / b_c) ** 2
-        E = np.where(phi >= PHI_CROSS, E_hi, E)
+    #     drained    E_x ~ b^0.839, b^0.866, b^0.875   (R >= 0.998)
+    #     undrained  E_x ~ b^0.02,  b^-0.02, b^0.15    (flat)
+    #
+    # The exponent sits near n_eff and nowhere near 2, and is stable across a
+    # factor of 1.6 in brine fraction. Constriction therefore continues to
+    # describe the transverse path even when the plane holds only 3% ice, and
+    # the undrained flatness persists too, so confinement holds throughout.
+    # The b^2 branch is withdrawn on measurement rather than on argument.
+    #
+    # What does fail above phi_0 is not the law but Assur's b(phi), which forces
+    # b to zero there. These cells carry 0.20 to 0.89 GPa against a floor of
+    # 0.05, so the floor is premature: what is missing is a measured b(phi) in
+    # that range, not a different E(b).
     return np.maximum(E, floor)
 
 
