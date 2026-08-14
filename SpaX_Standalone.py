@@ -625,6 +625,49 @@ def _collect_gap_balls(spheres, L, lc_fine, channels=None,
     return out
 
 
+def _slab_gap_balls(spheres, slabs, L, lc_fine, resolve=0.5, thresh_mult=1.5,
+                    cap=4000):
+    """Refinement balls where an inclusion runs close to a lamella face.
+
+    `_collect_gap_balls` covers sphere-sphere and channel<->inclusion pairs on
+    one argument: a matrix sheet about an element thick meshes unreliably and
+    Gmsh reports it as overlapping facets. A lamella presents exactly the same
+    hazard and was not covered. An inclusion whose surface runs within an
+    element of a layer face -- or which straddles it, leaving a thin lens of
+    matrix -- cuts that face in a curve the surface mesher cannot resolve.
+
+    The exposure grows with the number of layers rather than with cell size,
+    which is why sweeps holding the spacing while the cell grows fail: more
+    layers at fixed spacing means more faces for the same pack of inclusions to
+    graze. Cells of four lamellae mesh; six do not.
+
+    Slabs are axis-aligned plates, so the clearance is the perpendicular one and
+    needs no GJK: along the slab normal the inclusion spans its semi-axis, and
+    the sliver sits between that surface and the nearer face."""
+    if not slabs or lc_fine <= 0.0:
+        return []
+    thresh = thresh_mult * lc_fine
+    size_floor = 0.18 * lc_fine
+    balls = []
+    for sl in slabs:
+        a = int(sl['axis'])
+        for face in (sl['origin'], sl['origin'] + sl['thickness']):
+            for sp in spheres:
+                d = sp[a] - face
+                d -= L * round(d / L)          # nearest periodic image
+                g = abs(d) - sp[3 + a]         # surface-to-face clearance
+                if g >= thresh:
+                    continue
+                mid = [sp[0], sp[1], sp[2]]
+                # midway between the inclusion surface and the face it grazes
+                mid[a] = face + 0.5 * (d - math.copysign(sp[3 + a], d or 1.0))
+                balls.append((mid[0] % L, mid[1] % L, mid[2] % L,
+                              max(size_floor, resolve * max(g, 0.0))))
+                if len(balls) >= cap:
+                    return balls
+    return balls
+
+
 def _repair_offaxis_slivers(spheres, L, gap_target, V_RVE, current_vof,
                             broad=2.5, max_passes=8, channels=None,
                             channel_gap=None):
@@ -2615,6 +2658,9 @@ def _generate_one_row(task):
     result = None
     for attempt in range(max_retries):
         try:
+            # Built once here so the inclusion<->lamella slivers can be refined
+            # before meshing; the pack is fixed by this point.
+            _slabs_for_mesh = build_slabs(params, L)
             result = mesh_in_subprocess(
                 sphere_array=Sphere_array,
                 L=L, L_mesh=L_mesh,
@@ -2624,8 +2670,10 @@ def _generate_one_row(task):
                 VoF_void=VoF_void,
                 VoF_incl=VoF_incl,
                 Inclusion_Type=Inclusion_Type,
-                gap_balls=gap_balls,
-                slabs=build_slabs(params, L))
+                gap_balls=gap_balls + _slab_gap_balls(
+                    [tuple(row[:6]) for row in Sphere_array],
+                    _slabs_for_mesh, L, L_mesh),
+                slabs=_slabs_for_mesh)
 
             # Check for empty mesh
             n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
