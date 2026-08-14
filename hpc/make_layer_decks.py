@@ -272,7 +272,7 @@ def main():
                 r['slab_vof'] = '%.4f' % phi
                 r['bridge_fraction'] = '%.4f' % b
                 r['K_inclusion'] = K['drn']
-                r['full_tensor'] = 'Yes'      # shear moduli are the point
+                r['full_tensor'] = 'No'       # the -tor load case carries it
                 t = phi * L / (n_sl * max(1.0 - b, 1e-6))
                 r['L_mesh'] = '%.4f' % min(max(t / ELEM_ACROSS, LM_MIN), LM_MAX)
                 w.writerow([r[c] for c in COLS])
@@ -488,7 +488,7 @@ def main():
             r['slab_vof'] = '0.0000'
             r['bridge_fraction'] = '0.0000'
             r['K_inclusion'] = K['drn']
-            r['full_tensor'] = 'Yes'
+            r['full_tensor'] = 'No'
             w.writerow([r[c] for c in COLS])
             n += 1
     print('wrote %s  (%d cells)' % (p, n))
