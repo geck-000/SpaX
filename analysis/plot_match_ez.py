@@ -1,22 +1,21 @@
-r"""Figures for the E(z) match against Marchenko, Gogolaze and Kujala.
+r"""Figures for the E(z) match against Gogolaze and Kujala.
 
-One panel per case, each drawn on the porosity that case supplies:
-
-(a) MARCHENKO. His Kerr-Palmer curve against the closure evaluated on the
-    porosity his own correlation implies. Drawn twice -- as computed, and
-    normalised to his surface value -- because the shape agrees while the level
-    does not, and the level gap is his intercept rather than our microstructure.
-
-(b) GOGOLAZE. Beam rigidity against the exponent, with his two reductions drawn
+(a) GOGOLAZE. Beam rigidity against the exponent, with his two reductions drawn
     as a band rather than a line: they differ by 1.81x, so the target is a
-    range. The Gibson-Ashby ceiling is marked, which is what the required
-    exponent has to be judged against.
+    range. The measured exponent band is shaded for comparison.
 
-(c) KUJALA. He reports no porosity, so nothing can be matched forwards. The
-    panel instead shows the brine profile his beams IMPLY under the closure,
-    against the synthetic column we have been comparing him with. That contrast
-    is the finding: his is monotonic and reaches the skeletal range, ours is
-    C-shaped and stops at 0.227.
+(b) KUJALA. He reports no porosity, so nothing can be matched forwards. The
+    panel shows the brine profile his beams IMPLY under the closure, against
+    the synthetic column. His is monotonic and reaches the skeletal range,
+    ours is C-shaped.
+
+Marchenko is deliberately absent. His profile is a measured brine profile
+pushed through a correlation obtained elsewhere from three-point bending and
+then fitted to a Kerr-Palmer form, so it is a construction rather than a
+measurement; and its endpoint ratio disagrees with Kujala's by a factor of two
+to three, so no single calibration could satisfy both. Dropping it is a
+judgement about the data, and it is recorded here so the omission is not
+mistaken for an oversight.
 
     python3 analysis/plot_match_ez.py [outdir]
 """
@@ -24,7 +23,7 @@ import os
 import sys
 
 import numpy as np
-from scipy.optimize import brentq, minimize_scalar
+from scipy.optimize import brentq
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import figstyle as fs
@@ -32,57 +31,12 @@ import figstyle as fs
 fs.apply()
 import matplotlib.pyplot as plt
 
-import layered_law as law
 import ez_closure as ez
-from match_ez import (marchenko_E, corr_inv, flexural, K_TOP, K_BOT,
+from match_ez import (flexural, K_TOP, K_BOT,
                       GOGO_APP, GOGO_COR, H_GOGO)
 from shape_diagnosis import ours_phi
 
 GA_CEILING = 2.0
-
-
-def panel_marchenko(ax, z):
-    """His profile against the ADOPTED piecewise closure.
-
-    Panels (a)-(c) all used layered_law.layered here, which applies the bridge
-    factor at every depth. That is no longer the adopted form -- the closure
-    branches at the percolation threshold -- so this figure and the closure
-    figure were drawing two different models. All three panels now call
-    ez_closure, which is what the paper states.
-    """
-    phi = corr_inv(marchenko_E(z))
-    tgt = marchenko_E(z)
-
-    def miss(n):
-        E = ez.E_of_phi(phi, n=n, floor=0.0)
-        return float(np.mean((E / E[0] - tgt / tgt[0]) ** 2))
-    n = minimize_scalar(miss, bounds=(0.05, 8.0), method='bounded').x
-    E = ez.E_of_phi(phi, n=ez.N_MID, floor=0.0)
-    Eb = ez.E_of_phi(phi, n=n, floor=0.0)
-
-    # where his own porosity crosses the threshold, which is where the closure
-    # changes branch and where the knee sits
-    zc = z[np.argmax(phi >= ez.PHI_C)] if (phi >= ez.PHI_C).any() else None
-
-    ax.plot(tgt, z, color=fs.VERM, lw=2.6, label='Marchenko 2024 (Kerr-Palmer)')
-    ax.plot(E, z, color=fs.BLUE, lw=2.2,
-            label=r'closure, $n=%.2f$ (calibrated band)' % ez.N_MID)
-    Ehi = ez.E_of_phi(phi, n=ez.N_HI, floor=0.0)
-    ax.plot(Ehi, z, color=fs.PURPLE, lw=1.8, ls=(0, (4, 3)),
-            label=r'closure, $n=%.2f$: $\alpha=%.3f$ vs his $0.384$'
-                  % (ez.N_HI, Ehi[-1] / Ehi[0]))
-    if zc is not None:
-        ax.axhline(zc, color='0.45', lw=1.1, ls=':')
-        ax.text(0.85, zc - 0.03, r'$\phi_c$: bridge factor begins to switch on',
-                fontsize=8.8, color='0.35', va='bottom')
-    fs.depth_axis(ax)
-    ax.set_xscale('log')
-    ax.set_xlim(0.3, 14)
-    ax.set_xlabel("Young's modulus [GPa]")
-    ax.text(0.015, 0.965, '(a)', transform=ax.transAxes,
-            fontsize=13, fontweight='bold', va='top')
-    ax.legend(loc='lower left', fontsize=8.6)
-    return n
 
 
 def panel_gogolaze(ax, z):
@@ -95,7 +49,7 @@ def panel_gogolaze(ax, z):
     ax.text(3.5, 0.95, 'his two reductions\n0.785 - 1.421 GPa',
             fontsize=10, color=fs.GREEN, ha='center')
     ax.axvspan(ez.N_LO, ez.N_HI, color=fs.SKY, alpha=0.30, zorder=0)
-    ax.text(ez.N_HI + 0.25, 9.0, 'calibrated band', fontsize=9.5,
+    ax.text(ez.N_HI + 0.25, 9.0, 'measured band', fontsize=9.5,
             color=fs.BLUE, ha='left')
     for tgt, lab, c in ((GOGO_COR, 'root-corrected', fs.VERM),
                         (3.2, 'if 2.3x stiffer', fs.PURPLE)):
@@ -111,8 +65,10 @@ def panel_gogolaze(ax, z):
     ax.set_yscale('log'); ax.set_ylim(0.6, 14)
     ax.set_xlabel('bridge exponent $n$ in $E\\propto b^{\\,n}$')
     ax.set_ylabel(r'beam rigidity $12D/H^3$ [GPa]')
-    ax.text(0.015, 0.965, '(b)', transform=ax.transAxes,
+    ax.text(0.015, 0.965, '(a)', transform=ax.transAxes,
             fontsize=13, fontweight='bold', va='top')
+
+
 def panel_kujala(ax, z):
     Et, Eb = K_TOP.mean(), K_BOT.mean()
     tgt = Et + (Eb - Et) * z
@@ -145,22 +101,27 @@ def panel_kujala(ax, z):
     fs.depth_axis(ax)
     ax.set_xlim(0, 0.55)
     ax.set_xlabel(r'brine volume fraction $\phi$')
-    ax.text(0.015, 0.965, '(c)', transform=ax.transAxes,
+    ax.text(0.015, 0.965, '(b)', transform=ax.transAxes,
             fontsize=13, fontweight='bold', va='top')
     ax.legend(loc='lower right', fontsize=9.5)
 
 
 def main():
+    """Two panels now. The Marchenko comparison is withdrawn with its dataset:
+    his profile is a brine profile pushed through a correlation borrowed from
+    three-point bending and then fitted to a functional form, so it is a
+    construction rather than a measurement, and it disagrees with Kujala's
+    endpoint ratio by a factor of two to three. Keeping it meant no calibration
+    could satisfy the field data, because the field data do not agree."""
     outdir = sys.argv[1] if len(sys.argv) > 1 else '.'
     z = np.linspace(1e-3, 1.0, 400)
-    fig, ax = plt.subplots(1, 3, figsize=(17.5, 5.6))
-    n = panel_marchenko(ax[0], z)
-    panel_gogolaze(ax[1], z)
-    panel_kujala(ax[2], z)
+    fig, ax = plt.subplots(1, 2, figsize=(12.4, 5.6))
+    panel_gogolaze(ax[0], z)
+    panel_kujala(ax[1], z)
     fig.tight_layout()
     p = os.path.join(outdir, 'match_ez.png')
     fig.savefig(p, dpi=165)
-    print('wrote %s  (Marchenko best exponent %.2f)' % (p, n))
+    print('wrote %s' % p)
 
 
 if __name__ == '__main__':

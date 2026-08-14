@@ -102,8 +102,26 @@ PHI_C = PHI_LAYER       # retained name: the threshold the closure branches at
 # to 19x once the brine spans the cell, which is the whole point of that
 # section. Applied above PHI_DRAIN only.
 DRAIN_FACTOR = 1.04
-N_MID, N_LO, N_HI = 0.53, 0.49, 0.59
-A0_MM, A0_REF_MM, SPACING_EXP = 0.35, 0.75, 0.69
+# Exponent and ramp are now read from the layercol cells rather than fitted to
+# field profiles. Those cells sit at a_0 = 0.75 mm, exactly A0_REF_MM, so their
+# exponent is n with no spacing correction -- a direct measurement of it. The
+# four brine fractions imply n = 0.66, 0.93, 1.04, 0.97; the lowest sits inside
+# the ramp and the upper three average 0.98. The band is their spread.
+N_MID, N_LO, N_HI = 0.98, 0.93, 1.04
+
+# The ramp saturates at PHI_SAT, not at phi_0. The same cells put the bridge
+# factor essentially fully active by phi = 0.12 and flat thereafter, so
+# spreading it to phi_0 as an earlier version did leaves the closure far too
+# stiff through the layered range.
+PHI_SAT = 0.104
+
+# A0_MM defaults to the spacing the cells were solved at, NOT to Pringle's
+# measured 0.35 mm. That is a deliberate retreat. Extrapolating the a_0^0.69
+# law from 0.75 mm down to 0.35 mm multiplies the exponent by 1.71 and takes
+# the basal modulus to 0.24 GPa against a measured 0.86-1.56, so the
+# extrapolation is not supported by the comparisons even though the law itself
+# is measured over 0.75-3 mm. Pass a0_mm explicitly to explore it.
+A0_MM, A0_REF_MM, SPACING_EXP = 0.75, 0.75, 0.69
 E_FLOOR = 0.05          # GPa, nominal skeletal residual; see caveat above
 
 
@@ -157,7 +175,7 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     # closure continuous and invertible at the cost of a milder basal knockdown.
     b = np.clip(1.0 - np.sqrt(np.clip(phi, 0.0, phi_0) / phi_0), 0.0, 1.0)
     n_eff = n * (A0_REF_MM / a0_mm) ** SPACING_EXP
-    w = np.clip((phi - PHI_C) / (phi_0 - PHI_C), 0.0, 1.0)
+    w = np.clip((phi - PHI_C) / (PHI_SAT - PHI_C), 0.0, 1.0)
     E = E_pocket * b ** (n_eff * w)
 
     # There is deliberately NO separate strut regime above PHI_CROSS.
