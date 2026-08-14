@@ -311,6 +311,122 @@ def main():
              thickness(phi, b) / 0.024, thickness(phi, b) / 0.012,
              thickness(phi, b) / 0.008, thickness(phi, b) / 0.006))
 
+    # ---- ERGLAYER: the size sweep of Section 4.4.1, on layered cells --------
+    # rve_eringen.csv bends pocket-and-channel cells at six sizes and regresses
+    # the apparent modulus on 1/L^2. Its conclusion cannot be carried to the
+    # layered regime, because the bound it produces is expressed in inclusion
+    # diameters and a layered material's length is the lamellar spacing. This
+    # deck repeats the measurement where that length is the one in play.
+    #
+    # a_0 = 0.12 is held exactly (L is an integer multiple at every size), so
+    # the layer thickness -- and hence the element count across it -- does not
+    # drift with cell size. Bridges are scaled with L^2 from a density of 32
+    # per unit area. Drained, since the base is drained at every depth where
+    # the layered description applies.
+    A0_SWEEP = 0.12
+    SWEEP_L = (0.24, 0.36, 0.48, 0.60, 0.72)
+    phi, b = 0.14, assur_b(0.14)
+    t_sweep = phi * A0_SWEEP / max(1.0 - b, 1e-6)
+    lm_sweep = min(max(t_sweep / 2.0, LM_MIN), LM_MAX)
+
+    p = os.path.join(out, 'rve_eringen_layer.csv')
+    n = 0
+    with open(p, 'w', newline='', encoding='utf8') as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS)
+        for L in SWEEP_L:
+            n_sl = int(round(L / A0_SWEEP))
+            n_br = max(1, int(round(32.0 * L * L)))
+            for s_ in (1, 2, 3):
+                r = dict(BASE)
+                r['run_id'] = 'ERGL_L%03d_s%d' % (round(L * 1000), s_)
+                r['Mode2'] = ''
+                r['Disp2'] = ''
+                r['L'] = '%.3f' % L
+                r['L_mesh'] = '%.4f' % lm_sweep
+                r['Kappa'] = '0.11'          # bending, as the pocket sweep
+                r['n_slabs'] = str(n_sl)
+                r['n_bridges'] = str(n_br)
+                r['slab_vof'] = '%.4f' % phi
+                r['bridge_fraction'] = '%.4f' % b
+                r['K_inclusion'] = K['drn']
+                w.writerow([r[c] for c in COLS])
+                n += 1
+    print('wrote %s  (%d cells)' % (p, n))
+    print('   a_0 held at %.3f exactly; t=%.4f, L_mesh=%.4f -> %.1f elements '
+          'across at every size' % (A0_SWEEP, t_sweep, lm_sweep,
+                                    t_sweep / lm_sweep))
+    for L in SWEEP_L:
+        n_sl = int(round(L / A0_SWEEP)); n_br = max(1, int(round(32.0 * L * L)))
+        print('     L=%.2f: %d slabs (a_0=%.4f), %d bridges (density %.1f), '
+              '%d elem/edge' % (L, n_sl, L / n_sl, n_br, n_br / (L * L),
+                                round(L / lm_sweep)))
+
+    # The matched control. A phi=0 cell has no microstructure of either kind,
+    # so this measures the extraction bias alone -- the artefact of imposing a
+    # plate-like curvature on a cubic cell, which the pocket sweep found to be
+    # as large as the trend it would otherwise have been read as.
+    p = os.path.join(out, 'rve_eringen_layer_homog.csv')
+    n = 0
+    with open(p, 'w', newline='', encoding='utf8') as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS)
+        for L in SWEEP_L:
+            r = dict(BASE)
+            r['run_id'] = 'ERGLH_L%03d' % round(L * 1000)
+            r['Mode2'] = ''
+            r['Disp2'] = ''
+            r['L'] = '%.3f' % L
+            r['L_mesh'] = '%.4f' % lm_sweep
+            r['Kappa'] = '0.11'
+            r['VoF_sphere'] = '0.0'
+            r['VoF_void_sphere'] = '0.0'
+            r['VoF_incl_sphere'] = '0.0'
+            r['n_slabs'] = '0'
+            r['n_bridges'] = '0'
+            r['slab_vof'] = '0.0000'
+            r['bridge_fraction'] = '0.0000'
+            r['K_inclusion'] = K['drn']
+            w.writerow([r[c] for c in COLS])
+            n += 1
+    print('wrote %s  (%d cells)' % (p, n))
+
+    # ---- NLGLAYER: the base slice of Section 4.4.2, on its own geometry -----
+    # The pocket sweep reloaded three slices; the deepest sits at phi = 0.150,
+    # above both thresholds, and was reloaded as a channelled cell. This is the
+    # same composition with the geometry the rest of this work assigns to that
+    # depth. Tension and compression to 2%, plus a linear reference on the same
+    # meshes so that a loss of convergence can be read as kinematic rather than
+    # as a property of the discretisation.
+    p = os.path.join(out, 'rve_nlgeom_layer.csv')
+    n = 0
+    phi, b = 0.150, assur_b(0.150)
+    for_lm = mesh_for(phi, b)
+    with open(p, 'w', newline='', encoding='utf8') as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS)
+        for tag, disp, flag in (('TEN', '+0.020', 'ON'),
+                                ('CMP', '-0.020', 'ON'),
+                                ('LIN', '+0.020', 'OFF')):
+            for s_ in (1, 2, 3):
+                r = dict(BASE)
+                r['run_id'] = 'NLGL_%s_s%d' % (tag, s_)
+                r['Mode2'] = ''
+                r['Disp2'] = ''
+                r['Disp'] = disp
+                r['nlgeom_flag'] = flag
+                r['L_mesh'] = '%.4f' % for_lm
+                r['slab_vof'] = '%.4f' % phi
+                r['bridge_fraction'] = '%.4f' % b
+                r['K_inclusion'] = K['drn']
+                w.writerow([r[c] for c in COLS])
+                n += 1
+    print('wrote %s  (%d cells)' % (p, n))
+    print('   phi=%.3f, b=%.3f (the layer plane is %.0f%% ice), t=%.4f, '
+          'L_mesh=%.4f -> %.1f elements across'
+          % (phi, b, 100 * b, thickness(phi, b), for_lm,
+             thickness(phi, b) / for_lm))
+
 
 if __name__ == '__main__':
     main()
