@@ -264,6 +264,8 @@ def main():
             for s in (1, 2, 3):
                 r = dict(BASE)
                 r['run_id'] = 'TORL_L%03d_s%d' % (round(L * 1000), s)
+                r['Kappa'] = '0.11'
+                r['Bending_Plane'] = 'torsion'
                 r['L'] = '%.3f' % L
                 r['n_slabs'] = str(n_sl)
                 r['n_bridges'] = str(n_br)
@@ -456,6 +458,40 @@ def main():
     print('wrote %s  (%d cells)' % (p, n))
     print('   phi=%.2f, b=%.4f, t=%.4f, min_distance 0.002 -> 0.005'
           % (phi, b, thickness(phi, b)))
+
+    # ---- TORLAYER control: the matched phi=0 cells for the torsion sweep ----
+    # Section 4.4.1's own finding is that a size sweep without a matched control
+    # measures the extraction bias as much as the material, and the bias there
+    # was as large as the trend. A torsion sweep is no different, so the layered
+    # torsion cells get phi=0 twins at the same five edges and the same element
+    # size. Without these the layered sweep is uninterpretable.
+    p = os.path.join(out, 'rve_torsion_layer_homog.csv')
+    n = 0
+    phi, b = 0.14, assur_b(0.14)
+    with open(p, 'w', newline='', encoding='utf8') as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS)
+        for L in (0.250, 0.375, 0.500, 0.625, 0.750):
+            n_sl = int(round(L / 0.125))
+            t = phi * L / (n_sl * max(1.0 - b, 1e-6))
+            r = dict(BASE)
+            r['run_id'] = 'TORLH_L%03d' % round(L * 1000)
+            r['Kappa'] = '0.11'
+            r['Bending_Plane'] = 'torsion'
+            r['L'] = '%.3f' % L
+            r['L_mesh'] = '%.4f' % min(max(t / ELEM_ACROSS, LM_MIN), LM_MAX)
+            r['VoF_sphere'] = '0.0'
+            r['VoF_void_sphere'] = '0.0'
+            r['VoF_incl_sphere'] = '0.0'
+            r['n_slabs'] = '0'
+            r['n_bridges'] = '0'
+            r['slab_vof'] = '0.0000'
+            r['bridge_fraction'] = '0.0000'
+            r['K_inclusion'] = K['drn']
+            r['full_tensor'] = 'Yes'
+            w.writerow([r[c] for c in COLS])
+            n += 1
+    print('wrote %s  (%d cells)' % (p, n))
 
 
 if __name__ == '__main__':
