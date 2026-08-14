@@ -427,6 +427,36 @@ def main():
           % (phi, b, 100 * b, thickness(phi, b), for_lm,
              thickness(phi, b) / for_lm))
 
+    # ---- LCOL p060: the one layercol condition that would not mesh ---------
+    # At phi = 0.06 the layer is at its thinnest (t = 0.0137) and the bridges at
+    # their widest (b = 0.45), and a pocket sphere straddling a layer plane
+    # leaves a sliver facet Gmsh reports as an overlapping boundary and cannot
+    # repair. Keeping the pockets clear of the planes is enough: min_distance
+    # goes to 0.005, still a hundredth of the cell edge, with fresh seeds so the
+    # packer starts from a different configuration. This condition is the low
+    # end of the layered branch, so leaving it out would calibrate the takeover
+    # from phi >= 0.08 alone.
+    p = os.path.join(out, 'rve_layercol_p060.csv')
+    n = 0
+    phi, b = 0.06, assur_b(0.06)
+    with open(p, 'w', newline='', encoding='utf8') as fh:
+        w = csv.writer(fh)
+        w.writerow(COLS)
+        for state in ('drn', 'und'):
+            for s_ in (4, 5, 6):
+                r = dict(BASE)
+                r['run_id'] = 'LCOL_p060_%s_s%d' % (state, s_)
+                r['slab_vof'] = '%.4f' % phi
+                r['bridge_fraction'] = '%.4f' % b
+                r['K_inclusion'] = K[state]
+                r['L_mesh'] = '%.4f' % mesh_for(phi, b)
+                r['min_distance'] = '0.005'
+                w.writerow([r[c] for c in COLS])
+                n += 1
+    print('wrote %s  (%d cells)' % (p, n))
+    print('   phi=%.2f, b=%.4f, t=%.4f, min_distance 0.002 -> 0.005'
+          % (phi, b, thickness(phi, b)))
+
 
 if __name__ == '__main__':
     main()
