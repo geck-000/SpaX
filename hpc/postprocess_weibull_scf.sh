@@ -32,6 +32,7 @@ source "$HOME/abaqus_env.sh"
 
 OUT=${RESULTS:-results_weibull_scf.csv}
 n=0
+bad=0
 # The run-id prefix is a property of the campaign, not of this script: the
 # layered cells are WBLL_ where the original pack is WBL_, and a hard-coded
 # pattern silently matches nothing and exits, which looks identical to a failed
@@ -44,10 +45,17 @@ for odb in ${GLOB:-Job-WBL_*-utx.odb}; do
   Lr=$(awk -F, -v id="$rid" 'NR==1{for(i=1;i<=NF;i++){if($i=="run_id")c=i; if($i=="L")l=i}; next} $c==id{print $l; exit}' "$CSV" 2>/dev/null || true)
   Lr=${Lr:-$L}
   echo "== $rid  (L=$Lr)"
-  abaqus python scf_extract.py "$odb" "$Lr" "$rid" "$OUT" "$DUMPDIR/$rid.npz"
-  n=$((n+1))
+  # A truncated ODB -- an Abaqus killed mid-write, most often because the
+  # filesystem filled -- opens as corrupt and takes the whole extraction down
+  # with it under set -e, losing the cells that did solve. Skip it and carry on;
+  # the short count in the summary is what flags the cells needing a re-solve.
+  if abaqus python scf_extract.py "$odb" "$Lr" "$rid" "$OUT" "$DUMPDIR/$rid.npz"; then
+    n=$((n+1))
+  else
+    echo "  SKIPPED $rid: unreadable ODB"; bad=$((bad+1))
+  fi
 done
-echo "extracted $n ODBs -> $OUT  and  $DUMPDIR/*.npz"
+echo "extracted $n ODBs ($bad unreadable) -> $OUT  and  $DUMPDIR/*.npz"
 
 cat <<EOF
 
