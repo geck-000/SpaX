@@ -56,6 +56,12 @@ POST=$(echo "$ROW" | cut -d'|' -f4)
 RESULTS=$(echo "$ROW" | cut -d'|' -f5)
 ORDER=$(echo "$ROW" | cut -d'|' -f6)
 MEM=$(echo "$ROW" | cut -d'|' -f7)
+case "$POST" in
+  postprocess_torsion.sh)      SUFFIX='-tor' ;;
+  postprocess_weibull_scf.sh)  SUFFIX='-utx' ;;
+  postprocess_nlgeom.sh)       SUFFIX='-utx' ;;
+  *)                           SUFFIX='' ;;
+esac
 
 [ -f "$DECK" ] || { echo "ERROR: deck $DECK not found in $WORKDIR"; exit 1; }
 # postprocess_torsion.sh reads the deck from params/; keep the two in step.
@@ -94,7 +100,7 @@ S=\$(sbatch --parsable --account=$ACCT --partition=small --cpus-per-task=4 \\
   --export=ALL,WORKDIR=$WORKDIR,JOBLIST=GlobalJobList_${CAMPAIGN} csc_solve_array.sh)
 echo "solve: \$S"
 P=\$(sbatch --parsable --account=$ACCT --dependency=afterany:\${S} \\
-  --export=ALL,WORKDIR=$WORKDIR,CSV=$DECK,RESULTS=$RESULTS,SUMM=$RESULTS,CURVES=curves_${CAMPAIGN}.csv,GLOB='Job-${PREFIX}_*.odb' \\
+  --export=ALL,WORKDIR=$WORKDIR,CSV=$DECK,RESULTS=$RESULTS,SUMM=$RESULTS,CURVES=curves_${CAMPAIGN}.csv,GLOB='Job-${PREFIX}_*${SUFFIX}.odb' \\
   $POST)
 echo "extract: \$P -> $RESULTS   (via $POST)"
 EOS

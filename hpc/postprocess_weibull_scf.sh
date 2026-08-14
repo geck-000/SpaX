@@ -32,8 +32,12 @@ source "$HOME/abaqus_env.sh"
 
 OUT=${RESULTS:-results_weibull_scf.csv}
 n=0
-for odb in Job-WBL_*-utx.odb; do
-  [ -e "$odb" ] || { echo "no Job-WBL_*-utx.odb in $WORKDIR"; exit 1; }
+# The run-id prefix is a property of the campaign, not of this script: the
+# layered cells are WBLL_ where the original pack is WBL_, and a hard-coded
+# pattern silently matches nothing and exits, which looks identical to a failed
+# solve. Honour GLOB like the other postprocessors, keeping the old default.
+for odb in ${GLOB:-Job-WBL_*-utx.odb}; do
+  [ -e "$odb" ] || { echo "no ${GLOB:-Job-WBL_*-utx.odb} in $WORKDIR"; exit 1; }
   rid=$(basename "$odb" -utx.odb); rid=${rid#Job-}
   # cell edge is a per-deck property; read it back from the deck rather than
   # assuming, since the six WBL cases inherit different L from their sources
