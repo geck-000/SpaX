@@ -258,10 +258,10 @@ def main():
     with open(p, 'w', newline='', encoding='utf8') as fh:
         w = csv.writer(fh)
         w.writerow(COLS)
-        for L in (0.24, 0.32, 0.40, 0.48):
-            n_sl = int(round(L / 0.08))
+        for L in (0.24, 0.36, 0.48):
+            n_sl = int(round(L / 0.12))
             n_br = max(1, int(round(32.0 * L * L)))
-            for s in (1, 2, 3, 4, 5):
+            for s in (1, 2, 3, 4, 5, 6, 7, 8):
                 r = dict(BASE)
                 r['run_id'] = 'TORL_L%03d_s%d' % (round(L * 1000), s)
                 r['Kappa'] = '0.11'
@@ -278,9 +278,9 @@ def main():
                 w.writerow([r[c] for c in COLS])
                 n += 1
     print('wrote %s  (%d cells)' % (p, n))
-    print('   a_0 held at 0.080, bridge density at 32/unit area, full tensor on')
-    for L in (0.24, 0.32, 0.40, 0.48):
-        n_sl = int(round(L / 0.08)); n_br = max(1, int(round(32.0 * L * L)))
+    print('   a_0 held at 0.120, bridge density at 32/unit area, full tensor on')
+    for L in (0.24, 0.36, 0.48):
+        n_sl = int(round(L / 0.12)); n_br = max(1, int(round(32.0 * L * L)))
         print('     L=%.3f: %d slabs (a_0=%.4f), %d bridges (density %.1f)'
               % (L, n_sl, L / n_sl, n_br, n_br / (L * L)))
 
@@ -325,8 +325,8 @@ def main():
     # drift with cell size. Bridges are scaled with L^2 from a density of 32
     # per unit area. Drained, since the base is drained at every depth where
     # the layered description applies.
-    A0_SWEEP = 0.08
-    SWEEP_L = (0.24, 0.32, 0.40, 0.48)
+    A0_SWEEP = 0.12
+    SWEEP_L = (0.24, 0.36, 0.48)
     phi, b = 0.14, assur_b(0.14)
     t_sweep = phi * A0_SWEEP / max(1.0 - b, 1e-6)
     lm_sweep = min(max(t_sweep / 2.0, LM_MIN), LM_MAX)
@@ -339,7 +339,7 @@ def main():
         for L in SWEEP_L:
             n_sl = int(round(L / A0_SWEEP))
             n_br = max(1, int(round(32.0 * L * L)))
-            for s_ in (1, 2, 3, 4, 5):
+            for s_ in (1, 2, 3, 4, 5, 6, 7, 8):
                 r = dict(BASE)
                 r['run_id'] = 'ERGL_L%03d_s%d' % (round(L * 1000), s_)
                 r['Mode2'] = ''
@@ -471,8 +471,8 @@ def main():
     with open(p, 'w', newline='', encoding='utf8') as fh:
         w = csv.writer(fh)
         w.writerow(COLS)
-        for L in (0.24, 0.32, 0.40, 0.48):
-            n_sl = int(round(L / 0.08))
+        for L in (0.24, 0.36, 0.48):
+            n_sl = int(round(L / 0.12))
             t = phi * L / (n_sl * max(1.0 - b, 1e-6))
             r = dict(BASE)
             r['run_id'] = 'TORLH_L%03d' % round(L * 1000)
