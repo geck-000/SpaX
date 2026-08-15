@@ -15,8 +15,8 @@ WORK = '/scratch/project_2019020/test_rve'
 
 # file, expected cells, the column that must be populated
 CAMPAIGNS = [
-    ('results_eringen_layer.csv',            24, 'E_x'),
-    ('results_eringen_layer_homog.csv',       3, 'E_x'),
+    ('results_eringen_layer.csv',            24, 'E_bending'),
+    ('results_eringen_layer_homog.csv',       3, 'E_bending'),
     ('results_torsion_layer_K.csv',          24, 'K_rve'),
     ('results_torsion_layer_homog_K.csv',     3, 'K_rve'),
     ('results_torsion_big_K.csv',             7, 'K_rve'),
