@@ -102,6 +102,10 @@ GEN=$(sbatch --parsable --account=$ACCT --array=1-${N}%${SPAX_MAX_ARRAY:-25} --m
   generate_array.sh)
 echo "generate  : $GEN"
 
+# A re-solve must clear its targets first. csc_solve_array.sh skips any job whose
+# .odb already exists, and a killed Abaqus leaves a truncated one behind -- so a
+# re-solve over cells that died out-of-memory exits in seconds reporting success,
+# and the extraction then reads the same broken files it read before.
 CHAIN=$(mktemp "chain_${CAMPAIGN}_XXXX.sh")
 cat > "$CHAIN" <<EOS
 #!/bin/bash -l
