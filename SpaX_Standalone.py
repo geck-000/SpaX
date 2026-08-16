@@ -1608,6 +1608,67 @@ def build_bending_pbc_equations(pairs, nodes, L, bending_plane, tol=1e-15):
     return equations, used_dep, n_dropped
 
 
+def write_lesicar_couplings(f, lesicar_constraints, inst_name, first_rp_id):
+    """Emit the Lesicar Eq.14 constraints as distributing couplings.
+
+    Written as *Equation, each constraint is one equation carrying every node on
+    a face -- Abaqus stores that as a single element, and past roughly 8000
+    nodes it exceeds a hard 2GB-per-element limit and the job dies. The count
+    goes as (L/h)^2, so the failure is set by mesh density on a face rather than
+    by cell size, and no amount of memory helps.
+
+    A distributing coupling expresses the same statement -- the area-weighted
+    mean of a face is tied to a reference point -- through an implementation
+    built for large node sets. The tributary areas carry over exactly as
+    node-based surface weights, so the constraint is not approximated, only
+    written differently:
+
+        sum_i a_i u_i = cE*RP_E + cK*RP_K
+
+    becomes a coupling giving RP_LES = sum_i a_i u_i / sum_i a_i, plus a
+    three-term equation relating RP_LES to RP_E and RP_K with the same
+    coefficients divided through by sum_i a_i.
+
+    Returns the number of couplings written.
+    """
+    n = 0
+    for k, con in enumerate(lesicar_constraints):
+        nw = con['nodes']
+        if len(nw) < 2:
+            continue
+        dof = con['dof']
+        atot = sum(w for _lab, w in nw)
+        if atot <= 0:
+            continue
+        rp_id = first_rp_id + k
+        rp = 'RP_LES{}'.format(k)
+
+        f.write('*Node\n{}, {}, {}, {}\n'.format(rp_id, 3.0, 3.0, 3.0 + 0.001 * k))
+        f.write('*Nset, nset={}\n{},\n'.format(rp, rp_id))
+
+        # Node-based surface carrying the tributary areas as weights.
+        f.write('*Surface, type=NODE, name=LESS{}\n'.format(k))
+        for lab, w in nw:
+            f.write('{}.{}, {:.12g}\n'.format(inst_name, lab, w))
+        f.write('*Coupling, constraint name=LESC{}, ref node={}, '
+                'surface=LESS{}\n'.format(k, rp, k))
+        f.write('*Distributing, weighting method=UNIFORM\n')
+        f.write('{}, {}\n'.format(dof, dof))
+
+        # RP_LES is the mean, so the original coefficients divide by the area.
+        terms = [(rp, dof, 1.0)]
+        if con.get('rp_E_coeff'):
+            terms.append(('RP_E', 1, -con['rp_E_coeff'] / atot))
+        if con.get('rp_K_coeff'):
+            terms.append(('RP_K', 1, -con['rp_K_coeff'] / atot))
+        if len(terms) > 1:
+            f.write('*Equation\n{}\n'.format(len(terms)))
+            for name, d, c in terms:
+                f.write('{}, {}, {:.12g}\n'.format(name, d, c))
+        n += 1
+    return n
+
+
 def build_lesicar_equations(lesicar_constraints, used_dep, nodes, L, ftol_factor=0.01):
     """Assign a dependent (leading) node to each Lesicar Eq.14 integral constraint.
 
@@ -2013,17 +2074,25 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             f.write('** Lesicar Eq.14 integral constraints\n')
             lesicar_constraints = compute_lesicar_constraints(
                 nodes, elements, L, so_plane)
-            lesicar_eqs, n_lesicar_skipped = build_lesicar_equations(
-                lesicar_constraints, used_dep, nodes, L)
-            for terms in lesicar_eqs:
-                f.write('*Equation\n{}\n'.format(len(terms)))
-                for is_node, name, dof, coeff in terms:
-                    if is_node:
-                        f.write('{}.{}, {}, {}\n'.format(inst_name, name, dof, coeff))
-                    else:
-                        f.write('{}, {}, {:.12g}\n'.format(name, dof, coeff))
-            print("    Lesicar constraints: {} ({} redundant skipped)".format(
-                len(lesicar_eqs), n_lesicar_skipped))
+            if os.environ.get('SPAX_LESICAR_COUPLING', '') == '1':
+                n_cpl = write_lesicar_couplings(
+                    f, lesicar_constraints, inst_name,
+                    first_rp_id=max(rp_id for rp_id, _x, _y, _z
+                                    in rp_nodes_bend.values()) + 100)
+                print("    Lesicar constraints: {} distributing coupling(s)"
+                      .format(n_cpl))
+            else:
+                lesicar_eqs, n_lesicar_skipped = build_lesicar_equations(
+                    lesicar_constraints, used_dep, nodes, L)
+                for terms in lesicar_eqs:
+                    f.write('*Equation\n{}\n'.format(len(terms)))
+                    for is_node, name, dof, coeff in terms:
+                        if is_node:
+                            f.write('{}.{}, {}, {}\n'.format(inst_name, name, dof, coeff))
+                        else:
+                            f.write('{}, {}, {:.12g}\n'.format(name, dof, coeff))
+                print("    Lesicar constraints: {} ({} redundant skipped)".format(
+                    len(lesicar_eqs), n_lesicar_skipped))
         
         else:
             f.write('** Periodic Boundary Conditions\n')
