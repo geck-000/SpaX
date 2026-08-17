@@ -39,85 +39,102 @@ from shape_diagnosis import ours_phi
 GA_CEILING = 2.0
 
 
-def panel_gogolaze(ax, z):
+T_REF = np.array([-19.1, -17.3, -15.4, -13.6, -11.8, -10.0, -8.2, -6.3, -4.5, -2.7])
+S_REF = np.array([7.0, 5.5, 4.8, 4.5, 4.3, 4.3, 4.5, 5.0, 6.0, 8.0])
+
+
+def ref_phi(z):
+    """The reference column of Section 4.5, interpolated onto z.
+
+    The same profile Figure 10(b) and the sheet assembly use. Keeping one
+    column across the three figures matters: the closure is monotone in phi, so
+    a different column is a different sheet, not a different view of one.
+    """
+    zc = (np.arange(len(T_REF)) + 0.5) / len(T_REF)
+    return np.interp(z, zc, ez.brine_volume(T_REF, S_REF))
+
+
+def gogo_phi(z):
+    """Gogolaze's measured brine profile, his eq. (14), on normalised depth."""
     zc = z * H_GOGO * 100.0
-    phi = (0.29315 * zc ** 2 - 5.124 * zc + 85.977) / 1000.0
-    ns = np.linspace(0.2, 5.0, 90)
-    ef = np.array([flexural(ez.E_of_phi(phi, n=n, floor=0.0), z) for n in ns])
-    ax.plot(ns, ef, color=fs.BLUE, lw=2.6)
-    ax.axhspan(GOGO_APP, GOGO_COR, color=fs.GREEN, alpha=0.30, zorder=0)
-    ax.text(3.5, 0.95, 'his two reductions\n0.785 - 1.421 GPa',
-            fontsize=10, color=fs.GREEN, ha='center')
-    ax.axvspan(ez.N_LO, ez.N_HI, color=fs.SKY, alpha=0.30, zorder=0)
-    ax.text(ez.N_HI + 0.25, 9.0, 'measured band', fontsize=9.5,
-            color=fs.BLUE, ha='left')
-    for tgt, lab, c in ((GOGO_COR, 'root-corrected', fs.VERM),
-                        (3.2, 'if 2.3x stiffer', fs.PURPLE)):
-        try:
-            nn = brentq(lambda n: flexural(ez.E_of_phi(phi, n=n, floor=0.0), z)
-                        - tgt, 0.2, 12.0)
-            ax.plot([nn], [tgt], 'o', color=c, ms=10, zorder=5)
-            ax.annotate(r'%s: $n=%.2f$' % (lab, nn), xy=(nn, tgt),
-                        xytext=(nn + 0.9, tgt * 2.4), fontsize=9.5, color=c,
-                        arrowprops=dict(arrowstyle='->', color=c, lw=1.2))
-        except ValueError:
-            pass
-    ax.set_yscale('log'); ax.set_ylim(0.6, 14)
-    ax.set_xlabel('bridge exponent $n$ in $E\\propto b^{\\,n}$')
-    ax.set_ylabel(r'beam rigidity $12D/H^3$ [GPa]')
-    ax.text(0.015, 0.965, '(a)', transform=ax.transAxes,
-            fontsize=13, fontweight='bold', va='top')
+    return (0.29315 * zc ** 2 - 5.124 * zc + 85.977) / 1000.0
 
 
-def panel_kujala(ax, z):
+def kujala_implied_phi(z, n):
+    """The brine profile Kujala's beams require under the closure.
+
+    He reports no composition, so nothing can be matched forwards. Inverting
+    his moduli is the only way to use him, and it asks a fair question: is the
+    phi(z) his beams imply a physically plausible one? The closure is monotone
+    over 0..phi_0, so every measured modulus has exactly one preimage.
+    """
     Et, Eb = K_TOP.mean(), K_BOT.mean()
     tgt = Et + (Eb - Et) * z
-    # The closure is piecewise, so invert it branch by branch: search the
-    # layered branch first and fall back to the pocket branch. A plain bracket
-    # across phi_c would straddle the jump and brentq would return the
-    # discontinuity rather than a root.
-    for n, c, ls in ((ez.N_MID, fs.BLUE, '-'), (ez.N_LO, fs.GREEN, (0, (5, 2)))):
-        req = []
-        for t in tgt:
-            f = lambda p: float(ez.E_of_phi(p, n=n, floor=0.0)) - t
-            try:
-                req.append(brentq(f, 1e-9, ez.PHI_0 - 1e-9))
-            except ValueError:
-                req.append(np.nan)
-        ax.plot(req, z, color=c, ls=ls, lw=2.4,
-                label=r'implied by Kujala, $n=%.2f$' % n)
-    ax.plot(ours_phi(z), z, color=fs.VERM, lw=2.4, ls='-.',
-            label='our synthetic column')
-    ax.axvspan(0.25, 0.55, color=fs.ORANGE, alpha=0.16, zorder=0)
-    ax.text(0.40, 0.10, 'skeletal\nrange', fontsize=10, color=fs.ORANGE,
-            ha='center')
+    out = []
+    for t in tgt:
+        f = lambda q: float(ez.E_of_phi(q, n=n, floor=0.0)) - t
+        try:
+            out.append(brentq(f, 1e-9, ez.PHI_0 - 1e-9))
+        except ValueError:
+            out.append(np.nan)
+    return np.array(out)
 
-    # The ramped closure is continuous and strictly decreasing over 0..phi_0,
-    # so every measured modulus has exactly one preimage and the inversion runs
-    # the whole depth. The step form used earlier left a gap of moduli with no
-    # solution, which cut these curves off at mid-depth.
-    ax.text(0.055, 0.35, 'closure is monotone,\nso every $E$ inverts',
-            fontsize=8.6, color='0.35', ha='left')
+
+def panel_modulus(ax, z):
+    """Both studies against one model profile."""
+    lo, mid, hi = (ez.E_of_phi(ref_phi(z), n=n, floor=0.0)
+                   for n in (ez.N_HI, ez.N_MID, ez.N_LO))
+    ax.fill_betweenx(z, lo, hi, color=fs.SKY, alpha=0.35, label='exponent band')
+    ax.plot(mid, z, color=fs.BLUE, lw=2.6, label=r'closure, $n=%.2f$' % ez.N_MID)
+
+    # Kujala: moduli at two depths only, four beams each, drawn as spread.
+    for E, zz, lab in ((K_TOP, 0.015, 'Kujala, surface and base'),
+                       (K_BOT, 0.985, None)):
+        ax.plot(E, np.full_like(E, zz), 'o', color=fs.ORANGE, ms=7,
+                mec='white', mew=0.8, label=lab, zorder=5)
+        ax.plot([E.min(), E.max()], [zz, zz], color=fs.ORANGE, lw=2.2, zorder=4)
+
+    # Gogolaze: a whole-beam rigidity, so it is a depth-integrated number and
+    # cannot be drawn as a profile. His two reductions differ by 1.81x, which
+    # is why the target is a band rather than a line.
+    ax.axvspan(GOGO_APP, GOGO_COR, color=fs.GREEN, alpha=0.18, zorder=0)
+    ax.text(0.5 * (GOGO_APP + GOGO_COR), 0.52,
+            "Gogolaze\nbeam rigidity\n(two reductions)", fontsize=8.6,
+            color=fs.GREEN, ha='center', va='center')
+
+    fs.depth_axis(ax)
+    ax.set_xscale('log')
+    ax.set_xlabel("Young's modulus   [GPa]")
+    ax.text(0.015, 0.965, '(a)', transform=ax.transAxes, fontsize=13,
+            fontweight='bold', va='top')
+    ax.legend(loc='center left', fontsize=9)
+
+
+def panel_brine(ax, z):
+    """The composition each comparison rests on."""
+    ax.plot(ref_phi(z), z, color=fs.BLUE, lw=2.6,
+            label='our reference column')
+    ax.plot(gogo_phi(z), z, color=fs.GREEN, lw=2.4, ls='-',
+            label='Gogolaze, measured')
+    ax.plot(kujala_implied_phi(z, ez.N_MID), z, color=fs.ORANGE, lw=2.4,
+            ls=(0, (5, 2)), label='Kujala, implied by inversion')
+    ax.axvspan(0.25, 0.55, color=fs.ORANGE, alpha=0.14, zorder=0)
+    ax.text(0.40, 0.12, 'skeletal\nrange', fontsize=9.5, color=fs.ORANGE,
+            ha='center')
     fs.depth_axis(ax)
     ax.set_xlim(0, 0.55)
     ax.set_xlabel(r'brine volume fraction $\phi$')
-    ax.text(0.015, 0.965, '(b)', transform=ax.transAxes,
-            fontsize=13, fontweight='bold', va='top')
-    ax.legend(loc='lower right', fontsize=9.5)
+    ax.text(0.015, 0.965, '(b)', transform=ax.transAxes, fontsize=13,
+            fontweight='bold', va='top')
+    ax.legend(loc='lower right', fontsize=9)
 
 
 def main():
-    """Two panels now. The Marchenko comparison is withdrawn with its dataset:
-    his profile is a brine profile pushed through a correlation borrowed from
-    three-point bending and then fitted to a functional form, so it is a
-    construction rather than a measurement, and it disagrees with Kujala's
-    endpoint ratio by a factor of two to three. Keeping it meant no calibration
-    could satisfy the field data, because the field data do not agree."""
     outdir = sys.argv[1] if len(sys.argv) > 1 else '.'
-    z = np.linspace(1e-3, 1.0, 400)
-    fig, ax = plt.subplots(1, 2, figsize=(12.4, 5.6))
-    panel_gogolaze(ax[0], z)
-    panel_kujala(ax[1], z)
+    z = np.linspace(0.001, 0.999, 400)
+    fig, ax = plt.subplots(1, 2, figsize=(12.6, 5.4))
+    panel_modulus(ax[0], z)
+    panel_brine(ax[1], z)
     fig.tight_layout()
     p = os.path.join(outdir, 'match_ez.png')
     fig.savefig(p, dpi=165)
