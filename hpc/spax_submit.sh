@@ -58,13 +58,13 @@ read -r -d '' TABLE <<'EOT' || true
 torsion|rve_torsion.csv|TOR|postprocess_torsion.sh|results_torsion_K.csv|2|240G
 torsion_big|rve_torsion_big.csv|TORB|postprocess_torsion.sh|results_torsion_big_K.csv|2|240G
 torsion_homog|rve_torsion_homog.csv|TORH|postprocess_torsion.sh|results_torsion_homog_K.csv|2|240G
-torsion_layer|rve_torsion_layer.csv|TORL|postprocess_torsion.sh|results_torsion_layer_K.csv|1|240G
-torsion_layer_homog|rve_torsion_layer_homog.csv|TORLH|postprocess_torsion.sh|results_torsion_layer_homog_K.csv|1|240G
+torsion_layer|rve_torsion_layer.csv|TORL|postprocess_torsion.sh|results_torsion_layer_K.csv|2|240G
+torsion_layer_homog|rve_torsion_layer_homog.csv|TORLH|postprocess_torsion.sh|results_torsion_layer_homog_K.csv|2|240G
 weibull|rve_weibull.csv|WBL|postprocess_weibull_scf.sh|results_weibull_scf.csv|1|240G
 weibull_layer|rve_weibull_layer.csv|WBLL|postprocess_weibull_scf.sh|results_weibull_layer_scf.csv|1|240G
 nlgeom_layer|rve_nlgeom_layer.csv|NLGL|postprocess_nlgeom.sh|results_nlgeom_layer.csv|1|240G
-eringen_layer|rve_eringen_layer.csv|ERGL|postprocess_firstorder.sh|results_eringen_layer.csv|1|240G
-eringen_layer_homog|rve_eringen_layer_homog.csv|ERGLH|postprocess_firstorder.sh|results_eringen_layer_homog.csv|1|240G
+eringen_layer|rve_eringen_layer.csv|ERGL|postprocess_firstorder.sh|results_eringen_layer.csv|2|240G
+eringen_layer_homog|rve_eringen_layer_homog.csv|ERGLH|postprocess_firstorder.sh|results_eringen_layer_homog.csv|2|240G
 layercol_p060|rve_layercol_p060.csv|LCOL_p060|postprocess_firstorder.sh|results_layercol_p060.csv|1|240G
 EOT
 

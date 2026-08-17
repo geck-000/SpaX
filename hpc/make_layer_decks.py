@@ -258,7 +258,7 @@ def main():
     with open(p, 'w', newline='', encoding='utf8') as fh:
         w = csv.writer(fh)
         w.writerow(COLS)
-        for L in (0.24, 0.36, 0.48, 0.60):
+        for L in (0.24, 0.36, 0.48, 0.60, 0.72):
             n_sl = int(round(L / 0.12))
             n_br = max(1, int(round(32.0 * L * L)))
             for s in (1, 2, 3, 4, 5, 6):
@@ -279,7 +279,7 @@ def main():
                 n += 1
     print('wrote %s  (%d cells)' % (p, n))
     print('   a_0 held at 0.120, bridge density at 32/unit area, full tensor on')
-    for L in (0.24, 0.36, 0.48, 0.60):
+    for L in (0.24, 0.36, 0.48, 0.60, 0.72):
         n_sl = int(round(L / 0.12)); n_br = max(1, int(round(32.0 * L * L)))
         print('     L=%.3f: %d slabs (a_0=%.4f), %d bridges (density %.1f)'
               % (L, n_sl, L / n_sl, n_br, n_br / (L * L)))
@@ -326,10 +326,10 @@ def main():
     # per unit area. Drained, since the base is drained at every depth where
     # the layered description applies.
     A0_SWEEP = 0.12
-    SWEEP_L = (0.24, 0.36, 0.48, 0.60)
+    SWEEP_L = (0.24, 0.36, 0.48, 0.60, 0.72)
     phi, b = 0.14, assur_b(0.14)
     t_sweep = phi * A0_SWEEP / max(1.0 - b, 1e-6)
-    lm_sweep = min(max(t_sweep / 2.0, LM_MIN), LM_MAX)
+    lm_sweep = 0.0167          # nodes/face <= 5300 out to L = 0.60
 
     p = os.path.join(out, 'rve_eringen_layer.csv')
     n = 0
@@ -471,7 +471,7 @@ def main():
     with open(p, 'w', newline='', encoding='utf8') as fh:
         w = csv.writer(fh)
         w.writerow(COLS)
-        for L in (0.24, 0.36, 0.48, 0.60):
+        for L in (0.24, 0.36, 0.48, 0.60, 0.72):
             n_sl = int(round(L / 0.12))
             t = phi * L / (n_sl * max(1.0 - b, 1e-6))
             r = dict(BASE)
