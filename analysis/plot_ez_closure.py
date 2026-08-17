@@ -5,11 +5,6 @@ r"""Figures for the usable E(z) closure.
     as b tends to one, so the two curves meeting there is a check, not a fit.
 (b) E(z) for a stated column, with the band, against Kujala's measured surface
     and base moduli. This is the practical output.
-(c) the two datasets the exponent was calibrated on, each on its own porosity,
-    showing what the band does and does not cover.
-(d) sensitivity: how far each ingredient moves the answer, with the measured
-    ones separated from the assumed and calibrated ones. This is the panel that
-    says how much to trust the rest.
 
     python3 analysis/plot_ez_closure.py [outdir]
 """
@@ -41,16 +36,17 @@ def panel_ephi(ax):
             label='pocket cells (measured)')
     ax.plot(phi, 9.5 * (1 - np.sqrt(phi)) ** 4, color=fs.BLACK, lw=1.6,
             label='Weeks & Assur 1967')
-    ax.plot(phi, 7.23 * np.exp(-4.2 * np.sqrt(phi)), color=fs.PURPLE, lw=1.6,
-            ls=':', label='Marchenko 2024')
     # The four regimes, one per measured threshold. Shading them is the point
     # of this panel now: the closure is not one curve but four laws joined
     # continuously, and which one applies is set by a measurement rather than
     # by a fit.
     edges = [0.0, ez.PHI_DRAIN, ez.PHI_LAYER, ez.PHI_CROSS, ez.PHI_0]
     shades = ['#f5f5f5', '#e8eef4', '#dbe6f0', '#c9d9ea']
+    # The fourth band is not a separate law. layerskel measured b^0.84-0.88
+    # there, indistinguishable from the bridge exponent, so what changes past
+    # phi_c^across is the reliability of b(phi) rather than the mechanics.
     names = ['sealed\npockets', 'drained\npockets', 'bridge\nconstriction',
-             'strut\nbending']
+             'sparse bridges\n(same law)']
     for lo, hi, c, nm in zip(edges[:-1], edges[1:], shades, names):
         ax.axvspan(lo, hi, color=c, zorder=0)
         # regime names sit under the threshold ticks at the top, clear of the
@@ -164,11 +160,13 @@ def panel_sensitivity(ax):
 
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else '.'
-    fig, ax = plt.subplots(2, 2, figsize=(13.6, 11))
-    panel_ephi(ax[0, 0])
-    panel_column(ax[0, 1])
-    panel_cases(ax[1, 0])
-    panel_sensitivity(ax[1, 1])
+    # Two panels: the closure as a function of brine fraction, and the same
+    # closure evaluated down a column. The case comparison and the uncertainty
+    # budget were here too and are not -- each argues something the other
+    # panels do not, and sharing a frame left none of them legible.
+    fig, ax = plt.subplots(1, 2, figsize=(13.6, 5.6))
+    panel_ephi(ax[0])
+    panel_column(ax[1])
     fig.tight_layout()
     p = os.path.join(outdir, 'ez_closure.png')
     fig.savefig(p, dpi=170)
