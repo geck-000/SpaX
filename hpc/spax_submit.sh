@@ -53,19 +53,19 @@ CAMPAIGN=${1:?usage: spax_submit.sh <campaign> [solve sbatch args]}
 shift || true
 SOLVE_EXTRA="$@"
 
-# campaign | deck | job prefix | postprocessor | results file | mesh order | solve mem
+# campaign | deck | job prefix | postprocessor | results file | mesh order | solve mem | load case
 read -r -d '' TABLE <<'EOT' || true
-torsion|rve_torsion.csv|TOR|postprocess_torsion.sh|results_torsion_K.csv|2|240G
-torsion_big|rve_torsion_big.csv|TORB|postprocess_torsion.sh|results_torsion_big_K.csv|2|240G
-torsion_homog|rve_torsion_homog.csv|TORH|postprocess_torsion.sh|results_torsion_homog_K.csv|2|240G
-torsion_layer|rve_torsion_layer.csv|TORL|postprocess_torsion.sh|results_torsion_layer_K.csv|2|240G
-torsion_layer_homog|rve_torsion_layer_homog.csv|TORLH|postprocess_torsion.sh|results_torsion_layer_homog_K.csv|2|240G
-weibull|rve_weibull.csv|WBL|postprocess_weibull_scf.sh|results_weibull_scf.csv|1|240G
-weibull_layer|rve_weibull_layer.csv|WBLL|postprocess_weibull_scf.sh|results_weibull_layer_scf.csv|1|240G
-nlgeom_layer|rve_nlgeom_layer.csv|NLGL|postprocess_nlgeom.sh|results_nlgeom_layer.csv|1|240G
-eringen_layer|rve_eringen_layer.csv|ERGL|postprocess_firstorder.sh|results_eringen_layer.csv|2|240G
-eringen_layer_homog|rve_eringen_layer_homog.csv|ERGLH|postprocess_firstorder.sh|results_eringen_layer_homog.csv|2|240G
-layercol_p060|rve_layercol_p060.csv|LCOL_p060|postprocess_firstorder.sh|results_layercol_p060.csv|1|240G
+torsion|rve_torsion.csv|TOR|postprocess_torsion.sh|results_torsion_K.csv|2|240G|-tor
+torsion_big|rve_torsion_big.csv|TORB|postprocess_torsion.sh|results_torsion_big_K.csv|2|240G|-tor
+torsion_homog|rve_torsion_homog.csv|TORH|postprocess_torsion.sh|results_torsion_homog_K.csv|2|240G|-tor
+torsion_layer|rve_torsion_layer.csv|TORL|postprocess_torsion.sh|results_torsion_layer_K.csv|2|240G|-tor
+torsion_layer_homog|rve_torsion_layer_homog.csv|TORLH|postprocess_torsion.sh|results_torsion_layer_homog_K.csv|2|240G|-tor
+weibull|rve_weibull.csv|WBL|postprocess_weibull_scf.sh|results_weibull_scf.csv|1|240G|-utx
+weibull_layer|rve_weibull_layer.csv|WBLL|postprocess_weibull_scf.sh|results_weibull_layer_scf.csv|1|240G|-utx
+nlgeom_layer|rve_nlgeom_layer.csv|NLGL|postprocess_nlgeom.sh|results_nlgeom_layer.csv|1|240G|-utx
+eringen_layer|rve_eringen_layer.csv|ERGL|postprocess_firstorder.sh|results_eringen_layer.csv|2|240G|-ben
+eringen_layer_homog|rve_eringen_layer_homog.csv|ERGLH|postprocess_firstorder.sh|results_eringen_layer_homog.csv|2|240G|-ben
+layercol_p060|rve_layercol_p060.csv|LCOL_p060|postprocess_firstorder.sh|results_layercol_p060.csv|1|240G|-utx
 EOT
 
 ROW=$(printf '%s\n' "$TABLE" | awk -F'|' -v c="$CAMPAIGN" '$1==c{print; exit}')
@@ -80,6 +80,7 @@ POST=$(echo "$ROW" | cut -d'|' -f4)
 RESULTS=$(echo "$ROW" | cut -d'|' -f5)
 ORDER=$(echo "$ROW" | cut -d'|' -f6)
 MEM=$(echo "$ROW" | cut -d'|' -f7)
+SOLVE_CASE=$(echo "$ROW" | cut -d'|' -f8)
 case "$POST" in
   postprocess_torsion.sh)      SUFFIX='-tor' ;;
   postprocess_weibull_scf.sh)  SUFFIX='-utx' ;;
@@ -117,7 +118,7 @@ set -e
 cd "$WORKDIR"
 find $OUTDIR -name 'Job-*.inp' -exec mv -t "$WORKDIR" {} + 2>/dev/null || true
 find $OUTDIR -name '*_periodic_pairs.csv' -exec mv -t "$WORKDIR" {} + 2>/dev/null || true
-ls Job-${PREFIX}_*.inp 2>/dev/null | sed 's/\.inp\$//' | sort > GlobalJobList_${CAMPAIGN}
+ls Job-${PREFIX}_*${SOLVE_CASE}.inp 2>/dev/null | sed 's/\.inp\$//' | sort > GlobalJobList_${CAMPAIGN}
 M=\$(wc -l < GlobalJobList_${CAMPAIGN})
 echo "collected \$M of $N decks"
 # A short collection is a generation failure, not something to solve around.
