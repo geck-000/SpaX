@@ -128,13 +128,17 @@ def fig_confinement(outdir):
     K = np.array([2.2, 0.22, 0.022, 0.0022])
     Ex = np.array([4.605, 1.612, 0.780, 0.671])
     Ez = np.array([7.493, 7.487, 7.476, 7.520])
-    fig, ax = plt.subplots(1, 2, figsize=(12.4, 5.2))
+    fig, ax = plt.subplots(1, 2, figsize=(12.0, 5.2),
+                           gridspec_kw=dict(width_ratios=[2.15, 1.0]))
     a = ax[0]
     a.plot(K, Ex, 'o-', color=fs.BLUE, ms=9, label=r'$E_x$, across the layers')
     a.plot(K, Ez, 's--', color=fs.GREEN, ms=9, label=r'$E_z$, along the layers')
-    a.annotate(r'$\times%.1f$' % (Ex[0] / Ex[-1]), xy=(0.0022, 0.9),
-               xytext=(0.02, 0.30), fontsize=12, color=fs.BLUE,
-               arrowprops=dict(arrowstyle='<->', color=fs.BLUE, lw=1.4))
+    # the span the number actually measures: the two ends of the E_x sweep
+    xa = 0.0043
+    a.annotate('', xy=(xa, Ex[-1]), xytext=(xa, Ex[0]),
+               arrowprops=dict(arrowstyle='<->', color=fs.BLUE, lw=1.5))
+    a.text(xa * 1.25, (Ex[0] * Ex[-1]) ** 0.5, r'$\times%.1f$' % (Ex[0] / Ex[-1]),
+           fontsize=12.5, color=fs.BLUE, va='center')
     a.text(0.004, 8.6, r'$E_z$ flat to 0.6%', fontsize=11.5, color=fs.GREEN)
     a.set_xscale('log'); a.set_yscale('log'); a.set_ylim(0.4, 14)
     a.set_xlabel(r"fill bulk modulus $K$   [GPa]")
