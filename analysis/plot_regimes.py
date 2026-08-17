@@ -133,9 +133,9 @@ def inplane(ax, mode):
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else '.'
-    fig = plt.figure(figsize=(13.6, 6.2))
-    gs = fig.add_gridspec(3, 4, height_ratios=[1.35, 0.95, 0.46],
-                          hspace=0.34, wspace=0.22)
+    fig = plt.figure(figsize=(13.6, 9.4))
+    gs = fig.add_gridspec(4, 4, height_ratios=[1.15, 0.82, 0.30, 1.55],
+                          hspace=0.36, wspace=0.22)
     modes = ['sealed', 'drained', 'bridge', 'struts']
     for i, (rng_lab, name, why, law) in enumerate(REGIMES):
         ax = fig.add_subplot(gs[0, i])
@@ -156,6 +156,39 @@ def main():
         # only what cannot be said in words as compactly -- the law itself
         axt.text(0.5, 0.55, law, fontsize=10.5, color=fs.BLUE, ha='center',
                  va='center')
+
+    # The closure itself, shaded by the same four regimes as the pictures
+    # above, so the reader meets the mechanism and the law on one page. This
+    # was Figure 10(a); Figure 10 is gone, its E(z) panel having become a
+    # duplicate of the field-comparison figure once that was rebuilt on the
+    # reference column.
+    axc = fig.add_subplot(gs[3, :])
+    phi = np.linspace(0.002, 0.235, 3000)
+    lo, mid, hi = ez.E_band(phi, floor=0.0)
+    edges = [0.0, ez.PHI_DRAIN, ez.PHI_LAYER, ez.PHI_CROSS, ez.PHI_0, 0.235]
+    shades = ['#f5f5f5', '#e8eef4', '#dbe6f0', '#c9d9ea', '#efe3e3']
+    for a, b, c in zip(edges[:-1], edges[1:], shades):
+        axc.axvspan(a, b, color=c, zorder=0)
+    axc.axvspan(ez.PHI_DRAIN - ez.PHI_DRAIN_SD, ez.PHI_DRAIN + ez.PHI_DRAIN_SD,
+                color=fs.VERM, alpha=0.20, zorder=0)
+    axc.fill_between(phi, lo, hi, color=fs.SKY, alpha=0.40,
+                     label=r'closure, $n=%.2f$-$%.2f$' % (ez.N_LO, ez.N_HI))
+    axc.plot(phi, np.maximum(mid, 0.04), color=fs.BLUE, lw=2.8,
+             label=r'closure, $n=%.2f$' % ez.N_MID)
+    axc.plot(phi, ez.E_ICE * (1 - 1.65 * phi), color=fs.ORANGE, lw=2.0,
+             ls='--', label='pocket cells (measured)')
+    axc.plot(phi, 9.5 * (1 - np.sqrt(phi)) ** 4, color=fs.BLACK, lw=1.6,
+             label='Weeks & Assur 1967')
+    for x, lab in ((ez.PHI_DRAIN, r'$0.046$'), (ez.PHI_LAYER, r'$0.09$'),
+                   (ez.PHI_CROSS, r'$0.14$'), (ez.PHI_0, r'$\phi_0=0.20$')):
+        axc.axvline(x, color='0.4', lw=1.0, ls=':')
+        axc.text(x, 17.0, lab, fontsize=8.6, color='0.3', ha='center', va='top')
+    axc.text(0.216, 0.30, 'skeletal:\nno model here', fontsize=8.4,
+             color=fs.VERM, ha='center')
+    axc.set_yscale('log'); axc.set_ylim(0.04, 22); axc.set_xlim(0, 0.235)
+    axc.set_xlabel(r'brine volume fraction $\phi$')
+    axc.set_ylabel(r'$E$   [GPa]')
+    axc.legend(loc='lower left', fontsize=9)
 
     fig.subplots_adjust(left=0.06, right=0.985, top=0.93, bottom=0.07)
     p = os.path.join(out, 'fig_regimes.png')
