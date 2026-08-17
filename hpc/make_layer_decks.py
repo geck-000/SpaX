@@ -326,7 +326,7 @@ def main():
     # per unit area. Drained, since the base is drained at every depth where
     # the layered description applies.
     A0_SWEEP = 0.12
-    SWEEP_L = (0.24, 0.36, 0.48, 0.60, 0.72)
+    SWEEP_L = (0.24, 0.36, 0.48)
     phi, b = 0.14, assur_b(0.14)
     t_sweep = phi * A0_SWEEP / max(1.0 - b, 1e-6)
     lm_sweep = 0.0167          # nodes/face <= 5300 out to L = 0.60
@@ -351,10 +351,12 @@ def main():
                 r['n_bridges'] = str(n_br)
                 r['slab_vof'] = '%.4f' % phi
                 r['bridge_fraction'] = '%.4f' % b
+                r['bridge_correlation'] = '1.0000'
                 r['K_inclusion'] = K['drn']
                 w.writerow([r[c] for c in COLS])
                 n += 1
     print('wrote %s  (%d cells)' % (p, n))
+    print('   bridges correlated (stacked) so the cell can homogenise')
     print('   a_0 held at %.3f exactly; t=%.4f, L_mesh=%.4f -> %.1f elements '
           'across at every size' % (A0_SWEEP, t_sweep, lm_sweep,
                                     t_sweep / lm_sweep))

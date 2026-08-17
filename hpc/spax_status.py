@@ -15,10 +15,8 @@ WORK = '/scratch/project_2019020/test_rve'
 
 # file, expected cells, the column that must be populated
 CAMPAIGNS = [
-    ('results_eringen_layer.csv',            30, 'E_bending'),
+    ('results_eringen_layer.csv',            18, 'E_bending'),
     ('results_eringen_layer_homog.csv',       5, 'E_bending'),
-    ('results_torsion_layer_K.csv',          30, 'K_rve'),
-    ('results_torsion_layer_homog_K.csv',     5, 'K_rve'),
     ('results_torsion_big_K.csv',             7, 'K_rve'),
     ('results_weibull_layer_scf.csv',        20, None),   # any SCF-like column
 ]
