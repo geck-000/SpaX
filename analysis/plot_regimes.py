@@ -43,7 +43,7 @@ REGIMES = [
     (r'$0.09 < \phi < 0.14$', 'bridge constrictions',
      'brine spans each PLANE; load crossing\nit must funnel through ice bridges,\n'
      'so stress spreads into each contact',
-     r'$\times\, b^{\,n_{\rm eff}\,w}$, $n\!\approx\!0.5$'),
+     r'$\times\, b^{\,n_{\rm eff}\,w}$, $n\!=\!0.98$'),
     (r'$\phi > 0.14$', 'sparse bridges',
      'brine crosses BETWEEN planes too:\nplatelets breached, but constriction\n'
      'still governs -- measured, not assumed',
@@ -125,7 +125,7 @@ def inplane(ax, mode):
                (0.49, 0.50)]
         for px, py in pts:
             ax.add_patch(Circle((px, py), 0.052, fc=ICE, ec=ICE_E, lw=0.8))
-        lab = r'$b<0.16$: sparse struts'
+        lab = r'$b<0.16$: sparse bridges'
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
     ax.set_xticks([]); ax.set_yticks([])
     ax.set_xlabel(lab, fontsize=7.4, labelpad=2)
@@ -133,47 +133,30 @@ def inplane(ax, mode):
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else '.'
-    fig = plt.figure(figsize=(13.6, 9.6))
-    gs = fig.add_gridspec(4, 4, height_ratios=[1.35, 0.95, 0.72, 1.45],
-                          hspace=0.42, wspace=0.22)
+    fig = plt.figure(figsize=(13.6, 6.2))
+    gs = fig.add_gridspec(3, 4, height_ratios=[1.35, 0.95, 0.46],
+                          hspace=0.34, wspace=0.22)
     modes = ['sealed', 'drained', 'bridge', 'struts']
     for i, (rng_lab, name, why, law) in enumerate(REGIMES):
         ax = fig.add_subplot(gs[0, i])
         platelets(ax, None, modes[i])
         ax.set_title('%s\n%s' % (rng_lab, name), fontsize=10.5,
                      fontweight='bold', pad=6)
+        if i == 0:
+            ax.set_ylabel('vertical section', fontsize=9, color='0.35')
         ax2 = fig.add_subplot(gs[1, i])
         inplane(ax2, modes[i])
+        if i == 0:
+            ax2.set_ylabel('one lamellar plane,\nseen face on', fontsize=9,
+                           color='0.35')
         # description and law get their own row so nothing is clipped
         axt = fig.add_subplot(gs[2, i])
         axt.axis('off')
-        axt.text(0.5, 0.98, why, fontsize=8.2, color='0.25', ha='center',
-                 va='top', linespacing=1.35)
-        axt.text(0.5, 0.06, law, fontsize=9.4, color=fs.BLUE, ha='center',
-                 va='bottom')
+        # the mechanism sentence lives in the caption now; the figure keeps
+        # only what cannot be said in words as compactly -- the law itself
+        axt.text(0.5, 0.55, law, fontsize=10.5, color=fs.BLUE, ha='center',
+                 va='center')
 
-    ax = fig.add_subplot(gs[3, :])
-    phi = np.linspace(1e-4, 0.235, 3000)
-    E = ez.E_of_phi(phi, floor=0.0)
-    edges = [0.0, ez.PHI_DRAIN, ez.PHI_LAYER, ez.PHI_CROSS, ez.PHI_0, 0.235]
-    shades = ['#f5f5f5', '#e8eef4', '#dbe6f0', '#c9d9ea', '#efe3e3']
-    for lo, hi, c in zip(edges[:-1], edges[1:], shades):
-        ax.axvspan(lo, hi, color=c, zorder=0)
-    ax.axvspan(ez.PHI_DRAIN - ez.PHI_DRAIN_SD, ez.PHI_DRAIN + ez.PHI_DRAIN_SD,
-               color=fs.VERM, alpha=0.20, zorder=0)
-    ax.plot(phi, np.maximum(E, 0.04), color=fs.BLUE, lw=2.8)
-    for x, lab in ((ez.PHI_DRAIN, r'$0.046$' '\n' 'vertical'),
-                   (ez.PHI_LAYER, r'$0.09$' '\n' 'in-plane'),
-                   (ez.PHI_CROSS, r'$0.14$' '\n' 'across-plane'),
-                   (ez.PHI_0, r'$0.20$' '\n' r'$\phi_0$')):
-        ax.axvline(x, color='0.4', lw=1.0, ls=':')
-        ax.text(x, 15.5, lab, fontsize=8.6, color='0.3', ha='center',
-                va='top')
-    ax.text(0.215, 0.35, 'skeletal:\nno model here', fontsize=8.4,
-            color=fs.VERM, ha='center')
-    ax.set_yscale('log'); ax.set_ylim(0.04, 22); ax.set_xlim(0, 0.235)
-    ax.set_xlabel(r'brine volume fraction $\phi$')
-    ax.set_ylabel(r'$E$   [GPa]')
     fig.subplots_adjust(left=0.06, right=0.985, top=0.93, bottom=0.07)
     p = os.path.join(out, 'fig_regimes.png')
     fig.savefig(p, dpi=170)
