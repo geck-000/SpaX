@@ -21,13 +21,11 @@
 #                             the closure asserts w = 0 and nothing measures it.
 #                             Includes LCOL p060's condition, which would not
 #                             mesh at min_distance 0.002.
-#   rve_rampctl.csv  6 cells  the phi = 0.104 condition solved at ten increments
-#                             instead of one, on the same meshes. The control
-#                             for the saving described below; not a new
-#                             condition, and the only cells here that pay for
-#                             the old incrementation.
 #
-# Build the last three first, on the workstation or here:
+# The control for the one-increment solve runs on a workstation, not here; see
+# analysis/local_control.md and the note in collect_ramp.sh below.
+#
+# Build the last two first, on the workstation or here:
 #
 #   python3 hpc/make_ramp_decks.py params/
 #
@@ -90,22 +88,12 @@ for d in out_layerb out_rampn out_subc; do
   find $d -name '*_periodic_pairs.csv' -exec mv -t "$WORKDIR" {} + 2>/dev/null || true
 done
 
-# The control for the single-increment solve. The claim is that one increment
-# and ten return the same moduli because the cells are linear; these six decks
-# are the measurement of it. They are COPIES of the generated phi = 0.104 decks
-# with the increment line edited back, so mesh, packing and periodic equations
-# are bit-identical and the increment size is the only difference. Regenerating
-# them from rve_rampctl.csv instead would pack from a different seed and confound
-# the comparison with seed scatter.
-for f in Job-RAMP_p104_*.inp; do
-  [ -e "$f" ] || continue
-  g="Job-RAMPC_${f#Job-RAMP_}"
-  sed 's/^1\., 1\., 1e-10, 1\./0.1, 1., 1e-10, 0.1/' "$f" > "$g"
-  b="${f%.inp}"; c="${g%.inp}"
-  [ -e "${b}_periodic_pairs.csv" ] && cp "${b}_periodic_pairs.csv" "${c}_periodic_pairs.csv"
-  grep -q '^0\.1, 1\., 1e-10, 0\.1' "$g" || echo "  WARNING: $g did not take the ten-increment edit"
-done
-echo "control decks: $(ls Job-RAMPC_*.inp 2>/dev/null | wc -l) (expect 12, 6 cells x 2 loads)"
+# The control for the single-increment solve is NOT run here. The claim being
+# tested -- that one increment and ten return the same moduli -- is a property
+# of the equations and not of the discretisation, so a coarse copy of the same
+# cell settles it as well as a production one and settles it on a workstation
+# for nothing. See analysis/local_control.md. Running it at full size on the
+# cluster would have bought the same yes/no answer at six cells of billing.
 
 sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time
   ls Job-${1}_*.inp 2>/dev/null | sed 's/\.inp$//' | sort > GlobalJobList_${1}
@@ -129,10 +117,6 @@ sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time
 sub LB    rve_layerb.csv  results_layerb.csv  32G 03:00:00
 sub RAMP  rve_rampn.csv   results_rampn.csv   32G 03:00:00
 sub SUBC  rve_subc.csv    results_subc.csv    32G 03:00:00
-# Ten increments on the same meshes: the control, and the only place in the
-# campaign where the old incrementation is paid for. Give it the wall time the
-# ten-increment solve needs rather than the one-increment budget above.
-sub RAMPC rve_rampctl.csv results_rampctl.csv 32G 06:00:00
 EOS
 chmod +x collect_ramp.sh
 
