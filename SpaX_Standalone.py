@@ -2229,10 +2229,24 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         # and the disk. On the ramp campaign the ODBs are the binding constraint
         # rather than the CPU.
         #
-        # Off by default. Setting it globally would change every deck this
-        # repository has generated, including the nlgeom reloads whose whole
-        # content is the intermediate frames, so it is opted into per campaign
-        # and refuses to engage when nlgeom is ON.
+        # DO NOT USE THIS WITH extract_first_order. It is off by default and
+        # should stay off for any deck whose E_x/E_z come from that route, which
+        # is every first-order campaign in this repository.
+        #
+        # The comment above is right that the response is proportional and wrong
+        # about what reads it. extract_first_order walks the frame series and
+        # fits sigma against epsilon by polyfit over the 10-40% window of peak
+        # strain; one increment leaves a single point at 100% of peak, the
+        # window is empty, and E_eff comes back exactly 0.0. The ODB is
+        # perfectly healthy -- two frames, all fields, frameValue 1.0 -- which
+        # is what makes the failure hard to see. A whole campaign of solves was
+        # extracted as zeros this way. (last_frame_only=True at
+        # SpaX_PostProcess.py:1381 belongs to extract_principals, a different
+        # route: the full-tensor and bending paths.)
+        #
+        # It remains available for a pipeline that genuinely reads one frame,
+        # and it still refuses to engage when nlgeom is ON, where the
+        # intermediate frames ARE the measurement.
         one_inc = os.environ.get('SPAX_LINEAR_ONE_STEP', '') not in ('', '0')
         if one_inc and nlgeom_str == 'NO':
             f.write('1., 1., 1e-10, 1.\n')

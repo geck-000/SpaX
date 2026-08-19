@@ -54,19 +54,21 @@ for f in Job-LB_*.inp; do
   [ -e "$f" ] || continue
   if [ -n "${SPAX_KEEP_TEN:-}" ]; then kept=$((kept+1)); continue; fi
   if grep -q '^0\.1, 1\., 1e-10, 0\.1' "$f"; then
-    sed -i 's/^0\.1, 1\., 1e-10, 0\.1/1., 1., 1e-10, 1./' "$f"
-    echo "$f  0.1,1.,1e-10,0.1 -> 1.,1.,1e-10,1." >> reuse_layerb.manifest
-    edited=$((edited+1))
+    kept=$((kept+1))          # ten increments, which is what the extractor needs
   elif grep -q '^1\., 1\., 1e-10, 1\.' "$f"; then
-    kept=$((kept+1))          # already one increment; nothing to do
+    # A deck left at one increment by an earlier pass. Put it back: E_x comes
+    # from a polyfit over the frame series, so a two-frame ODB extracts as zero.
+    sed -i 's/^1\., 1\., 1e-10, 1\./0.1, 1., 1e-10, 0.1/' "$f"
+    echo "$f  1.,1.,1e-10,1. -> 0.1,1.,1e-10,0.1 (restored)" >> reuse_layerb.manifest
+    edited=$((edited+1))
   else
     echo "$f  UNRECOGNISED STEP CARD -- left alone" >> reuse_layerb.manifest
     odd=$((odd+1))
   fi
 done
 
-echo "collapsed to one increment: $edited"
-echo "already one increment:      $kept"
+echo "restored to ten increments: $edited"
+echo "already ten increments:      $kept"
 [ "$odd" -gt 0 ] && echo "UNRECOGNISED, left as found:  $odd  (see reuse_layerb.manifest)"
 echo "manifest: $W/reuse_layerb.manifest"
 

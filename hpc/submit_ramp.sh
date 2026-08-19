@@ -64,20 +64,32 @@ export PYTHONUSERBASE=/projappl/project_2019020/spax_py
 # them, and this is a first-order homogenisation exactly as LCOL was. Anything
 # else would make the new exponents incomparable with the four they extend.
 #
-# SPAX_LINEAR_ONE_STEP collapses the ten 0.1 increments to one. All 90 cells
-# here are nlgeom OFF with linear elastic phases, and the first-order extractor
-# reads the last frame only (SpaX_PostProcess.py:1381), so the nine
-# intermediate field frames -- S, E, LE, EVOL over several million elements --
-# are written and never opened. One increment is the same answer, not an
-# approximation to it. What it does NOT save is the factorisation, which a
-# linear step does once regardless; the saving is in the stress recovery, the
-# ODB write and the disk. LCOL was solved the old way at a comparable size, so
-# this campaign measures the real ratio rather than assuming it.
+# SPAX_LINEAR_ONE_STEP IS NOT USED HERE, and the reason is worth recording
+# because it cost a full campaign of solves to learn.
+#
+# The flag collapses the ten 0.1 increments to one, on the argument that the
+# cells are linear and the extractor reads only the last frame. The first half
+# is true -- a workstation control put one increment against ten on identical
+# meshes and the reaction forces agreed to every digit printed. The second half
+# is false. extract_first_order, which is what produces E_x and E_z, does not
+# read the last frame: it walks the frame series and fits sigma against epsilon
+# by polyfit over the 10-40% window of peak strain. With one increment there is
+# a single point, at 100% of peak, the window is empty, and E comes back exactly
+# zero. (SpaX_PostProcess.py:1381, last_frame_only=True, is extract_principals
+# -- a different route, used for the full-tensor and bending paths.)
+#
+# Ten increments is not arbitrary either: at ten, strains land at 0.1..1.0 of
+# peak and the 10-40% window captures four points. Four increments would capture
+# one, which is no better than one.
+#
+# The lesson for the control: it compared reaction forces with a purpose-written
+# reader and so verified the SOLVE, never the extraction. A control for a
+# pipeline change has to run the pipeline.
 gen () {   # $1 deck  $2 outdir
   local N=$(($(wc -l < "$1") - 1))
   sbatch --parsable --account=$ACCT \
     --array=1-${N}%${MAXARR} \
-    --export=ALL,WORKDIR=$WORKDIR,CSV=$1,OUTDIR=$2,SPAX_MESH_ORDER=1,SPAX_SEED=20260819,SPAX_LINEAR_ONE_STEP=1,PYTHONUSERBASE=$PYTHONUSERBASE \
+    --export=ALL,WORKDIR=$WORKDIR,CSV=$1,OUTDIR=$2,SPAX_MESH_ORDER=1,SPAX_SEED=20260819,SPAX_MESH_TIMEOUT=$MESH_TIMEOUT,PYTHONUSERBASE=$PYTHONUSERBASE \
     generate_array.sh
 }
 
@@ -138,9 +150,9 @@ sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time  [$6 glob]
 
 # layerb spans 0.005 to 0.012 element size, so its largest members are the same
 # size as the ramp cells and it gets the same allocation.
-sub LB    rve_layerb.csv  results_layerb.csv  32G 03:00:00 'Job-LB_*_drn_*.inp'
-sub RAMP  rve_rampn.csv   results_rampn.csv   32G 03:00:00
-sub SUBC  rve_subc.csv    results_subc.csv    32G 03:00:00
+sub LB    rve_layerb.csv  results_layerb.csv  240G 04:00:00 'Job-LB_*_drn_*.inp'
+sub RAMP  rve_rampn.csv   results_rampn.csv   240G 04:00:00
+sub SUBC  rve_subc.csv    results_subc.csv    240G 04:00:00
 EOS
 chmod +x collect_ramp.sh
 
