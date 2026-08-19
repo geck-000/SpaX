@@ -1,0 +1,23 @@
+cell                        fr(1) fr(10)         RF 1 inc        RF 10 inc   rel diff
+LCTL_c_drn_s1-utx               2     11   4.77041900e+06   4.77041900e+06   0.00e+00
+LCTL_c_drn_s1-utz               2     11   2.01038880e+07   2.01038880e+07   0.00e+00
+LCTL_c_und_s1-utx           -- STILL SOLVING (.lck present); skipped
+
+1 pair(s) skipped as incomplete -- rerun once they finish.
+compared 2 pair(s); largest relative difference: 0.000e+00
+The two are the same solve. The nine discarded frames were
+discardable, and the campaign can drop them without a caveat.
+
+Produced by control_local.sh + analysis/local_control_compare.py on a
+workstation, 2026-08-19, at zero billing. The cells are the phi = 0.104
+condition at a coarse mesh (1.2 elements across the brine layer); each
+ten-increment deck is a copy of its one-increment twin with the step card
+edited, so mesh, packing and periodic equations are bit-identical between the
+pair and the increment size is the only difference.
+
+Both DRAINED pairs agree to every digit printed. The campaign is drained-only,
+so the gate covers exactly the cells that run. The undrained pair was killed
+mid-solve and is skipped by the completeness guard rather than averaged in --
+the guard exists because an earlier run of this comparison read a live ODB,
+found a factor of four, and reported the cells as nonlinear when what it had
+measured was a solve three increments into ten.
