@@ -36,7 +36,13 @@ WORKERS=${SPAX_GEN_WORKERS:-3}
 cd "$WORK"
 cp -f "$HERE/params/rve_btgrid.csv" .
 
-if [ "$(ls Job-BT_*.inp 2>/dev/null | wc -l)" -lt 18 ]; then
+# Count the x-decks, not every .inp: each cell writes utx AND utz, so counting
+# all of them reaches 18 at nine cells and would skip generation on a half-built
+# grid. The runner is resumed after an interrupted generation often enough that
+# this mattered the first time it happened.
+NCELLS=$(ls Job-BT_*-utx.inp 2>/dev/null | wc -l)
+if [ "$NCELLS" -lt 18 ]; then
+  echo "have $NCELLS of 18 cells; generating the rest"
   echo "=== generating (18 cells, $WORKERS workers) ==="
   OMP_NUM_THREADS=1 SPAX_LINEAR_ONE_STEP=1 SPAX_MESH_TIMEOUT=5400 \
     SPAX_GEN_WORKERS=$WORKERS \
