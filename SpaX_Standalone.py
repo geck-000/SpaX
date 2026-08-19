@@ -2210,7 +2210,36 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         nlgeom_str = 'YES' if nlgeom.upper() in ('ON', 'YES', 'TRUE') else 'NO'
         f.write('*Step, name={}, nlgeom={}, inc=100000\n'.format(step_name, nlgeom_str))
         f.write('*Static\n')
-        f.write('0.1, 1., 1e-10, 0.1\n')
+        # Ten increments of 0.1 is what a nonlinear reload needs: the curve
+        # extractor at SpaX_PostProcess.py:202 walks every frame and fits E over
+        # the 10-40% window, so the intermediate frames ARE the measurement.
+        #
+        # First-order homogenisation reads none of them. extract_principals is
+        # called with last_frame_only=True, so a linear cell writes nine full
+        # field frames -- S, E, LE, EVOL over every element -- that nothing ever
+        # opens. With nlgeom OFF and linear elastic phases the response is
+        # exactly proportional to the imposed displacement, so the single
+        # increment is not an approximation to the ten: it is the same answer
+        # with the discarded frames not written.
+        #
+        # The saving is in the frames and not in the factorisation. Abaqus
+        # factorises a linear step once and back-substitutes thereafter, so the
+        # solve itself gives up perhaps a quarter; what goes is the stress
+        # recovery over several million elements nine times over, the ODB write,
+        # and the disk. On the ramp campaign the ODBs are the binding constraint
+        # rather than the CPU.
+        #
+        # Off by default. Setting it globally would change every deck this
+        # repository has generated, including the nlgeom reloads whose whole
+        # content is the intermediate frames, so it is opted into per campaign
+        # and refuses to engage when nlgeom is ON.
+        one_inc = os.environ.get('SPAX_LINEAR_ONE_STEP', '') not in ('', '0')
+        if one_inc and nlgeom_str == 'NO':
+            f.write('1., 1., 1e-10, 1.\n')
+        else:
+            if one_inc:
+                print("    SPAX_LINEAR_ONE_STEP ignored: nlgeom is ON")
+            f.write('0.1, 1., 1e-10, 0.1\n')
         f.write('**\n')
         
         # Step BCs for each loading mode

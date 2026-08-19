@@ -240,6 +240,51 @@ def turnoff(g):
         print('  the wrong place or the weight has the wrong support.')
 
 
+def control():
+    """One increment against ten, on bit-identical meshes.
+
+    The campaign solves nlgeom-OFF cells in a single increment because the
+    extractor reads the last frame only and the response is proportional to the
+    imposed displacement. That is an argument about linearity, and arguments
+    about linearity are exactly the ones worth checking against a solve. The
+    RAMPC decks are copies of the phi = 0.104 decks with the increment line
+    edited back, so the mesh, the packing and the periodic equations are
+    identical and the increment size is the only difference between them.
+    """
+    print('\n' + '=' * 72)
+    print('CONTROL -- one increment against ten')
+    print('=' * 72)
+    a = load('rve_rampn', 'results_rampn')
+    c = load('rve_rampctl', 'results_rampctl')
+    if a is None or c is None or c.empty:
+        print('  results_rampctl.csv absent; the single-increment solve is')
+        print('  argued and not yet measured.')
+        return
+    a = a[a.run_id.str.startswith('RAMP_p104')].set_index(
+        a.run_id.str.replace('RAMP_', '', regex=False))
+    c = c.set_index(c.run_id.str.replace('RAMPC_', '', regex=False))
+    both = sorted(set(a.index) & set(c.index))
+    if not both:
+        print('  no matching run_ids between the two sets')
+        return
+    print('  %-18s %12s %12s %10s' % ('cell', '1 inc', '10 inc', 'rel diff'))
+    worst = 0.0
+    for k in both:
+        for col in ('E_x', 'E_z'):
+            e1, e10 = float(a.loc[k, col]), float(c.loc[k, col])
+            r = abs(e1 - e10) / e10
+            worst = max(worst, r)
+            print('  %-18s %12.6g %12.6g %10.2e' % (k + ':' + col, e1, e10, r))
+    print('\n  largest relative difference: %.2e' % worst)
+    if worst < 1e-6:
+        print('  the two are the same solve; the nine discarded frames were')
+        print('  discardable and the saving costs nothing.')
+    else:
+        print('  NOT identical. Something in these cells is not linear, and')
+        print('  the single-increment results are not interchangeable with')
+        print('  the LCOL cells they are pooled with.')
+
+
 def consequences(phi_sat_values=(0.095, PHI_SAT_PUBLISHED, 0.12, 0.16)):
     """What the window is worth downstream, so the campaign has a stake."""
     try:
@@ -291,6 +336,7 @@ def main():
     _, g = exponents(pd.concat(frames, ignore_index=True))
     ramp(g)
     turnoff(g)
+    control()
     consequences()
     return 0
 

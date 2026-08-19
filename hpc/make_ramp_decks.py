@@ -151,6 +151,21 @@ def main():
     # under phi_c, 0.075 is LCOL p060's realised fraction.
     deck(os.path.join(out, 'rve_subc.csv'),
          (0.075, 0.082, 0.088), 'SUBC')
+    print()
+
+    # The control for the single-increment solve. Every cell in this campaign is
+    # nlgeom OFF with linear elastic phases and is extracted from the last frame
+    # only, so collapsing the ten 0.1 increments to one returns the same answer
+    # and stops writing nine field frames nothing opens. That is an argument,
+    # not a measurement, and the campaign should carry the measurement.
+    #
+    # These rows are the phi = 0.104 condition again under a different run_id.
+    # collect_ramp.sh builds them by copying the generated RAMP_p104 decks and
+    # editing the one increment line back, so the mesh, the packing and the
+    # periodic equations are bit-identical and the ONLY difference between the
+    # two sets is the increment size. A deck regenerated from this CSV would
+    # pack from a different seed and measure seed scatter as well.
+    deck(os.path.join(out, 'rve_rampctl.csv'), (0.104,), 'RAMPC')
 
     print('\nRAMPB is params/rve_layerb.csv, already written and never solved;'
           '\nno new deck is needed for it.')

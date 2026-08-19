@@ -21,8 +21,13 @@
 #                             the closure asserts w = 0 and nothing measures it.
 #                             Includes LCOL p060's condition, which would not
 #                             mesh at min_distance 0.002.
+#   rve_rampctl.csv  6 cells  the phi = 0.104 condition solved at ten increments
+#                             instead of one, on the same meshes. The control
+#                             for the saving described below; not a new
+#                             condition, and the only cells here that pay for
+#                             the old incrementation.
 #
-# Build the last two first, on the workstation or here:
+# Build the last three first, on the workstation or here:
 #
 #   python3 hpc/make_ramp_decks.py params/
 #
@@ -46,11 +51,21 @@ export PYTHONUSERBASE=/projappl/project_2019020/spax_py
 # Linear elements: the volume-averaged constant-strain measure is exact for
 # them, and this is a first-order homogenisation exactly as LCOL was. Anything
 # else would make the new exponents incomparable with the four they extend.
+#
+# SPAX_LINEAR_ONE_STEP collapses the ten 0.1 increments to one. All 90 cells
+# here are nlgeom OFF with linear elastic phases, and the first-order extractor
+# reads the last frame only (SpaX_PostProcess.py:1381), so the nine
+# intermediate field frames -- S, E, LE, EVOL over several million elements --
+# are written and never opened. One increment is the same answer, not an
+# approximation to it. What it does NOT save is the factorisation, which a
+# linear step does once regardless; the saving is in the stress recovery, the
+# ODB write and the disk. LCOL was solved the old way at a comparable size, so
+# this campaign measures the real ratio rather than assuming it.
 gen () {   # $1 deck  $2 outdir
   local N=$(($(wc -l < "$1") - 1))
   sbatch --parsable --account=$ACCT \
     --array=1-${N}%${MAXARR} \
-    --export=ALL,WORKDIR=$WORKDIR,CSV=$1,OUTDIR=$2,SPAX_MESH_ORDER=1,SPAX_SEED=20260819,PYTHONUSERBASE=$PYTHONUSERBASE \
+    --export=ALL,WORKDIR=$WORKDIR,CSV=$1,OUTDIR=$2,SPAX_MESH_ORDER=1,SPAX_SEED=20260819,SPAX_LINEAR_ONE_STEP=1,PYTHONUSERBASE=$PYTHONUSERBASE \
     generate_array.sh
 }
 
@@ -75,6 +90,23 @@ for d in out_layerb out_rampn out_subc; do
   find $d -name '*_periodic_pairs.csv' -exec mv -t "$WORKDIR" {} + 2>/dev/null || true
 done
 
+# The control for the single-increment solve. The claim is that one increment
+# and ten return the same moduli because the cells are linear; these six decks
+# are the measurement of it. They are COPIES of the generated phi = 0.104 decks
+# with the increment line edited back, so mesh, packing and periodic equations
+# are bit-identical and the increment size is the only difference. Regenerating
+# them from rve_rampctl.csv instead would pack from a different seed and confound
+# the comparison with seed scatter.
+for f in Job-RAMP_p104_*.inp; do
+  [ -e "$f" ] || continue
+  g="Job-RAMPC_${f#Job-RAMP_}"
+  sed 's/^1\., 1\., 1e-10, 1\./0.1, 1., 1e-10, 0.1/' "$f" > "$g"
+  b="${f%.inp}"; c="${g%.inp}"
+  [ -e "${b}_periodic_pairs.csv" ] && cp "${b}_periodic_pairs.csv" "${c}_periodic_pairs.csv"
+  grep -q '^0\.1, 1\., 1e-10, 0\.1' "$g" || echo "  WARNING: $g did not take the ten-increment edit"
+done
+echo "control decks: $(ls Job-RAMPC_*.inp 2>/dev/null | wc -l) (expect 12, 6 cells x 2 loads)"
+
 sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time
   ls Job-${1}_*.inp 2>/dev/null | sed 's/\.inp$//' | sort > GlobalJobList_${1}
   local N=$(wc -l < GlobalJobList_${1})
@@ -94,9 +126,13 @@ sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time
 
 # layerb spans 0.005 to 0.012 element size, so its largest members are the same
 # size as the ramp cells and it gets the same allocation.
-sub LB   rve_layerb.csv results_layerb.csv 32G 03:00:00
-sub RAMP rve_rampn.csv  results_rampn.csv  32G 03:00:00
-sub SUBC rve_subc.csv   results_subc.csv   32G 03:00:00
+sub LB    rve_layerb.csv  results_layerb.csv  32G 03:00:00
+sub RAMP  rve_rampn.csv   results_rampn.csv   32G 03:00:00
+sub SUBC  rve_subc.csv    results_subc.csv    32G 03:00:00
+# Ten increments on the same meshes: the control, and the only place in the
+# campaign where the old incrementation is paid for. Give it the wall time the
+# ten-increment solve needs rather than the one-increment budget above.
+sub RAMPC rve_rampctl.csv results_rampctl.csv 32G 06:00:00
 EOS
 chmod +x collect_ramp.sh
 
