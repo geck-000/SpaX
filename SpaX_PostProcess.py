@@ -325,7 +325,32 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
         # the packer met its target.
         results['phi_inclusion'] = v_incl / V_RVE
         results['phi_soft_total'] = (v_incl / V_RVE) + (1.0 - v_solid / V_RVE)
-    if len(stress_strain_data) >= 2:
+    if len(stress_strain_data) == 1:
+        # A single increment. The frame series the block below fits does not
+        # exist, so the secant through the one point is taken instead:
+        # E = sigma/eps. For a linear step -- nlgeom OFF, linear elastic phases,
+        # which is every first-order cell in this repository -- the secant IS
+        # the tangent, so this is exact rather than an approximation, and it
+        # agrees with the ten-increment fit to the digits the ODB carries.
+        #
+        # This branch exists because a one-increment deck used to fall straight
+        # through to `return results` with E_eff never assigned, reporting a
+        # perfectly healthy solve as exactly 0.0. If the response is NOT linear
+        # the caller must supply the frames: a secant over the whole load path
+        # is not a modulus, and nothing here can tell the difference from one
+        # point. Multi-increment behaviour below is untouched.
+        d0 = stress_strain_data[0]
+        if abs(d0['eps']) > 1e-30:
+            modulus = d0['sigma'] / d0['eps']
+            if is_shear:
+                results['G_eff'] = modulus
+            else:
+                results['E_eff'] = modulus
+                if abs(d0.get('eps_axial_solid', 0.0)) > 1e-30:
+                    nu1 = -d0['eps_trans1'] / d0['eps_axial_solid']
+                    nu2 = -d0['eps_trans2'] / d0['eps_axial_solid']
+                    results['nu_eff'] = (nu1 + nu2) / 2.0
+    elif len(stress_strain_data) >= 2:
         eps_arr = np.array([d['eps'] for d in stress_strain_data])
         sig_arr = np.array([d['sigma'] for d in stress_strain_data])
         
