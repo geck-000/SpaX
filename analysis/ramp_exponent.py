@@ -92,6 +92,21 @@ def load(deck, result):
     return m
 
 
+# Which b convention a deck was built on. The distinction is not cosmetic: n is
+# extracted as ln(E/E_pocket)/ln(b), so a b that is too large makes ln(b) less
+# negative and DEPRESSES n. LCOL took b from Assur at the slab fraction while phi
+# was read back as the realised total, ~0.019 higher, so every LCOL cell carries
+# a b above the Assur curve and an n biased low. At LCOL_p080 that is b = 0.368
+# against the 0.296 the curve asks for -- and that cell is the one phi_sat was
+# derived from, its low n read as the weight not yet being fully on.
+#
+# RAMP and SUBC take b from Assur at the realised target, so they sit ON the
+# curve. Pooling the two conventions is only legitimate if n does not depend on
+# b, which is what the LAYERB gate decides. Until it does, they are reported
+# apart.
+ON_CURVE = ('rve_rampn', 'rve_subc')
+
+
 def exponents(df):
     """n per cell, and the same aggregated over the seed replicates."""
     d = df[df.drained].copy()
@@ -333,9 +348,31 @@ def main():
     have = sorted(set(pd.concat(frames).deck))
     print('decks present: %s\n' % ', '.join(have))
     gate()
-    _, g = exponents(pd.concat(frames, ignore_index=True))
-    ramp(g)
-    turnoff(g)
+    allf = pd.concat(frames, ignore_index=True)
+    on = allf[allf.deck.isin(ON_CURVE)]
+    off = allf[~allf.deck.isin(ON_CURVE)]
+
+    print(chr(10) + '#' * 72)
+    print('# CELLS ON THE ASSUR CURVE (b from the realised phi): RAMP + SUBC')
+    print('#' * 72)
+    if not on.empty:
+        _, g_on = exponents(on)
+        ramp(g_on)
+        turnoff(g_on)
+
+    if not off.empty:
+        print(chr(10) + '#' * 72)
+        print('# CELLS OFF THE CURVE (b from the slab fraction): LCOL')
+        print('# Reported apart, not pooled. Their n is biased LOW by the')
+        print('# b convention -- see ON_CURVE above -- and the size of that')
+        print('# bias is what the LAYERB gate has to bound before these can')
+        print('# be combined with the set above.')
+        print('#' * 72)
+        _, g_off = exponents(off)
+        print('  %-22s %7s %7s %8s %7s' % ('cell', 'phi', 'b', 'E GPa', 'n'))
+        for k, r in g_off.iterrows():
+            print('  %-22s %7.4f %7.4f %8.3f %7.3f' % (k, r.phi, r.b, r.E, r.n))
+    g = g_on if not on.empty else g_off
     control()
     consequences()
     return 0
