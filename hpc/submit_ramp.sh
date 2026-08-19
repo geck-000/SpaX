@@ -89,7 +89,7 @@ gen () {   # $1 deck  $2 outdir
 GB=$(gen rve_layerb_missing.csv out_layerb)
 GR=$(gen rve_rampn.csv  out_rampn)
 GS=$(gen rve_subc.csv   out_subc)
-echo "gen: $GB (17 layerb, 31 reused) $GR (24 ramp) $GS (18 subc)"
+echo "gen: $GB (7 layerb, 17 drained reused) $GR (12 ramp) $GS (9 subc)"
 
 cat > collect_ramp.sh <<'EOS'
 #!/bin/bash -l
@@ -111,8 +111,9 @@ done
 # tested -- that one increment and ten return the same moduli -- is a property
 # of the equations and not of the discretisation, so a coarse copy of the same
 # cell settles it as well as a production one and settles it on a workstation
-# for nothing. See analysis/local_control.md. Running it at full size on the
-# cluster would have bought the same yes/no answer at six cells of billing.
+# for nothing. Run control_local.sh there and read it with
+# analysis/local_control_compare.py. Running it at full size here would have
+# bought the same yes/no answer at six cells of billing.
 
 sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time  [$6 glob]
   # $6 lets a tag solve a subset of what it generated. LAYERB was meshed in both
