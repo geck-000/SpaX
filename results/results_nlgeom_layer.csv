@@ -1,0 +1,10 @@
+run_id,nlgeom,L,eps_max,E0,E_sec,E_tan_end,sec_over_E0
+NLGL_TEN_s1,ON,0.5,0.0,0.0,0.0,0.0,0.0
+NLGL_TEN_s2,ON,0.5,0.0,0.0,0.0,0.0,0.0
+NLGL_TEN_s3,ON,0.5,0.0,0.0,0.0,0.0,0.0
+NLGL_CMP_s1,ON,0.5,0.0,0.0,0.0,0.0,0.0
+NLGL_CMP_s2,ON,0.5,0.0,0.0,0.0,0.0,0.0
+NLGL_CMP_s3,ON,0.5,0.0,0.0,0.0,0.0,0.0
+NLGL_LIN_s1,OFF,0.5,0.0,0.0,0.0,0.0,0.0
+NLGL_LIN_s2,OFF,0.5,0.0,0.0,0.0,0.0,0.0
+NLGL_LIN_s3,OFF,0.5,0.0,0.0,0.0,0.0,0.0
