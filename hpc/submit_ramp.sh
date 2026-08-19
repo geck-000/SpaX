@@ -114,8 +114,12 @@ done
 # for nothing. See analysis/local_control.md. Running it at full size on the
 # cluster would have bought the same yes/no answer at six cells of billing.
 
-sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time
-  ls Job-${1}_*.inp 2>/dev/null | sed 's/\.inp$//' | sort > GlobalJobList_${1}
+sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time  [$6 glob]
+  # $6 lets a tag solve a subset of what it generated. LAYERB was meshed in both
+  # drainage states before the campaign narrowed to drained, so its undrained
+  # decks stay on disk -- they cost nothing to keep and would cost a regeneration
+  # to recover -- but they are not solved, because nothing reads them.
+  ls ${6:-Job-${1}_*.inp} 2>/dev/null | sed 's/\.inp$//' | sort > GlobalJobList_${1}
   local N=$(wc -l < GlobalJobList_${1})
   echo "${1}: $N decks"
   [ "$N" -ge 1 ] || { echo "  WARNING: none generated -- check logs/spax_gen_*"; return; }
@@ -133,7 +137,7 @@ sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time
 
 # layerb spans 0.005 to 0.012 element size, so its largest members are the same
 # size as the ramp cells and it gets the same allocation.
-sub LB    rve_layerb.csv  results_layerb.csv  32G 03:00:00   # all 48: reused + new
+sub LB    rve_layerb.csv  results_layerb.csv  32G 03:00:00 'Job-LB_*_drn_*.inp'
 sub RAMP  rve_rampn.csv   results_rampn.csv   32G 03:00:00
 sub SUBC  rve_subc.csv    results_subc.csv    32G 03:00:00
 EOS

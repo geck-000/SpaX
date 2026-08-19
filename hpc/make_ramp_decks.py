@@ -76,7 +76,48 @@ import csv
 import os
 import sys
 
-from make_layer_decks import (BASE, COLS, K, assur_b, mesh_for, thickness)
+from make_layer_decks import BASE, COLS, K, LM_MAX, LM_MIN, assur_b, thickness
+
+# Elements across the brine layer, by drainage state, read off the mesh gate
+# rather than shared between them. rve_layermesh swept L_mesh at phi = 0.10,
+# b = 0.293 and the two responses do not converge together:
+#
+#   across   drained   err     undrained   err
+#     0.74    2.519   8.7%       6.222    35.0%
+#     1.47    2.340   1.0%       5.566    20.7%
+#     2.21    2.325   0.3%       4.624     0.3%
+#     2.95    2.317     --       4.610      --
+#
+# Near-incompressible brine in a thin layer needs roughly twice the resolution
+# the drained response does, which is exactly what mesh_for's single ELEM_ACROSS
+# = 2.5 was set to cover. But n is a DRAINED quantity -- phi_c > phi_drain, so
+# the layered branch is always drained -- and sizing the drained cells for the
+# undrained requirement buys nothing and costs (2.5/1.6)^3 = 3.8x the elements.
+#
+# 1.6 sits past the 1.47 point where drained is already within 1% and short of
+# 2.21; the residual against the finest mesh is under 1%, which is 0.008 in n
+# against a seed scatter of 0.019 and an effect of 0.32. Undrained keeps 2.5.
+#
+# This does make the new drained cells differ from LCOL, which used 2.5 for
+# both, by that same sub-1%. It is a differential rather than a common-mode
+# bias and so is the kind of thing Section 4.4.1 warns about -- it is accepted
+# here, and stated, because it is an order of magnitude below the scatter the
+# comparison already carries.
+# Only the drained state is generated. n is extracted from the drained modulus
+# alone -- phi_c > phi_drain, so wherever brine spans a layer plane it has
+# already percolated vertically and the layered branch of Eq. (5) is drained
+# everywhere it applies -- and nothing in the closure reads the undrained
+# layered response. The undrained twins would have carried the confinement
+# contrast of Section 4.4.3, which is already measured at other brine fractions
+# and is not what this campaign is for; at 2.5 across they are also the
+# expensive half, 500k to 1000k elements against 140k to 340k.
+ELEM_ACROSS = {'drn': 1.6, 'und': 2.5}
+
+
+def mesh_for_state(phi_slab, b, state):
+    """Element size for this cell, sized by what its drainage state needs."""
+    t = thickness(phi_slab, b)
+    return min(max(t / ELEM_ACROSS[state], LM_MIN), LM_MAX)
 
 # Brine the pocket population adds on top of the slab fraction, from the four
 # LCOL cells (+0.0191, +0.0195, +0.0189, +0.0172 at nominal 0.08 to 0.15).
@@ -96,7 +137,7 @@ PHI_C = 0.09
 THIN_T = 0.0155
 
 
-def deck(path, targets, tag, seeds=(1, 2, 3), states=('drn', 'und')):
+def deck(path, targets, tag, seeds=(1, 2, 3), states=('drn',)):
     """One row per (target phi, drainage state, seed).
 
     targets are REALISED brine fractions; slab_vof is backed out through
@@ -110,9 +151,11 @@ def deck(path, targets, tag, seeds=(1, 2, 3), states=('drn', 'und')):
             slab = round(phi - POCKET_OFFSET, 4)
             b = assur_b(phi)
             t = thickness(slab, b)
-            lm = mesh_for(slab, b)
             md = '0.005' if t < THIN_T else '0.002'
+            lms = {}
             for state in states:
+                lm = mesh_for_state(slab, b, state)
+                lms[state] = lm
                 for s in seeds:
                     r = dict(BASE)
                     r['run_id'] = '%s_p%03d_%s_s%d' % (
@@ -123,13 +166,16 @@ def deck(path, targets, tag, seeds=(1, 2, 3), states=('drn', 'und')):
                     r['L_mesh'] = '%.4f' % lm
                     r['min_distance'] = md
                     w.writerow([r[c] for c in COLS])
-            rows.append((phi, slab, b, t, lm, md))
+            rows.append((phi, slab, b, t, lms, md))
     print('wrote %s  (%d cells)' % (path, len(rows) * len(states) * len(seeds)))
-    print('  %-8s %-8s %-8s %-9s %-8s %-8s %s'
-          % ('phi', 'slab', 'b Assur', 't', 'L_mesh', 'min_d', 'el across'))
-    for phi, slab, b, t, lm, md in rows:
-        print('  %-8.3f %-8.4f %-8.4f %-9.5f %-8.5f %-8s %.1f'
-              % (phi, slab, b, t, lm, md, t / lm))
+    print('  %-7s %-7s %-7s %-8s %-9s %-9s %-6s %s'
+          % ('phi', 'slab', 'b', 't', 'Lm drn', 'Lm und', 'min_d', 'elements drn/und'))
+    for phi, slab, b, t, lms, md in rows:
+        d, u = lms.get('drn'), lms.get('und')
+        nd = (0.5 / d) ** 3 / 1e3 if d else 0
+        nu = (0.5 / u) ** 3 / 1e3 if u else 0
+        print('  %-7.3f %-7.4f %-7.4f %-8.5f %-9.5f %-9.5f %-6s %.0fk / %.0fk'
+              % (phi, slab, b, t, d or 0, u or 0, md, nd, nu))
 
 
 def main():

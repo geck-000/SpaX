@@ -4,9 +4,14 @@ r"""The LAYERB cells that out_lb does not already hold, and why each is missing.
 An abandoned generation pass left 31 of the 48 LAYERB cells meshed on scratch as
 complete utx+utz pairs. Those are reused rather than rebuilt -- generation is the
 slow half of this campaign, and rebuilding them would buy nothing. This script
-writes the deck for the other 17, and it does not treat them as one group,
-because the logs say they failed for two different reasons and only one of them
-is a knob.
+writes the deck for the rest, and it does not treat them as one group, because
+the logs say they failed for two different reasons and only one of them is a
+knob.
+
+Only the DRAINED half of the deck is built. n is extracted from the drained
+modulus alone, so the undrained cells enter nothing in the closure; of the 24
+drained cells, 17 are already meshed and 7 are not. The counts below are for
+the full 48-cell deck, which is where the diagnosis was made.
 
 TIMEOUT (5 cells: p080 b010 drn_s3 / und_s1 / und_s2, p080 b020 und_s2 / und_s3).
     "mesh subprocess exceeded 900s (degenerate geometry -- stuck in mesher)".
@@ -77,6 +82,10 @@ def main():
         rows = list(csv.DictReader(fh))
         cols = list(rows[0].keys())
 
+    # Drained only: n is a drained quantity and the undrained layered response
+    # enters nothing in the closure. This also thins the geometric-failure group,
+    # which is the one least likely to mesh at all.
+    rows = [r for r in rows if '_drn_' in r['run_id']]
     missing = [r for r in rows if r['run_id'] not in have]
     if not missing:
         print('nothing missing: all %d cells are already generated' % len(rows))
