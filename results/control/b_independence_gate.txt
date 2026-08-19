@@ -1,0 +1,38 @@
+LB_p150_b010_drn_s1        b=0.10 phi=0.1678 E= 0.748  n=0.9397
+LB_p150_b010_drn_s2        b=0.10 phi=0.1670 E= 0.775  n=0.9256
+LB_p150_b010_drn_s3        b=0.10 phi=0.1675 E= 0.762  n=0.9322
+LB_p150_b020_drn_s1        b=0.20 phi=0.1682 E= 1.242  n=1.0290
+LB_p150_b020_drn_s2        b=0.20 phi=0.1699 E= 1.221  n=1.0372
+LB_p150_b020_drn_s3        b=0.20 phi=0.1673 E= 1.233  n=1.0348
+LB_p150_b030_drn_s1        b=0.30 phi=0.1676 E= 2.309  n=0.8619
+LB_p150_b030_drn_s2        b=0.30 phi=0.1681 E= 2.339  n=0.8503
+LB_p150_b030_drn_s3        b=0.30 phi=0.1678 E= 2.338  n=0.8512
+n by b at phi~0.15 (fixed phi, b swept):
+  b=0.10  n=0.9325  (3 seeds)
+  b=0.20  n=1.0337  (3 seeds)
+  b=0.30  n=0.8545  (3 seeds)
+spread across b: 0.1792
+VERDICT: n DEPENDS on b -- the phi-dependence may be b in disguise
+
+
+The gate that licenses (or refuses) pooling n across decks, run 2026-08-19 on
+the LAYERB cells at phi ~ 0.168, b swept at fixed phi with three seeds each.
+
+It refuses. The spread in n across b is 0.179 against a seed scatter of about
+0.005 -- thirty times the noise -- and it is NON-MONOTONIC, 0.93 at b=0.10,
+1.03 at 0.20, 0.85 at 0.30. The non-monotonicity is the substantive part: a
+single exponent cannot be recovered by recalibration because the three points
+lie on no power law at all. At E_pocket = 6.51 GPa a single n = 0.94 predicts
+E/E_pocket of 0.115, 0.220 and 0.324; the cells give 0.117, 0.189 and 0.358.
+
+Consequence for this campaign: b moves with phi along the Assur curve in both
+the RAMP and SUBC decks, so what those measure as n(phi) mixes a real phi
+dependence with this b dependence. Their MODULI stand; the reading of them as a
+clean n(phi) does not. Pooling with LCOL, whose cells sit at a third b for the
+same phi, is refused outright.
+
+Not yet excluded: L_mesh differs across the b sweep (0.0083, 0.0094, 0.0107),
+since mesh_for sizes from layer thickness. All three sit above the drained
+convergence point measured by rve_layermesh, so it should not matter -- but the
+phi = 0.08 row, still solving, is what would show whether the non-monotonicity
+is a property of the form or of this one phi.
