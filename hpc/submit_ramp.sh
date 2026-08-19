@@ -15,6 +15,11 @@
 #                             at the SLAB fraction while phi was read back as
 #                             the realised total, ~0.019 higher, so the LCOL
 #                             cells sit off the Assur curve by construction.
+#                             31 of the 48 are ALREADY MESHED in out_lb from an
+#                             abandoned pass and are reused, not rebuilt; run
+#                             reuse_layerb.sh first. The other 17 are
+#                             rve_layerb_missing.csv, and they failed for two
+#                             different reasons -- see make_layerb_missing.py.
 #   rve_rampn.csv   24 cells  phi = 0.092, 0.096, 0.104, 0.110 -- n(phi) through
 #                             the ramp, five points with the existing 0.099
 #   rve_subc.csv    18 cells  phi = 0.075, 0.082, 0.088 -- below phi_c, where
@@ -44,6 +49,15 @@ cd "$WORKDIR"; mkdir -p logs
 
 ACCT=${SPAX_ACCT:-project_2019020}
 MAXARR=${SPAX_MAX_ARRAY:-25}
+# SpaX_Standalone.py:2402 gives the mesh subprocess 900s and calls the overrun
+# "degenerate geometry". For five of the LAYERB cells that diagnosis was wrong:
+# they are the b = 0.10 cells, where mesh_for hits its 0.005 floor and the cell
+# carries a million elements to the edge, and the mesher simply wanted longer.
+# The RAMP and SUBC cells are the same size -- the pilot spent the better part
+# of an hour meshing one -- so the whole campaign gets the longer fuse. It costs
+# nothing on a cell that does not need it, and the generation array's own
+# --time=04:00:00 still bounds the task.
+MESH_TIMEOUT=${SPAX_MESH_TIMEOUT:-5400}
 export PYTHONUSERBASE=/projappl/project_2019020/spax_py
 
 # Linear elements: the volume-averaged constant-strain measure is exact for
@@ -67,10 +81,15 @@ gen () {   # $1 deck  $2 outdir
     generate_array.sh
 }
 
-GB=$(gen rve_layerb.csv out_layerb)
+# out_lb's 31 cells are moved into place and collapsed to one increment before
+# anything is submitted, so the generation array below only covers what is
+# genuinely absent.
+./reuse_layerb.sh "$WORKDIR"
+
+GB=$(gen rve_layerb_missing.csv out_layerb)
 GR=$(gen rve_rampn.csv  out_rampn)
 GS=$(gen rve_subc.csv   out_subc)
-echo "gen: $GB (48 layerb) $GR (24 ramp) $GS (18 subc)"
+echo "gen: $GB (17 layerb, 31 reused) $GR (24 ramp) $GS (18 subc)"
 
 cat > collect_ramp.sh <<'EOS'
 #!/bin/bash -l
@@ -114,7 +133,7 @@ sub () {   # $1 tag  $2 deck  $3 results  $4 mem  $5 time
 
 # layerb spans 0.005 to 0.012 element size, so its largest members are the same
 # size as the ramp cells and it gets the same allocation.
-sub LB    rve_layerb.csv  results_layerb.csv  32G 03:00:00
+sub LB    rve_layerb.csv  results_layerb.csv  32G 03:00:00   # all 48: reused + new
 sub RAMP  rve_rampn.csv   results_rampn.csv   32G 03:00:00
 sub SUBC  rve_subc.csv    results_subc.csv    32G 03:00:00
 EOS
