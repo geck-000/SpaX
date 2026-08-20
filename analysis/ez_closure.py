@@ -122,6 +122,47 @@ PHI_SAT = 0.104
 # extrapolation is not supported by the comparisons even though the law itself
 # is measured over 0.75-3 mm. Pass a0_mm explicitly to explore it.
 A0_MM, A0_REF_MM, SPACING_EXP = 0.75, 0.75, 0.69
+
+# THE BRIDGE COUNT, which the closure carried implicitly until now.
+#
+# Section 4.4.4 measures the transverse modulus against the number of bridges
+# sharing a fixed total bridge area and finds it stiffens as N^0.458, close to
+# the N^(1/2) of spreading compliance through N contacts; the undrained cell is
+# flat at N^0.017. Read from N >= 2 upward, so the single-bridge case does not
+# weight the fit, results_bracket_nbridges gives N^0.497 -- the constriction
+# value almost exactly. At fixed b = 0.15 the drained modulus runs 0.89, 1.44,
+# 2.09 and 2.47 GPa at N = 2, 4, 8, 16, against a replicate scatter under 0.03.
+#
+# Every cell this closure is calibrated on was built with TWO bridges to a
+# plane, so N_CELLS = 2 is not a choice: it is what the calibration contains.
+# The exponent and the ramp end both inherit it.
+#
+# What the real count is, nobody has measured directly. Multiplying published
+# brine inclusion number densities by the lamellar spacing brackets it:
+#   Lieblappen et al. (2018)   830-4800 channels per cm^3
+#   Perovich & Gow (1996)      1.0-4.5 per mm^3
+#   Light et al. (2003)        24 per mm^3, number density scaling as a power
+#                              law in feature length, so finer imaging resolves
+#                              more rather than contradicting the coarser counts
+# which over a plane of the area used here gives of order 3 to 30 features.
+# N_IMAGED is that band, and it is wide because the tomography reports pore
+# statistics rather than a bridge count per unit area of a lamellar plane.
+#
+# The two field comparisons available disagree about where in the band to sit,
+# and the disagreement is reported rather than resolved:
+#   - the neutral plane of the Gogolaze beam wants N ~ 8-10, landing inside the
+#     measured 0.37-0.39 where N = 2 gives 0.333
+#   - the basal-to-surface ratio against Kujala wants N ~ 3, since N = 10 takes
+#     alpha to 0.233 against a measured 0.12-0.19
+# These are different beams from different campaigns, and the field datasets are
+# already known to disagree with each other more than with the closure.
+#
+# DEFAULT IS N_CELLS, so nothing changes unless a caller asks for it. Passing
+# n_bridges scales the LAYERED BRANCH ONLY -- the pocket branch has no bridges
+# and must not move.
+N_CELLS = 2
+N_IMAGED = (3, 30)
+BRIDGE_COUNT_EXP = 0.497
 E_FLOOR = 0.05          # GPa, nominal skeletal residual; see caveat above
 
 
@@ -131,7 +172,8 @@ def brine_volume(T, S):
     return np.asarray(S, dtype=float) * (-49.185 / T + 0.532) / 1000.0
 
 
-def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
+def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR,
+             n_bridges=N_CELLS):
     """Transverse Young's modulus, GPa, for drained columnar sea ice.
 
     The spacing enters through the EXPONENT, not as a prefactor. A prefactor
@@ -177,6 +219,14 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR):
     n_eff = n * (A0_REF_MM / a0_mm) ** SPACING_EXP
     w = np.clip((phi - PHI_C) / (PHI_SAT - PHI_C), 0.0, 1.0)
     E = E_pocket * b ** (n_eff * w)
+
+    # Bridge count. The factor is raised to the same weight w that switches the
+    # bridge mechanism on, so it acts only where bridges exist and vanishes
+    # smoothly into the pocket branch -- a cell with no lamellar plane has no
+    # bridges to count, and applying the factor there would charge a geometry
+    # that is absent, exactly the error the weight was introduced to avoid.
+    if n_bridges != N_CELLS:
+        E = E * (float(n_bridges) / N_CELLS) ** (BRIDGE_COUNT_EXP * w)
 
     # There is deliberately NO separate strut regime above PHI_CROSS.
     #
