@@ -7,6 +7,9 @@ revised the same day after reading both papers properly.
   representative volume element*, Probab. Eng. Mech. **21** (2006) 112–132.
 - **[B]** Ostoja-Starzewski, *A probabilistic measure of SVE-to-RVE
   convergence*, Probab. Eng. Mech. **85** (2026) 103979.
+- **[C]** Ranganathan & Ostoja-Starzewski, *Scaling function, anisotropy and the
+  size of RVE in elastic random polycrystals*, J. Mech. Phys. Solids **56**
+  (2008) 2773-2791.
 
 ## Correction to the first version of this note
 
@@ -55,6 +58,123 @@ It also predicts something testable that we are *already* running: raising
 `NBR_p095_n4` cells in the gap deck were built to test whether the sharp feature
 at phi ~ 0.095 is a two-bridge artefact — if bridge count matters there, it is
 the same finite-size story.
+
+## [C]: delta is a COUNT, and ours is 8
+
+[C] Eq. (2.3) defines the mesoscale as `delta = l/d = (N_G)^(1/3)` -- the cube
+root of the number of random units in the window. That removes the ambiguity
+about which length to divide by, and it is the cleanest statement of our problem.
+
+Our analogue of a grain is a **bridge**. It is the random, load-bearing unit:
+the transverse path crosses each plane through it, its placement is drawn per
+plane, and it is what the closure's `b` parametrises.
+
+| n_bridges per plane | x 4 planes | N | delta |
+|---|---|---|---|
+| **2 (production)** | | **8** | **2.00** |
+| 4 | | 16 | 2.52 |
+| 8 | | 32 | 3.17 |
+| 16 | | 64 | 4.00 |
+| 32 | | 128 | 5.04 |
+
+**Our cells sit at delta = 2**, the second-smallest window [C] studies.
+
+[C] Eq. (2.18) also gives a single dimensionless measure of distance from the
+RVE, the scaling function
+
+    f = <C^d_delta> : <S^t_delta> - 6
+
+which vanishes at the RVE because C and S are then exact inverses and contract
+to 6 in 3D. Its Fig. 5 gives, for polycrystals of Zener anisotropy 1.5-3:
+
+| delta | 1 | 2 | 3 | 4 | 8 |
+|---|---|---|---|---|---|
+| f | 0.238 | 0.119 | 0.087 | 0.066 | 0.034 |
+| f x delta | 0.238 | 0.238 | 0.261 | 0.264 | 0.272 |
+
+so `f ~ 0.24/delta`, a clean inverse law. Eq. (2.25) bounds f above by
+`(6/5)(sqrt(A) - 1/sqrt(A))^2`, which grows steeply with the local contrast --
+ours is 7572 against their 1.5-3, so our f at delta = 2 should be far worse than
+theirs. Reaching their delta = 8 would take 512 bridges, 128 per plane.
+
+Two further properties of f are worth having: it is invariant under a uniform
+rescaling of all the stiffnesses (Eq. 2.27), so it measures contrast and
+geometry rather than magnitude; and it is exactly zero when the phases are
+locally identical (Eq. 2.24).
+
+### The problem this exposes, which is not numerical
+
+Subdividing bridges at fixed `b` raises delta without touching the areal ice
+fraction or the element count, so it looks like a free way to reach delta = 4.
+It is not free, because it changes the MICROSTRUCTURE rather than the sampling,
+and we have already measured that geometry matters -- n varies with b by
+0.15-0.17 at fixed t (`results/control/bt_grid.txt`).
+
+That raises a question the closure has never had to answer:
+
+> **How many bridges per unit area does real sea ice have?**
+
+Assur's `b` is an areal *fraction*. It is silent on whether that fraction is two
+fat bridges or two hundred thin ones. If the real material has many small
+bridges, our two-bridge cells are wrong on physics and not merely
+under-sampled. If it has few large ones, delta = 2 is intrinsic and no cell size
+repairs it.
+
+### The imaging answers it, and the answer is not two
+
+Three sources, none of which needs new computation.
+
+**[D]** Pringle, Miner, Eicken & Golden, *Pore space percolation in sea ice
+single crystals*, J. Geophys. Res. **114** (2009) C12017.
+**[E]** Lieb-Lappen, Golden & Obbard, *Metrics for interpreting the
+microstructure of sea ice using X-ray micro-computed tomography*, Cold Reg. Sci.
+Technol. **138** (2017) 24-35.
+**[F]** Lieblappen, Kumar, Pauls & Obbard, *A network model for characterizing
+brine channels in sea ice*, The Cryosphere **12** (2018) 1013-1026.
+
+Our cell in physical units: a0 = 0.75 mm is 0.125 model units, so one model unit
+is 6 mm and the cell edge L = 0.5 is **3.0 mm**, with plane area 9 mm^2.
+
+| quantity | imaging | ours |
+|---|---|---|
+| REV for sea ice microCT | **6.0 mm cube** [E, abstract] | 3.0 mm — half the edge, an eighth of the volume |
+| ice lamella thickness between brine layers | **200-500 um** [D, para 20] | 750 um — 1.5 to 3.8x too coarse |
+| brine sheet spacing | 0.5-1.0 mm [F] | 750 um — inside the range |
+| brine inclusion number density | 0.83-4.8 per mm^3 [F: 830-4800 per cm^3]; 1.0-4.5 [Perovich & Gow 1996 via D]; 24 [Light et al. 2003 via D] | — |
+| **in-plane features per 9 mm^2 plane** | **~3 to 30** (24/mm^3 gives 76-162) | **2** |
+
+The two spacing figures disagree with each other -- [D] says 200-500 um for the
+ice lamella, [F] says 0.5-1.0 mm for the sheet spacing -- and our 0.75 mm sits
+inside [F] and above [D]. Worth knowing, since a0 enters the closure through the
+spacing exponent.
+
+The count is the point. Multiplying the inclusion number density by the
+lamellar spacing gives an areal density in a layer plane, and over our 9 mm^2
+plane that is **roughly 3 to 30 discrete features** on the two lower-resolution
+counts, and 76-162 on Light's higher-resolution one. [D] para 6 notes explicitly
+that inclusion number density follows a power law in length, so the higher
+figure is what finer imaging sees, not a contradiction.
+
+We use **two**.
+
+These counts are of brine inclusions rather than ice bridges, and the two are
+duals: below the in-plane threshold the brine is discrete and the ice continuous,
+above it the brine spans and the ice is reduced to bridges. The characteristic
+in-plane feature count is set by the same length scale either way, so the
+comparison holds in order of magnitude even though it is not like for like.
+
+So the two-bridge cell is under-resolved *microstructurally*, not merely
+under-sampled statistically, and by a factor somewhere between 1.5 and 15. That
+also means raising `n_bridges` is not a modelling convenience introduced to
+reach a better delta -- it moves the cell **towards** the imaged microstructure,
+which makes Phase 2 a physics correction rather than a numerical one.
+
+[D] para 21 is worth keeping in view alongside this: at p = 4.6% the layers are
+"vertically elongated with only a few necks", and by p = 8.8% there are shunts
+connecting them. The necks there are brine connecting between layers, not our
+ice bridges within one, but it is the same picture of a small number of discrete
+connections controlling the transport, and it is the direct observational
+support for a bridge-controlled transverse path.
 
 ## What [A] gives us that is good news
 
