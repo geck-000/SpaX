@@ -239,6 +239,69 @@ future direction #2 is the 3D extension; full 3D wants ~200 realisations for a
 21-component covariance. [B]'s appendix protocol — `H(p_L, p_2L) < eps` — needs
 no new boundary condition and would work on Phase 1/2 output directly.
 
+## THE FINDING THIS TURNED UP, which is not deferred
+
+Chasing the RVE question produced something more consequential than the RVE
+question, and it should not wait behind it.
+
+**The closure carries `b` but not `N`.** Section 4.4.4 of the paper already
+measures the bridge-count dependence and reports it as the constriction
+mechanism: subdividing a fixed total bridge area over more, thinner bridges
+stiffens the drained cell as `N^0.458`, against `N^0.5` for spreading compliance
+through N circular contacts, while the undrained cell is unaffected at
+`N^0.017`. That is `results_bracket_nbridges.csv`, at fixed b = 0.15, fixed
+phi ~ 0.146 and fixed cell size:
+
+| n_bridges | E_x drained (GPa) | E_x undrained (GPa) |
+|---|---|---|
+| 1 | 0.774 | 5.504 |
+| **2** | **0.889** | 5.532 |
+| 4 | 1.435 | 5.646 |
+| 8 | 2.094 | 5.670 |
+| 16 | 2.471 | 5.771 |
+
+Seed scatter is 0.009-0.027 GPa, so n = 2 to 16 at **+178%** is a hundred times
+the noise. Fitting from n >= 2 upward gives `E ~ N^0.497`, essentially the
+constriction prediction exactly; the published 0.458 is dragged down by the n=1
+point, which is a single bridge and a special case.
+
+**Every cell the closure is calibrated on uses n_bridges = 2.** LCOL supplies
+the bridge exponent and phi_sat; LAYERB, RAMP, SUBC and the (b,t) grid all
+follow. So the bridge factor is implicitly evaluated at N = 2 per plane, and
+`g(phi)` inherits that as a hidden argument.
+
+The imaging says 2 is too few. Brine inclusion densities of 0.83-4.8 per mm^3
+[F], 1.0-4.5 [Perovich & Gow] and 24 [Light et al.] multiplied by the lamellar
+spacing give 3-30 discrete in-plane features per 9 mm^2 plane. Correcting the
+layered branch from N = 2 to the imaged count, at `N^0.497`:
+
+| imaged n per plane | correction |
+|---|---|
+| 3 | x1.22 (+22%) |
+| 10 | x2.23 (+123%) |
+| 30 | x3.84 (+284%) |
+
+**The layered branch is therefore 20% to 280% too soft as calibrated**, and the
+uncertainty is a microstructural count nobody has yet supplied.
+
+Two consequences worth stating plainly.
+
+1. It bears directly on the level correction `c = 0.49-0.59`, which exists
+   because computed cells come out about twice as stiff as the field beams.
+   Correcting the layered branch UPWARD forces c down, and the layered slices
+   are exactly the warm basal ones that dominate a beam's compliance. This is
+   not bookkeeping.
+2. It is the same phenomenon as the `b^n` failure seen from the other side. At
+   fixed N = 2, varying b varies bridge SIZE; size and count are one geometric
+   lever, and the closure carries only the areal fraction that is blind to both.
+
+There is a corroborating detail: `rve_bracket_density`, the sweep that
+establishes cell-size independence in the appendix, runs n_bridges = 4, 9, 16,
+25 at fixed density -- **16 per plane at L = 0.5**, which sits inside the imaged
+range. So the size-independence was demonstrated at a microstructurally
+defensible bridge density, and the closure was then computed at one eight times
+sparser.
+
 ## What none of this settles
 
 Nothing about the bridge factor. `g = b^n` is unsupported for reasons unrelated
