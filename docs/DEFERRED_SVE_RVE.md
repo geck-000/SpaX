@@ -189,7 +189,7 @@ periodic-only stops being a limitation and becomes the reason our delta ~ 3 cell
 are usable at all. This is an argument **for** what we already do, and it belongs
 in the paper.
 
-## The tension, unresolved
+## The tension, RESOLVED -- it was the measure, not the size
 
 Fig. 7(b) says `pp` is flat from delta = 4. Our own sweep says 46% at two
 lamellae, 11% at three, still falling at four. Two candidate explanations, and I
@@ -202,7 +202,21 @@ cannot presently choose between them:
 2. **Measure.** Our sweep is `E_bending` from the Eringen decks. Uniaxial may
    converge faster, and uniaxial is what the closure uses.
 
-Resolving (2) is cheap and is the first thing to do.
+**It is (2), and the answer was already in the repository.**
+`rve_bracket_density` sweeps L = 0.25 to 0.625 with the lamellar spacing AND the
+bridge density both held -- which is the condition Appendix A insists on, since
+holding a count rather than a density makes the microstructure a function of
+cell size and manufactures a trend. Uniaxial, drained, it gives
+
+    L      0.250   0.375   0.500   0.625
+    E_x    2.566   2.508   2.495   2.435   GPa      spread 5.3%
+
+and undrained 2.3% over the same range, with only ~1% between L = 0.375 and
+0.625. So the uniaxial modulus -- the quantity the closure actually uses -- IS
+size-converged, and the 46%/11% I had been quoting is the Eringen BENDING sweep,
+a different measure with a known length-scale artefact of its own.
+
+The RVE alarm was therefore misdirected. What it turned up on the way is not.
 
 ## Plan, in order
 
@@ -211,13 +225,12 @@ Put `delta_bridge = 2.3–4.0` and contrast 7572 in the limitations, and cite
 Fig. 7(b) to justify periodic BCs at modest delta. This converts the size effect
 from an awkward number into an expected consequence of two bridges per plane.
 
-**Phase 1 — 9 local cells, no generator work.**
-Repeat the Eringen size sweep under **uniaxial** loading: L = 0.24, 0.36, 0.48
-at 2, 3, 4 lamellae with a0 held at 0.12, plus matched phi=0 controls. Decides
-whether the 11% residual is a bending artefact or real for the quantity the
-closure actually uses. Cells are small (delta 2–4), all local, zero billing.
+**Phase 1 -- STRUCK. Already done, and it passes.**
+This proposed a uniaxial size sweep. `rve_bracket_density` is that sweep: L over
+a factor of 2.5 with spacing and bridge density both held, uniaxial, 5.3% drained
+and 2.3% undrained. Do not run it again.
 
-**Phase 2 — extend delta, if Phase 1 shows the effect survives.**
+**Phase 2 -- the live item: bridge COUNT, not cell size.**
 The honest way to raise `delta_bridge` is more bridges per plane, not a bigger
 cell: `n_bridges = 4, 6, 8` at fixed b and fixed L. That holds the areal ice
 fraction — the physics the closure depends on — while subdividing it, and it
