@@ -222,6 +222,76 @@ saying why, because both look applicable at first glance:
   path, that does not work around the numerics — it deletes the physics under
   test.
 
+### Fluid elements (`F3D*`) are not a third remedy
+
+The brine *is* a fluid, so mapping it to CalculiX's fluid elements looks like
+the natural way out of needing a hybrid solid element. It is not, and the
+reason is worth recording so it is not re-proposed.
+
+**There is no `F3D10`.** ccx 2.23 recognises exactly four fluid element names,
+in `src/elements.f`:
+
+```fortran
+!     3D fluid element
+      elseif((label.eq.'F3D8    ').or.
+     &       (label.eq.'F3D8R   ').or.
+     &       (label.eq.'F3D4    ').or.
+     &       (label.eq.'F3D6    ')) then
+```
+
+Linear hex, reduced hex, linear tet, linear wedge. Anything else — `F3D10`
+included — falls through to `*ERROR reading *ELEMENT: ... is an unknown element
+type`, the same message `C3D4H` gets. There is no quadratic fluid element
+because the CFD discretisation is not built on one.
+
+**And they are not a material model — they are a different analysis.** `F3D*`
+elements are the mesh for ccx's CFD solver, reached through a `*CFD` step.
+`src/cfds.f` sets `nmethod=4` and comments *"ONLY CFD-CALCULATIONS WITH THE
+CBS-METHOD ARE ALLOWED"*: a transient, characteristic-based-split
+Navier–Stokes solve for velocity, pressure and temperature fields of a
+**flowing** fluid, with its own boundary conditions, its own time integration
+and its own output. It is not a constitutive law that a `*STATIC` step can
+assign to part of a solid mesh, and there is no monolithic solid/fluid
+stiffness assembly in ccx for a homogenisation to ride on.
+
+What the RVE needs is the opposite of what CFD computes. The brine is trapped,
+not flowing; its velocity field is not the unknown; the wanted answer is a
+stiffness contribution to a static periodic cell. Running the brine through a
+CBS Navier–Stokes solve would produce a transient flow field and no term in the
+effective elasticity tensor.
+
+**Acoustic elements do not exist either.** A pressure-only acoustic element is
+the other standard way to represent a trapped inviscid fluid, and ccx has none
+— `grep -ril acoustic src/*.c src/*.f` returns nothing in 2.23.
+
+**The idea does have a correct cousin, and it is Abaqus's `F3D3`/`F3D4`.**
+Those names collide confusingly with ccx's CFD elements but are a completely
+different thing: *hydrostatic fluid (cavity)* elements — **surface** elements
+lining a closed cavity, carrying a single cavity-pressure degree of freedom at
+a reference node and a pressure–volume law `p = -K (V - V₀)/V₀`. That *is* the
+right way to say "the brine is a fluid" inside a stress analysis, and it
+sidesteps volumetric locking completely, because the incompressibility stops
+living in a displacement element at all.
+
+It is also emulable in ccx **without touching Fortran**, for the linear
+kinematics these decks use. Under small strain the cavity volume change is a
+*linear* form in the boundary displacements, `ΔV = Σᵢ Aᵢ·uᵢ` with `Aᵢ` the
+nodal area vectors of the brine surface, so:
+
+* delete the brine solid elements, leaving a cavity;
+* add one node `R`, whose DOF 1 carries `ΔV`;
+* one `*EQUATION` tying `ΔV` to the surface displacements — the converter
+  already writes `*EQUATION` for the periodic BCs;
+* one grounded `SPRING1` on that DOF with stiffness `K/V₀`, which is the
+  fluid's energy `½ (K/V₀) ΔV²`.
+
+The approximation it makes is dropping the brine's shear stiffness, and here
+that is `G = 0.44 MPa` against the ice's `3550 MPa` — 0.012 % of the matrix.
+
+This is a real route, but it is only worth building if the measurements below
+say the missing hybrid element costs something. As of the layered re-run they
+do not.
+
 Which leaves the two routes below, and the cheap alternative of solving those
 cells at order 2.
 
