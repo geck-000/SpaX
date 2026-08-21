@@ -63,6 +63,57 @@ and the whole excess (0.5–3.3 % in Abaqus, 1.9–4.3 % in CalculiX) is numeric
 cells come from the same solver**. Do not mix solvers inside one length-scale
 analysis.
 
+## Validation: a real campaign deck
+
+`params/rve_gas.csv` is the campaign's dominant configuration — L=0.50 at
+L_mesh=0.033, the size shared by 859 of the deck rows — and its Abaqus results
+are stored in `results/results_gas.csv`. `validate_gas.sh` reruns it through
+CalculiX on the shipped default solver. Six cells, 46k–187k elements, up to
+~1.16M equations.
+
+Unlike the homogeneous cube this cell is randomly packed, and the campaign's
+generation seed is not recorded in the tree, so a fresh run cannot reproduce
+its exact microstructure. The comparison therefore bundles packing, meshing and
+solver, and the achieved phase fractions are what say how much of each:
+
+| run | total soft fraction, Abaqus / CalculiX | E_x [GPa] | Δ | E_z [GPa] | Δ | ν_x |
+|---|---|---|---|---|---|---|
+| GAS_v00 | 0.0202 / 0.0198 | 9.157 / 9.109 | −0.53 % | 9.179 / 9.157 | −0.24 % | 0.3303 / 0.3308 |
+| GAS_v02 | 0.0397 / 0.0395 | 8.840 / 8.734 | −1.20 % | 8.890 / 8.845 | −0.51 % | 0.3303 / 0.3310 |
+| GAS_v04 | 0.0593 / 0.0592 | 8.533 / 8.378 | −1.82 % | 8.626 / 8.530 | −1.12 % | 0.3304 / 0.3310 |
+| GAS_v06 | 0.0793 / 0.0789 | 8.220 / 8.055 | −2.00 % | 8.353 / 8.222 | −1.57 % | 0.3303 / 0.3309 |
+| GAS_v08 | 0.0990 / 0.0985 | 7.919 / 7.705 | −2.71 % | 8.065 / 7.950 | −1.42 % | 0.3304 / 0.3309 |
+| GAS_v10 | 0.1183 / 0.1185 | 7.638 / 7.366 | −3.57 % | 7.805 / 7.632 | −2.22 % | 0.3304 / 0.3310 |
+
+The cells hold the same amount of each phase — total soft fraction agrees to
+0.1–2 % — but not in the same arrangement. Every solve converged
+(`equilibrium_gap` 1.9e-7 to 1.7e-6).
+
+ν agrees to 0.2 % and is flat across the series, while E is 0.5–3.6 % low with
+the gap **growing monotonically with void content**. A solver discrepancy would
+not be porosity-dependent; that shape belongs to geometry and mesh. The
+regenerated meshes are also about twice as dense as the campaign's (46 462
+elements for GAS_v00, against ~20 700 matrix elements recorded for the same run
+in `results_scf.csv`), and a finer mesh makes a porous cell more compliant —
+the right sign, growing with void surface area.
+
+`packing_scatter.sh` puts a number on it: the worst-case row re-packed at
+several seeds, everything else fixed. See *Packing scatter* below.
+
+### The bug this comparison found
+
+`phi_inclusion` initially came back at exactly **2×** the campaign's value while
+the porosity printed beside it was right. ccx emits the EVOL block with every
+element listed twice under one header; anything reading volumes through the
+label→volume dict was immune — the volume-averaged stress, `V_solid`,
+`porosity` and hence `E_eff` were all correct — so only the raw sum behind
+`phi_inclusion` doubled. Total meshed volume now sums to L³ exactly on a
+void-free cell.
+
+The defect was in the reader, not the generator, and nothing about the moduli
+would have revealed it. That is the argument for comparing achieved geometry
+alongside results rather than results alone.
+
 ## Hybrid elements
 
 CalculiX has none, and says so rather than guessing:
