@@ -1,0 +1,7 @@
+run_id,phi_inclusion,bridge_fraction,n_bridges,E_x_GPa,solved_on
+GAP_p094_drn_s1,0.09590,0.3144,2,3.4391,local
+GAP_p094_drn_s2,0.09560,0.3144,2,3.3950,local
+GAP_p095_drn_s1,0.09440,0.3108,2,2.5445,local
+GAP_p096_drn_s1,0.09620,0.3072,2,2.4584,local
+NBR_p095_n4_drn_s1,0.09660,0.3108,4,3.6652,roihu
+NBR2_p094_n4_drn_s1,0.09348,0.3144,4,3.6959,roihu

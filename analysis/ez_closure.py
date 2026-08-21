@@ -144,9 +144,40 @@ A0_MM, A0_REF_MM, SPACING_EXP = 0.75, 0.75, 0.69
 #   Light et al. (2003)        24 per mm^3, number density scaling as a power
 #                              law in feature length, so finer imaging resolves
 #                              more rather than contradicting the coarser counts
-# which over a plane of the area used here gives of order 3 to 30 features.
+# which over a plane of the area used here gives 6 to 32 features on the two
+# lower-resolution counts, midpoint near 14. (An earlier note said 3 to 30; that
+# mixed Pringle's 200-500 um ice lamella with the 0.75 mm spacing these cells
+# actually use. Carried through at one spacing it is 6 to 32.)
 # N_IMAGED is that band, and it is wide because the tomography reports pore
 # statistics rather than a bridge count per unit area of a lamellar plane.
+#
+# VALIDATED, and N_CELLS = 2 shown to be actively misleading.
+# results_gapcells.csv holds six drained cells built to probe a step that
+# appeared in the RAMP series between phi = 0.0933 and 0.0970. Two findings.
+#
+#   (a) The exponent holds away from the conditions it was fitted on. At
+#       b = 0.3108 the count 2 -> 4 raises E_x from 2.545 to 3.665 GPa, +44.0%,
+#       against the +41.1% of N^0.497 -- agreement to 2.1%.
+#
+#   (b) The step is an artefact of TWO bridges and is absent at four. Taking
+#       E/E_pocket so the small differences in realised phi do not confound it,
+#       across a 1.1% change in b:
+#
+#           b = 0.3108 -> 0.3144
+#           N = 2 :  0.3345 -> 0.4506   +34.7%
+#           N = 4 :  0.4839 -> 0.4850   + 0.2%
+#
+#       At b ~ 0.314 each of two bridges spans about 44% of the cell edge, so
+#       the pair and their periodic images make and break a connected ice path
+#       across the plane. Dividing the same ice area into four removes it
+#       entirely. The apparent sharpness of E(phi) near the threshold in the
+#       N = 2 series is therefore a finite-size accident and NOT a feature of
+#       the material; do not fit a transition width to it.
+#
+# This is the third independent line on the bridge count, and the strongest,
+# because it does not rest on equating an imaged inclusion count with a bridge
+# count -- it shows the two-bridge cell producing behaviour the material does
+# not have.
 #
 # The two field comparisons available disagree about where in the band to sit,
 # and the disagreement is reported rather than resolved:
@@ -161,7 +192,7 @@ A0_MM, A0_REF_MM, SPACING_EXP = 0.75, 0.75, 0.69
 # n_bridges scales the LAYERED BRANCH ONLY -- the pocket branch has no bridges
 # and must not move.
 N_CELLS = 2
-N_IMAGED = (3, 30)
+N_IMAGED = (6, 32)
 BRIDGE_COUNT_EXP = 0.497
 E_FLOOR = 0.05          # GPa, nominal skeletal residual; see caveat above
 
