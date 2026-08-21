@@ -103,16 +103,54 @@ lists ~20 700 matrix elements for a run named GAS_v00, but that file dates from
 2026-07-20, before those same fixes, so it describes a different mesh and cannot
 be used to characterise this one.)
 
-So the mesh behind the reference is unknown, and two controls are needed rather
-than one explanation:
+### It was quadratic against linear
 
-* `packing_scatter.sh` — the worst-case row re-packed at several seeds,
-  everything else fixed: how much does E move for the same specification?
-* `mesh_convergence.sh` — ONE frozen packing (`SPAX_SAVE_PACKING`) remeshed
-  across `L_mesh`: how much does E move for the same geometry?
+The table above compares the wrong things. It was generated with
+`SPAX_MESH_ORDER=2`, and the reference was solved with **linear** tets.
 
-Together they bound how much of the 0.5–3.6 % this comparison can attribute to
-anything at all. See *What the controls say* below.
+The campaign's own submitter records this. Every first-order campaign in the
+table in `hpc/spax_submit.sh` carries mesh order 1 — `weibull`,
+`weibull_layer`, `nlgeom_layer`, `layercol`, all `-utx` — and only the bending
+and torsion campaigns carry 2; `hpc/generate_array.sh` documents the variable
+as "`SPAX_MESH_ORDER` (2 for bending)". `rve_gas.csv` is a first-order deck
+(`Kappa=0`, `Mode` utx, `Mode2` utz), so it was solved on C3D4.
+
+And the size was already measured here: `hybrid_locking_test.sh` found order 1
+reads **+4.03 %** stiffer than order 2 on one frozen geometry. That is the
+direction and magnitude of the "gap", and its growth with void content is what
+linear-tet over-stiffening does when there is more geometry to resolve.
+
+Rerunning the same deck at order 1 (`validate_gas_order1.sh`):
+
+| run | E_x: Abaqus | ccx order 2 | ccx order 1 |
+|---|---|---|---|
+| GAS_v00 | 9.157e9 | −0.53 % | **+0.01 %** |
+| GAS_v02 | 8.840e9 | −1.20 % | **−0.06 %** |
+| GAS_v04 | 8.533e9 | −1.82 % | **−0.24 %** |
+| GAS_v06 | 8.220e9 | −2.00 % | **−0.11 %** |
+| GAS_v08 | 7.919e9 | −2.71 % | **+0.05 %** |
+| GAS_v10 | 7.638e9 | −3.57 % | **−0.54 %** |
+
+E_z behaves the same way: −0.24…−2.22 % at order 2, +0.44…−0.06 % at order 1.
+ν agrees to 0.04 %.
+
+The deficit collapses to **±0.54 %**, and — the part that matters — the
+monotonic trend with void content is gone. What remains scatters around zero.
+
+`packing_scatter.sh` measures what that residual should be: GAS_v10 re-packed
+at several seeds, everything else fixed, gives a population s.d. of **0.30 %**
+and a full spread of **0.59 %**. The residual sits inside its own packing
+noise. (That scatter was measured at order 2 while the matched comparison is at
+order 1; the spread is a property of the geometry rather than the element, so
+it should carry over, but it was not measured at order 1.)
+
+**Nothing is left over for the solver.** Which is the same answer the
+homogeneous cube gave at 6–8 significant figures, now confirmed on a real
+microstructure at campaign scale.
+
+The lesson is about the comparison, not the code: match the element order
+before reading anything into a modulus difference. A 4 % discrepancy that grows
+with porosity looked like physics and was a deck setting.
 
 ### The bug this comparison found
 
