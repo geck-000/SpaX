@@ -413,6 +413,45 @@ resolution can be held at the campaign's while the cell is shrunk to something
 this machine can solve — `L=0.15 NSLABS=2 LMESH=0.0045` gives 4.2 elements
 through the same 0.0075 slab. That is the measurement to trust.
 
+### Re-resolved: the incompressibility excess is not there
+
+`L=0.15 NSLABS=2 SLABVOF=0.1000 LMESH=0.0045`, 4.2 elements through the slab,
+inside the campaign's own 3.4–5.0. One tetrahedralisation per order — 360 435
+elements at order 1 (178 217 equations) and the same tets carrying mid-side
+nodes at order 2 (1 449 110 equations) — with the drained twin the identical
+mesh and one elastic card rewritten. Every solve converged (equilibrium gap
+8.4e-8 to 2.7e-6). `out_layerres/`:
+
+| | E_x (across layers) | E_z (in-plane) |
+|---|---|---|
+| undrained, ν = 0.49993, order 1 → 2 | +2.073 % | +0.678 % |
+| drained, ν = 0.406, order 1 → 2 | +3.916 % | +0.431 % |
+| **excess attributable to incompressibility** | **−1.84 points** | +0.25 points |
+
+Against the under-resolved cell, which gave +11.19 / +9.08 / **+2.11 points**.
+Two things changed, and both matter:
+
+* **The raw order-1 error shrank 5×**, from +11.19 % to +2.07 %. Most of what
+  looked like a locking signal was the unresolved slab, exactly as suspected.
+* **The excess changed sign.** At campaign resolution the undrained cell loses
+  *less* going from order 1 to order 2 than its drained twin does. There is no
+  order-1 stiffness penalty left for a hybrid element to recover.
+
+**Do not read the −1.84 as incompressibility helping.** It says the paired
+design's control is imperfect, and the reason is visible in the moduli: E_x is
+3.36 GPa drained against 6.35 GPa undrained. Filling the slab with a phase four
+times more compressible than the ice does not just remove a locking mechanism,
+it moves the load path off the bridges — and the bridges are what the linear
+tet resolves badly. So the drained twin does not carry the *same* geometric
+discretisation error, and the subtraction that isolates locking rests on
+assuming it does.
+
+What survives that objection is the direction. Locking makes order 1 too stiff;
+if it were biting, the undrained cell's order-1 error would exceed the drained
+one's. It is smaller, by more than the in-plane term is large. The honest
+statement is **no evidence of a locking penalty at campaign resolution**, not a
+measurement of a negative one.
+
 Two further caveats that stand either way. This infers the hybrid benefit from
 an order-1-vs-order-2 comparison rather than measuring C3D4 against C3D4H
 directly — that needs one Abaqus run on an undrained layered deck, and the deck
