@@ -873,39 +873,53 @@ def extract_first_order(dat_path, s_comp, eng_strain, L):
             'sigma_rf': (_rp_value(frame, 'force', rp_name, rp_dof) or 0.0) / (L * L),
         })
 
-    _check_equilibrium(stress_strain_data, dat_path)
-    return spp._reduce_first_order(stress_strain_data, V_RVE, is_shear)
+    results = spp._reduce_first_order(stress_strain_data, V_RVE, is_shear)
+    gap = _equilibrium_gap(stress_strain_data)
+    if gap is not None:
+        results['equilibrium_gap'] = gap
+        if gap > _EQUILIBRIUM_TOL:
+            print("    WARNING {}: volume-averaged stress and reference-point "
+                  "reaction are {:.3%} apart".format(
+                      os.path.basename(dat_path), gap))
+    return results
 
 
-# Relative gap between the two independent measurements of sigma_bar above
-# which the periodic constraints are not doing what the deck says. Well clear
-# of the ~1e-9 they actually differ by on a converged linear solve, and well
-# below the several percent a mistranslated equation set would produce.
+# Relative gap between the two independent measurements of sigma_bar beyond
+# which the solve should not be believed. A converged direct solve on a correct
+# deck leaves ~1e-9; ccx's ITERATIVE CHOLESKY on the same deck leaves ~2e-3,
+# and its E_eff is wrong by 0.15%. So this sits well above the direct-solver
+# noise and well below anything that would pass unnoticed.
 _EQUILIBRIUM_TOL = 1e-4
 
 
-def _check_equilibrium(stress_strain_data, dat_path):
-    """Warn if the volume-averaged stress and the reference-point reaction
-    disagree.
+def _equilibrium_gap(stress_strain_data):
+    """Worst relative disagreement between the two measurements of sigma_bar.
 
-    Both are sigma_bar. The volume average integrates the element stresses over
-    the cell; the reaction force is the constraint force at the reference point
-    that drives the periodic jump, and equals sigma_bar * L^2 by work
-    conjugacy. Nothing links them except the equations being correct, so a gap
-    means the constraint set is wrong -- an equation dropped, a coefficient
-    truncated, a dependent DOF claimed twice -- in a deck that solved happily.
+    Both are the macroscopic stress. The volume average integrates the element
+    stresses over the cell; the reaction force is the constraint force at the
+    reference point driving the periodic jump, and equals sigma_bar * L^2 by
+    work conjugacy. Nothing ties them together except the model being right and
+    the linear system being solved, so the gap detects two different failures:
+
+      * a wrong constraint set -- an equation dropped in translation, a
+        coefficient truncated, a dependent DOF claimed twice -- in a deck that
+        nonetheless solves without complaint; and
+      * an under-converged iterative solve, which returns a plausible modulus
+        that is simply wrong. This is the one that matters in practice, because
+        ccx's iterative solvers are the only ones that fit a large cell in
+        memory and their tolerance is not adjustable from the deck.
+
+    Returns None when the reaction was not printed for this mode.
     """
-    for i, d in enumerate(stress_strain_data):
+    worst = None
+    for d in stress_strain_data:
         a, b = d['sigma'], d.get('sigma_rf', 0.0)
         scale = max(abs(a), abs(b))
         if scale <= 0.0 or not b:
-            continue                      # RF was not printed for this mode
+            continue
         rel = abs(a - b) / scale
-        if rel > _EQUILIBRIUM_TOL:
-            print("    WARNING {}: frame {} volume-averaged stress {:.6e} vs "
-                  "reference-point reaction {:.6e} ({:.2%} apart). The periodic "
-                  "constraints are not enforcing what the deck describes."
-                  .format(os.path.basename(dat_path), i + 1, a, b, rel))
+        worst = rel if worst is None else max(worst, rel)
+    return worst
 
 
 def extract_second_order(dat_path, L, Kappa, Bending_Plane, inp_path=None):

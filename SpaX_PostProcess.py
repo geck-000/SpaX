@@ -671,6 +671,13 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
                ('ss23', 'S23', 'G_yz')]
 
         solvers_used = set()
+        # Worst disagreement, over every load case, between the volume-averaged
+        # stress and the reference-point reaction -- two independent
+        # measurements of the same macroscopic stress. Only the CalculiX route
+        # reports it (the ODB route has always trusted its direct solver), and
+        # it is what tells an under-converged iterative solve apart from a
+        # converged one when the modulus alone looks perfectly reasonable.
+        eq_gaps = []
 
         def _fo(short, scomp):
             solver, p = _case_source(odb_dir, run_id, short)
@@ -696,6 +703,8 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
                 # the requested VoF. Recorded from the first uniaxial ODB that
                 # yields it (all load cases share the geometry), and only when
                 # the bending path has not already supplied it.
+                if 'equilibrium_gap' in r:
+                    eq_gaps.append(r['equilibrium_gap'])
                 if 'porosity' in r and row.get('porosity', '') in ('', None):
                     row['porosity'] = r['porosity']
                     row['V_solid'] = r.get('V_solid', '')
@@ -708,6 +717,8 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
             if r == 'ERROR':
                 row[Gk] = 'ERROR'
             elif r:
+                if 'equilibrium_gap' in r:
+                    eq_gaps.append(r['equilibrium_gap'])
                 row[Gk] = r.get('G_eff', r.get('E_eff', ''))
                 try:
                     print("    {} -> G={:.4e}".format(short, float(row[Gk])))
@@ -804,6 +815,8 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
         # thing in results.csv that distinguishes an Abaqus row from a
         # CalculiX one once the moduli are side by side.
         row['solver'] = '+'.join(sorted(solvers_used)) if solvers_used else ''
+        if eq_gaps:
+            row['equilibrium_gap'] = max(eq_gaps)
 
         all_results.append(row)
     
