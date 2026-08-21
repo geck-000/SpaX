@@ -864,14 +864,48 @@ def extract_first_order(dat_path, s_comp, eng_strain, L):
             'v_solid': total_vol,
             'v_incl': total_incl_vol,
             # Not used by the fit. The reaction at the driven reference point is
-            # the macroscopic stress resultant, so RF/L^2 is an independent
-            # measurement of the same sigma_bar the volume average produces --
-            # they agree to solver tolerance when the PBCs are right, and the
-            # gap is reported by `check` below when they are not.
+            # the macroscopic stress resultant, so RF/L^2 measures the same
+            # sigma_bar the volume average produces, by a completely different
+            # route: one integrates the element stresses, the other reads a
+            # single constraint force. They agree to solver tolerance when the
+            # periodic equations are right, and diverge when they are not --
+            # which is the failure this translation is most exposed to.
             'sigma_rf': (_rp_value(frame, 'force', rp_name, rp_dof) or 0.0) / (L * L),
         })
 
+    _check_equilibrium(stress_strain_data, dat_path)
     return spp._reduce_first_order(stress_strain_data, V_RVE, is_shear)
+
+
+# Relative gap between the two independent measurements of sigma_bar above
+# which the periodic constraints are not doing what the deck says. Well clear
+# of the ~1e-9 they actually differ by on a converged linear solve, and well
+# below the several percent a mistranslated equation set would produce.
+_EQUILIBRIUM_TOL = 1e-4
+
+
+def _check_equilibrium(stress_strain_data, dat_path):
+    """Warn if the volume-averaged stress and the reference-point reaction
+    disagree.
+
+    Both are sigma_bar. The volume average integrates the element stresses over
+    the cell; the reaction force is the constraint force at the reference point
+    that drives the periodic jump, and equals sigma_bar * L^2 by work
+    conjugacy. Nothing links them except the equations being correct, so a gap
+    means the constraint set is wrong -- an equation dropped, a coefficient
+    truncated, a dependent DOF claimed twice -- in a deck that solved happily.
+    """
+    for i, d in enumerate(stress_strain_data):
+        a, b = d['sigma'], d.get('sigma_rf', 0.0)
+        scale = max(abs(a), abs(b))
+        if scale <= 0.0 or not b:
+            continue                      # RF was not printed for this mode
+        rel = abs(a - b) / scale
+        if rel > _EQUILIBRIUM_TOL:
+            print("    WARNING {}: frame {} volume-averaged stress {:.6e} vs "
+                  "reference-point reaction {:.6e} ({:.2%} apart). The periodic "
+                  "constraints are not enforcing what the deck describes."
+                  .format(os.path.basename(dat_path), i + 1, a, b, rel))
 
 
 def extract_second_order(dat_path, L, Kappa, Bending_Plane, inp_path=None):
