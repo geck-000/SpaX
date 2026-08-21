@@ -138,11 +138,18 @@ The deficit collapses to **±0.54 %**, and — the part that matters — the
 monotonic trend with void content is gone. What remains scatters around zero.
 
 `packing_scatter.sh` measures what that residual should be: GAS_v10 re-packed
-at several seeds, everything else fixed, gives a population s.d. of **0.30 %**
-and a full spread of **0.59 %**. The residual sits inside its own packing
-noise. (That scatter was measured at order 2 while the matched comparison is at
-order 1; the spread is a property of the geometry rather than the element, so
-it should carry over, but it was not measured at order 1.)
+at four seeds, everything else fixed, gives a population s.d. of **0.29 %** and
+a full spread of **0.77 %**. The residual sits inside its own packing noise.
+
+The same run also shows the order effect is systematic rather than scatter: at
+order 2 the four packings land at −3.33 %, −3.90 %, −3.15 % and −3.61 % against
+Abaqus — a 3.5 % offset with 0.77 % of spread around it. Re-packing moves the
+answer by a third of a percent; changing the element order moves it by three
+and a half.
+
+(That scatter was measured at order 2 while the matched comparison is at order
+1. The spread is a property of the geometry rather than the element, so it
+should carry over, but it was not measured at order 1.)
 
 **Nothing is left over for the solver.** Which is the same answer the
 homogeneous cube gave at 6–8 significant figures, now confirmed on a real
@@ -202,11 +209,36 @@ Refining the order-2 brine mesh (`L_mesh` 0.050 → 0.035) moves `E_eff` by
 0.22 % at `nu` = 0.490 and 0.23 % at `nu` = 0.49993 — converged, and equally so
 at both.
 
-The reason is physical: the brine is a *soft* inclusion, ~70x more compliant
-than the ice. Locking hurts when an incompressible phase has to carry the
-deformation; here the matrix governs. The incompressibility is still being
-represented — `nu_eff` comes out 0.336 with the brine against 0.307 with the
-compressible twin — it simply is not sensitive to the element technology.
+The reason is physical, and worth stating because it means the result is
+structural rather than luck. The brine's ν = 0.49 comes from a large K/G ratio,
+not from being volumetrically stiff:
+
+| | K | G | E | ν |
+|---|---|---|---|---|
+| ice | 9.25 GPa | 3.55 GPa | 9.43 GPa | 0.330 |
+| brine | 2.20 GPa | 0.044 GPa | 0.132 GPa | 0.490 |
+
+The brine is **four times more compressible in bulk than the ice around it**,
+and 80× softer in shear. Volumetric locking bites when a phase has to represent
+isochoric deformation *while carrying load* — an incompressible phase acting as
+a constraint on its surroundings. This one does the opposite: it is a soft,
+nearly-void inclusion that the matrix flows around. It neither carries the load
+nor constrains the matrix volumetrically, so the element's ability to represent
+isochoric motion inside it barely enters the effective stiffness. The
+incompressibility *is* being represented — `nu_eff` reads 0.336 with the brine
+against 0.307 with the compressible twin — it simply is not what governs.
+
+That also says exactly when the conclusion would stop holding: a soft phase
+that **percolates** and carries load, or a **stiff** near-incompressible phase.
+Neither is present in these decks.
+
+**One limitation to keep in view.** This validated `E_eff`, `G_eff` and
+`nu_eff` — homogenised quantities, which average over the inclusion interiors.
+Volumetric locking distorts the *local* stress field well before it moves a
+homogenised modulus. The per-slice principal-stress and SCF extraction is not
+ported to CalculiX (see *Not ported*), and if it ever is, this measurement does
+not carry over to it: the fields inside a near-incompressible phase would need
+checking on their own terms.
 
 **So: use `SPAX_MESH_ORDER=2` for CalculiX and the missing hybrid element costs
 nothing measurable.** Order 1 is a separate 4 % error that Abaqus has too. This
