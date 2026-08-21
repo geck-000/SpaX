@@ -288,9 +288,11 @@ nodal area vectors of the brine surface, so:
 The approximation it makes is dropping the brine's shear stiffness, and here
 that is `G = 0.44 MPa` against the ice's `3550 MPa` — 0.012 % of the matrix.
 
-This is a real route, but it is only worth building if the measurements below
-say the missing hybrid element costs something. As of the layered re-run they
-do not.
+This is a real route, and the measurements below say it is now worth building.
+Against Abaqus's own hybrid results the undrained layered cells lose 8–12 % of
+their across-layer modulus and the loss grows as the mesh improves, while the
+two cheap alternatives — element-level B-bar and order 2 — are respectively a
+no-op on C3D4 and unconvergent. See *Refine, and the gap opens*.
 
 Which leaves the two routes below, and the cheap alternative of solving those
 cells at order 2.
@@ -545,10 +547,83 @@ convergence measure.
 
 So the coarse level has to be read in that light. `L_mesh` = 0.0240 is 0.7–1.3
 elements across the layer, where the gate says **Abaqus is 35 % out**. The
-CalculiX-vs-Abaqus excess measured there is 1.6 %. The two codes' disagreement
-is more than an order of magnitude smaller than the discretisation error they
-both carry, and the campaign has already retired that setting — production
-sizing is now `L_mesh = t/2.5` clipped to [0.005, 0.012].
+CalculiX-vs-Abaqus excess measured there is 1.6 %. At that mesh the
+discretisation error swamps everything and the two codes agree because they are
+both wrong in the same way — which is exactly why the comparison has to be
+repeated where Abaqus starts getting it right.
+
+### Refine, and the gap opens: it is locking after all
+
+Repeating at `L_mesh` = 0.0120 (1 211 410 elements) does not shrink the excess.
+It multiplies it by five.
+
+| | `R_ccx` (C3D4/C3D4) | `R_abq` (C3D4H/C3D4) | Abaqus seed spread | excess |
+|---|---|---|---|---|
+| `LMESH_m0p0240` | 2.5094 | 2.4701 | 0.61 % | +1.59 % |
+| `LMESH_m0p0120` | 2.5852 | 2.3786 | 0.75 % | **+8.69 %** |
+
+The mechanism is visible in how each code responds to the refinement. Mean over
+the Abaqus seeds, against the single CalculiX cell:
+
+| refining 0.0240 → 0.0120 | Abaqus | CalculiX |
+|---|---|---|
+| drained (both C3D4) | −7.11 % | −3.97 % |
+| **undrained** (C3D4H vs C3D4) | **−10.55 %** | **−1.06 %** |
+
+On the drained cell both codes refine downward at comparable rates — ordinary
+convergence, and the control that says the meshes are comparable. On the
+undrained cell Abaqus moves 10.6 % toward its converged answer and **CalculiX
+moves 1.1 %.** The displacement element is stuck. Refining the mesh does not
+relieve the volumetric constraint, which is what volumetric locking *is*.
+
+Read as an absolute disagreement on `E_x`:
+
+| | undrained | drained |
+|---|---|---|
+| `L_mesh` = 0.0240 | +1.52 % | −0.08 % |
+| `L_mesh` = 0.0120 | **+12.28 %** | +3.30 % |
+
+The achieved phase fractions match throughout (`phi_soft` 0.12952 against
+0.12834–0.12962), and every solve converged (equilibrium gap 6.6e-7 to 6.3e-6).
+
+**This corrects what the sections above concluded.** "The missing hybrid
+element costs nothing measurable" was measured two ways that both hide it: an
+order-1-vs-order-2 comparison inside CalculiX, which cannot see an error both
+orders share, and a single coarse mesh, where discretisation error dominates.
+Against Abaqus's own hybrid results, on the campaign's own decks, at the mesh
+density the campaign now specifies, **it costs 8–12 % of the across-layer
+undrained modulus, and the cost grows as the mesh improves.**
+
+Two more morphologies, both at `L_mesh` = 0.0240 (`rve_bracket_bridge`, three
+seeds):
+
+| | `R_ccx` | `R_abq` | spread | excess |
+|---|---|---|---|---|
+| `BRKB_b020` (`bridge_fraction` = 0.02) | 19.5023 | 19.3558 | 7.99 % | +0.76 %, inside |
+| `BRKB_b280` (`bridge_fraction` = 0.28) | 3.0425 | 2.9150 | 2.07 % | +4.37 % |
+
+`b020` is the tightest constriction in the tree and the README's flagged worst
+case; it comes back inside the noise, but its noise floor is 8 % because the
+drained cell there is nearly a stack of disconnected plates (`E_x` = 0.28 GPa)
+and its packing scatter is large. It is a weak "inside", not a clean one. Both
+sit at the retired coarse setting, so by the trend above both understate.
+
+**Consequence for the 204 undrained cells.** Production sizing is now
+`L_mesh = t/2.5` clipped to [0.005, 0.012] — at or finer than the level where
+the gap is 8.7 %. Those cells cannot be solved in CalculiX at production
+resolution without a mixed formulation, and the drained cells are unaffected.
+This is the one place in the repository where the missing hybrid element is
+disqualifying rather than merely measurable.
+
+**And it kills the cheap fixes.** B-bar is a no-op on C3D4 — one integration
+point, so the element mean of the divergence is the pointwise value
+(`0002-bbar-mean-dilatation.patch`, verified bit-identical). Order 2 was the
+other cheap answer, and the order-2 convergence sweep already refused to
+certify it. What is left is nodal-averaged B-bar (needs `mastruct.c` and a new
+assembly path), a true mixed element (38 files), or the hydrostatic fluid
+cavity sketched under *Fluid elements* above — which now looks like the best
+of the three, because it removes the incompressibility from the element
+formulation entirely rather than trying to make a displacement element carry it.
 
 **One limitation to keep in view.** This validated `E_eff`, `G_eff` and
 `nu_eff` — homogenised quantities, which average over the inclusion interiors.
@@ -558,11 +633,16 @@ ported to CalculiX (see *Not ported*), and if it ever is, this measurement does
 not carry over to it: the fields inside a near-incompressible phase would need
 checking on their own terms.
 
-**So: use `SPAX_MESH_ORDER=2` for CalculiX and the missing hybrid element costs
-nothing measurable.** Order 1 is a separate 4 % error that Abaqus has too. This
-was measured at one inclusion fraction on one packing; a cell where the soft
-phase percolates and carries load could behave differently, and the twin
-comparison above is the cheap way to re-check it.
+**For the spherical decks: use `SPAX_MESH_ORDER=2` and the missing hybrid
+element costs nothing measurable.** Order 1 is a separate 4 % error that Abaqus
+has too. This was measured at one inclusion fraction on one packing.
+
+**For the undrained layered decks that conclusion does not hold** — see
+*Refine, and the gap opens* above, where the direct comparison against Abaqus's
+hybrid results puts the cost at 8–12 % and rising with mesh quality. The
+condition named right here as the one that would break the spherical result —
+a soft phase that percolates and carries load — is exactly the condition those
+cells satisfy.
 
 ### If it ever does need building
 
