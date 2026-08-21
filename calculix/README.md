@@ -91,14 +91,28 @@ The cells hold the same amount of each phase — total soft fraction agrees to
 
 ν agrees to 0.2 % and is flat across the series, while E is 0.5–3.6 % low with
 the gap **growing monotonically with void content**. A solver discrepancy would
-not be porosity-dependent; that shape belongs to geometry and mesh. The
-regenerated meshes are also about twice as dense as the campaign's (46 462
-elements for GAS_v00, against ~20 700 matrix elements recorded for the same run
-in `results_scf.csv`), and a finer mesh makes a porous cell more compliant —
-the right sign, growing with void surface area.
+not be porosity-dependent; that shape belongs to geometry or discretisation.
 
-`packing_scatter.sh` puts a number on it: the worst-case row re-packed at
-several seeds, everything else fixed. See *Packing scatter* below.
+Two things are worth stating about the reference before reading anything into
+that. The current `results_gas.csv` is the **2026-08-07 re-run**, made after the
+2026-08-06 mesher-geometry corrections (`98226e6`, `4aeb689`, `2f689f8`), so it
+is a modern Abaqus reference and not the legacy table — the numbers it replaced
+were 1–2 % different and carried no achieved-phase columns at all. But **the
+element count behind it is not recorded anywhere in the tree.** (`results_scf.csv`
+lists ~20 700 matrix elements for a run named GAS_v00, but that file dates from
+2026-07-20, before those same fixes, so it describes a different mesh and cannot
+be used to characterise this one.)
+
+So the mesh behind the reference is unknown, and two controls are needed rather
+than one explanation:
+
+* `packing_scatter.sh` — the worst-case row re-packed at several seeds,
+  everything else fixed: how much does E move for the same specification?
+* `mesh_convergence.sh` — ONE frozen packing (`SPAX_SAVE_PACKING`) remeshed
+  across `L_mesh`: how much does E move for the same geometry?
+
+Together they bound how much of the 0.5–3.6 % this comparison can attribute to
+anything at all. See *What the controls say* below.
 
 ### The bug this comparison found
 
