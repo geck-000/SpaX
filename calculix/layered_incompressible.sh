@@ -38,6 +38,8 @@ CCX=${CCX:-ccx_spax}
 ROOT=${ROOT:-out_layerinc}
 L=${L:-0.30}
 LMESH=${LMESH:-0.015}
+NSLABS=${NSLABS:-4}
+SLABVOF=${SLABVOF:-0.1000}
 CPUS=${CPUS:-8}
 
 export SPAX_CCX="$CCX"
@@ -52,8 +54,8 @@ mkdir -p "$ROOT"
 # the constriction-dominated direction; Mode2 Z is in-plane.
 DISP=$($PY -c "print(0.01 * $L)")
 HDR='run_id,L,L_mesh,Is_Porous,E_matrix,nu_matrix,VoF_sphere,r_avg,r_std,Mode,Disp,Mode2,Disp2,VoF_void_sphere,VoF_incl_sphere,E_sphere_inclusion,nu_sphere_inclusion,sphericity_avg,sphericity_std,min_distance,max_iterations,nlgeom_flag,PBC_Method,Kappa,Bending_Plane,Bending_PBC_Type,generate_channels,channel_vof_target,r_channel_avg,r_channel_std,Growth_Direction,Growth_Concentration,Inclusion_Type,K_inclusion,G_inclusion,n_slabs,slab_vof,bridge_fraction,n_bridges,slab_axis,bridge_correlation'
-printf '%s\nLAY,%s,%s,Composite,9.43e9,0.33,0.0325,0.035,0.008,Uniaxial Tension X,%s,Uniaxial Tension Z,%s,0.0100,0.0225,2.2e9,0.48,0.80,0.1,0.002,200000,OFF,Gmsh,0,xz,Lesicar,No,0,0.02,0.005,Z,0.5,Liquid,2.2e9,440029.33528897085,4,0.1000,0.2929,2,x,0.0\n' \
-    "$HDR" "$L" "$LMESH" "$DISP" "$DISP" > "$ROOT/und.csv"
+printf '%s\nLAY,%s,%s,Composite,9.43e9,0.33,0.0325,0.035,0.008,Uniaxial Tension X,%s,Uniaxial Tension Z,%s,0.0100,0.0225,2.2e9,0.48,0.80,0.1,0.002,200000,OFF,Gmsh,0,xz,Lesicar,No,0,0.02,0.005,Z,0.5,Liquid,2.2e9,440029.33528897085,%s,%s,0.2929,2,x,0.0\n' \
+    "$HDR" "$L" "$LMESH" "$DISP" "$DISP" "$NSLABS" "$SLABVOF" > "$ROOT/und.csv"
 
 # The drained twin: same everything, K lowered. Used only for the post-processor;
 # the DECK is produced by rewriting the elastic card, not by regenerating.

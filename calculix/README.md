@@ -319,13 +319,37 @@ order 1 is of order **2 % in the across-layer modulus**, not 11 %.
 `rve_nlgeom_layer`, `rve_torsion_layer`) sit at ν = 0.406, below the hybrid
 threshold, so Abaqus used no hybrid there either and CalculiX matches it.
 
-Two caveats. This infers the hybrid benefit from an order-1-vs-order-2
-comparison rather than measuring C3D4 against C3D4H directly — that needs one
-Abaqus run on an undrained layered deck, and the deck the converter reads is
-the same file Abaqus would solve. And it is one geometry: `n_slabs=4`,
-`n_bridges=2`, `bridge_fraction=0.29`. Narrower bridges mean tighter
+### Do not rely on the numbers above: that cell was under-resolved
+
+The table was measured on a cell whose brine slab is barely one element thick.
+The generator refines to `lc_fine = 0.4 x L_mesh` near an inclusion, so:
+
+| | slab thickness | `lc_fine` | elements through the slab |
+|---|---|---|---|
+| the test above, L_mesh=0.020 | 0.0075 | 0.0080 | **0.9** |
+| the test above, L_mesh=0.011 | 0.0075 | 0.0044 | **1.7** |
+| campaign `rve_layerb` | 0.0100 | 0.0020 | **5.0** |
+| campaign `rve_layercol_p060` | 0.0075 | 0.0022 | **3.4** |
+
+With one element across it, the confined brine layer — the whole feature under
+test — is not represented at all. Both the +9.08 % geometric term and the
++2.11-point incompressibility excess were measured on a cell that cannot carry
+the mechanism they are about, and the +7.40 % order-2 drift under refinement is
+at least as likely to be the unresolved slab as locking. **These numbers do not
+transfer to the campaign's cells.**
+
+`layered_incompressible.sh` now takes `NSLABS` and `SLABVOF` so the local
+resolution can be held at the campaign's while the cell is shrunk to something
+this machine can solve — `L=0.15 NSLABS=2 LMESH=0.0045` gives 4.2 elements
+through the same 0.0075 slab. That is the measurement to trust.
+
+Two further caveats that stand either way. This infers the hybrid benefit from
+an order-1-vs-order-2 comparison rather than measuring C3D4 against C3D4H
+directly — that needs one Abaqus run on an undrained layered deck, and the deck
+the converter reads is the same file Abaqus would solve. And it is one
+morphology: `n_bridges=2`, `bridge_fraction=0.29`. Narrower bridges mean tighter
 constrictions, so the penalty should be re-checked at the low-`bridge_fraction`
-end of `rve_bracket_bridge.csv` before the number is relied on.
+end of `rve_bracket_bridge.csv` before any number is relied on.
 
 **One limitation to keep in view.** This validated `E_eff`, `G_eff` and
 `nu_eff` — homogenised quantities, which average over the inclusion interiors.
