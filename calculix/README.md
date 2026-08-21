@@ -452,13 +452,74 @@ one's. It is smaller, by more than the in-plane term is large. The honest
 statement is **no evidence of a locking penalty at campaign resolution**, not a
 measurement of a negative one.
 
-Two further caveats that stand either way. This infers the hybrid benefit from
-an order-1-vs-order-2 comparison rather than measuring C3D4 against C3D4H
-directly — that needs one Abaqus run on an undrained layered deck, and the deck
-the converter reads is the same file Abaqus would solve. And it is one
-morphology: `n_bridges=2`, `bridge_fraction=0.29`. Narrower bridges mean tighter
-constrictions, so the penalty should be re-checked at the low-`bridge_fraction`
-end of `rve_bracket_bridge.csv` before any number is relied on.
+One caveat stands either way: this is one morphology, `n_bridges=2`,
+`bridge_fraction=0.29`. Narrower bridges mean tighter constrictions, so the
+penalty has to be re-checked at the low-`bridge_fraction` end of
+`rve_bracket_bridge.csv` before any number is relied on.
+
+The other caveat — that this infers the hybrid benefit from an order-1-vs-order-2
+comparison rather than measuring C3D4 against C3D4H directly — no longer stands.
+See below.
+
+### Measuring C3D4 against C3D4H, with no Abaqus licence
+
+Everything above compares element *orders* inside CalculiX. That can only say
+the two differ. The question is what Abaqus gets from C3D4H that CalculiX
+cannot, and the tree already holds Abaqus's answer: the layered campaigns
+stored drained *and* undrained `E_x` for hundreds of cells.
+
+The obstacle is the one `validate_gas.sh` hit — the campaign's packing seed is
+not recorded, so a fresh cell is not the same cell. The way through is that the
+decks come in **drained/undrained pairs**:
+
+```
+R = E_x(undrained) / E_x(drained)
+```
+
+Both codes mesh the drained cell (ν = 0.406) with the plain C3D4. Only the
+undrained cell (ν = 0.49993) differs — C3D4H in Abaqus, C3D4 here. Geometry
+enters `R` through a ratio, where it largely cancels, and the stored tables
+carry two or three **seeds** per condition, so **Abaqus's own seed spread in
+`R`** is the noise floor the difference has to clear. Locking makes a
+displacement element too stiff and only the undrained cell can lock, so it
+inflates `R`.
+
+`layered_abaqus_ratio.sh` runs it; `report_abaqus_ratio.py` reports it without
+re-solving.
+
+**`rve_layermesh` at the campaign's coarse level** (`L_mesh` = 0.0240, L = 0.50,
+345 029 elements, 181 850 equations, both solves converged at ~1.3e-6):
+
+| | `E_x` undrained | `E_x` drained | porosity | `phi_soft` |
+|---|---|---|---|---|
+| **CalculiX C3D4 / C3D4** | 6.3161e9 | 2.5170e9 | 0.00991 | 0.13021 |
+| Abaqus C3D4H / C3D4, s1 | 6.2534e9 | 2.5394e9 | 0.01034 / 0.01014 | 0.12965 / 0.12893 |
+| Abaqus C3D4H / C3D4, s2 | 6.1903e9 | 2.4985e9 | 0.01013 / 0.00985 | 0.12944 / 0.12852 |
+
+Read the geometry columns first: the achieved phase fractions agree to
+0.5–1.3 %, so unlike the gas comparison these really are equivalent packings
+and even the **absolute** moduli can be read. They agree to +1.0…+2.0 % on the
+undrained cell and −0.9…+0.7 % on the drained one, against an Abaqus seed
+spread of 1.0 % and 1.6 % respectively. **A CalculiX C3D4 undrained layered
+cell reproduces an Abaqus C3D4H one to within its own packing noise.**
+
+The ratio sharpens that:
+
+| | `R` | Abaqus seed spread | excess |
+|---|---|---|---|
+| `LMESH_m0p0240` | 2.5094 vs 2.4701 | 0.61 % | **+1.59 %** |
+
+So there *is* a signal, and it has the sign locking predicts — CalculiX reads
+1.6 % stiffer in the undrained-to-drained ratio than Abaqus's hybrid element
+does, against a 0.61 % noise floor. **1.6 % is the number to carry**, not the
++2.1 points the order comparison suggested and not the 11 % the under-resolved
+cell suggested.
+
+One caution about this level specifically: `L_mesh` = 0.0240 puts only ~1.3
+elements through the 0.0159 brine slab, so it sits in the same under-resolved
+regime that discredited the numbers above. It is the campaign's own setting for
+this deck, which is why it is worth measuring — but whether the 1.6 % is
+locking or unresolved slab is exactly what refinement has to separate.
 
 **One limitation to keep in view.** This validated `E_eff`, `G_eff` and
 `nu_eff` — homogenised quantities, which average over the inclusion interiors.
