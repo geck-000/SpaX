@@ -69,6 +69,22 @@ def main(argv):
         if c in worst:
             rel, rid = worst[c]
             print('  {:<14} {:>10.3g}%   ({})'.format(c, 100 * rel, rid))
+
+    # Columns the CalculiX side reports and the Abaqus side has no counterpart
+    # for are skipped by the loop above, because there is nothing to difference.
+    # equilibrium_gap is the important one: it is the evidence that the solve
+    # converged, and on a large cell it is the ONLY such evidence, so print it
+    # rather than let it fall silently out of the report.
+    for c in ('equilibrium_gap', 'solver'):
+        vals = [(rid, new[rid].get(c, '')) for rid in shared
+                if new[rid].get(c, '') not in ('', None)]
+        if vals and not any(ref[rid].get(c, '') for rid, _ in vals):
+            print('\n{} (CalculiX only)'.format(c))
+            for rid, v in vals:
+                try:
+                    print('  {:<14} {:>12.3e}'.format(rid, float(v)))
+                except (TypeError, ValueError):
+                    print('  {:<14} {:>12}'.format(rid, v))
     return 0
 
 

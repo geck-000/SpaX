@@ -166,17 +166,66 @@ periodicity constraint off by seventeen orders of magnitude in a deck that
 solves without complaint. The converter therefore re-renders **every** numeric
 field at 12 significant digits, not only the ones observed to break.
 
-## Scale
+## Scale, and why the default is the iterative solver
 
-A stock `ccx` is often linked against SPOOLES only — check with
-`ldd $(which ccx)` for PARDISO or PaStiX. SPOOLES is a direct solver whose
-memory grows much faster than the model, and the production cells in this
-campaign run to millions of elements. `SPAX_CCX_SOLVER=ITERATIVE CHOLESKY`
-switches to a built-in iterative solver that needs far less memory, but this is
-exactly the sort of ill-conditioned system (70x phase contrast, a
-near-incompressible phase) that iterative solvers struggle on. **The largest
-cell verified here is 35k elements.** Anything approaching campaign scale needs
-a ccx built against PaStiX or PARDISO, and a check that it converges.
+A stock `ccx` is usually linked against SPOOLES only — check with
+`ldd $(which ccx)`. SPOOLES is a *direct* solver, and at production size that
+is not a trade-off but a wall:
+
+| equations | SPOOLES | ITERATIVE CHOLESKY |
+|---|---|---|
+| 167 306 | 23.8 s, 1276 MB | 20.6 s, **370 MB**, 338 iters |
+| 488 390 | 149.8 s, 4402 MB | 64.8 s, **1072 MB**, 306 iters |
+| ~1.4 M | still factorising at 19 GB after ~25 min, stopped | — |
+
+Two things matter in that table. The iterative memory is **linear** in the
+model (2.90× for 2.92× the equations) while SPOOLES' is super-linear and its
+time worse still (6.3× for 2.92×). And the **iteration count did not grow** —
+338 → 306 — so the incomplete-Cholesky preconditioner is holding up as the cell
+grows, which is what makes the method usable at all here.
+
+So `SPAX_CCX_SOLVER` now defaults to `ITERATIVE CHOLESKY`. Set it to `SPOOLES`
+for a small-cell reference, or `DEFAULT` to write no `SOLVER` parameter and let
+ccx choose.
+
+### The tolerance, which is not optional
+
+Out of the box the iterative solvers return the **wrong answer, quietly**. The
+convergence test in `pcgsolver.c` stops once the residual max-norm falls to
+0.5 % of the mean load (`c1 = 0.005`, a local constant no input deck reaches),
+which leaves `E_eff` 0.15 % below the direct answer on the same deck.
+
+`patches/0001-iterative-tolerance.patch` exposes it as `CCX_ITER_TOL`:
+
+| `CCX_ITER_TOL` | iters | wall | peak | `E_eff` error | equilibrium gap |
+|---|---|---|---|---|---|
+| 0.005 (stock) | 70 | 14.0 s | 370 MB | **−0.1477 %** | 1.8e-3 |
+| 1e-3 | 94 | 14.6 s | 370 MB | +0.0133 % | 3.3e-6 |
+| 1e-5 | 338 | 20.9 s | 370 MB | −0.0000 % | 1.8e-7 |
+| SPOOLES | — | 23.2 s | 1275 MB | reference | 7.4e-8 |
+
+`1e-5` is the default `SpaX_CalculiX.solve()` exports. Memory is flat in the
+tolerance — tightening costs iterations, not storage.
+
+Beware the decoy: the `eps` argument threaded down from `preiter.c` looks like
+the tolerance and is documented as "required accuracy", but is never read — PCG
+and CG overwrite it with the final residual and return it. Patching `eps`
+changes nothing.
+
+An unpatched ccx silently ignores `CCX_ITER_TOL`, so `solve()` checks the log
+for the tolerance the patched binary echoes and warns plainly when it is
+absent.
+
+### The check that survives into production
+
+`equilibrium_gap`, recorded per RVE in `results.csv`, is the relative
+disagreement between the volume-averaged stress and the reference-point
+reaction — two independent measurements of the same macroscopic stress, linked
+by nothing but the model being right and the system being solved. It tracked
+the true error across the whole sweep above (1.8e-3 when the solve was bad,
+1.8e-7 when good) and it needs **no reference solve**, which is the point: on a
+cell too large to solve directly even once, it is the only convergence evidence
+available. Treat anything above ~1e-4 as a solve not to be believed.
 
 ## Not ported
 

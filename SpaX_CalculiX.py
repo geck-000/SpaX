@@ -770,8 +770,21 @@ def read_dat(dat_path):
             frame[kind][setname] = dict(
                 (int(r[0]), r[1:4].copy()) for r in rows)
         elif kind == 'volume':
-            frame[kind][setname] = (rows[:, 0].astype(np.int64),
-                                    rows[:, 1].copy())
+            # ccx emits the EVOL block with every element listed TWICE under a
+            # single header -- 62258 rows for 31129 elements. Collapsing by
+            # label is therefore not defensive tidying, it is required.
+            #
+            # This one hides well. Everything that looks a volume up through
+            # the label->volume dict (`_volume_map`) is immune, because a
+            # repeated key just overwrites itself: the volume-averaged stress,
+            # V_solid and porosity were all correct. Only a raw sum over the
+            # block doubled, which meant `phi_inclusion` -- the achieved brine
+            # fraction -- read exactly 2x its true value while the porosity
+            # beside it was right. It surfaced by disagreeing with a stored
+            # Abaqus campaign by a factor of two on that one column.
+            lab, vol = _mean_per_element(rows[:, 0].astype(np.int64),
+                                         rows[:, 1:2])
+            frame[kind][setname] = (lab, vol[:, 0].copy())
         else:
             lab, dat = _mean_per_element(rows[:, 0].astype(np.int64),
                                          rows[:, 2:8])
