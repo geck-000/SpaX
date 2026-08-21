@@ -28,7 +28,10 @@ JOBS=${JOBS:-2}
 
 export SPAX_CCX="$CCX"
 export OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1
-export SPAX_MESH_TIMEOUT=7200 SPAX_MAX_RETRIES=12 SPAX_MESH_ORDER=2
+export SPAX_MESH_TIMEOUT=7200 SPAX_MAX_RETRIES=12
+# Order 1 is what the campaign used for first-order decks -- see
+# validate_gas_order1.sh. Overridable so both can be run and compared.
+export SPAX_MESH_ORDER=${SPAX_MESH_ORDER:-2}
 # The campaign's own generation seed is not recorded in the tree, so this run
 # packs its own microstructures. Fixing the seed at least makes THIS comparison
 # reproducible.
