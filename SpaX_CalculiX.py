@@ -51,6 +51,28 @@ licence:
 Converted decks are written next to the originals as `<job>-ccx.inp`, so
 `Job-RVE_a-utx.inp` (Abaqus) and `Job-RVE_a-utx-ccx.inp` (CalculiX) coexist and
 the post-processor can tell which solver produced a given result.
+
+Environment
+-----------
+    SPAX_CCX          ccx executable (default `ccx`)
+    SPAX_CCX_SOLVER   linear solver written onto the *STATIC card: SPOOLES,
+                      ITERATIVE CHOLESKY, ITERATIVE SCALING, PARDISO, PASTIX.
+                      Unset leaves the card bare and ccx uses its default
+                      (SPOOLES), which is a DIRECT solver -- fine to a few
+                      hundred thousand equations and out of memory well before
+                      a production cell. See calculix/README.md for the
+                      measured curve and for the tolerance the iterative
+                      solvers need before their answer is trustworthy.
+    SPAX_CCX_FRD      `1` also writes a .frd for viewing in cgx/ParaView.
+    SPAX_SOLVER       read by SpaX_PostProcess: `calculix` prefers a .dat over
+                      an .odb when both are present.
+
+Every first-order extraction reports `equilibrium_gap`, the relative
+disagreement between the volume-averaged stress and the reference-point
+reaction. Two independent measurements of the same macroscopic stress, so it
+detects both a mistranslated constraint set and an under-converged iterative
+solve -- without needing a reference solution, which is what makes it usable on
+a cell too large to solve twice.
 """
 
 from __future__ import print_function
@@ -66,6 +88,20 @@ import numpy as np
 # =====================================================================
 # DECK CONVERSION
 # =====================================================================
+
+# Written onto the *STATIC card unless SPAX_CCX_SOLVER says otherwise. See the
+# reasoning at the *STATIC branch of convert_deck, and the measured curve in
+# calculix/README.md. 'DEFAULT' writes no SOLVER parameter and lets ccx choose
+# (SPOOLES).
+DEFAULT_SOLVER = 'ITERATIVE CHOLESKY'
+
+# ccx's built-in iterative criterion stops at a residual of 0.5% of the mean
+# load, which leaves E_eff 0.15% wrong on these cells. 1e-5 matches the direct
+# solver to five decimal places for ~5x the iterations and no extra memory.
+# Reaching it needs calculix/patches/0001-iterative-tolerance.patch; solve()
+# checks whether the ccx in use actually honoured it.
+DEFAULT_ITER_TOL = '1e-5'
+
 
 class DeckError(ValueError):
     """A deck card this converter does not know how to translate.
@@ -445,27 +481,33 @@ def convert_deck(src_path, dst_path, frd=False):
                 continue
 
             if c == '*STATIC':
-                # ccx's default is SPOOLES, a direct solver whose memory grows
-                # far faster than the model. A stock ccx is often linked
-                # against nothing else (check with `ldd`: no PARDISO, no
-                # PaStiX), and the campaign's production cells run to millions
-                # of elements, where SPOOLES will not fit. SPAX_CCX_SOLVER
-                # switches to one of ccx's built-in iterative solvers, which
-                # need very little memory -- at the cost of convergence trouble
-                # on exactly this kind of model, where a 70x phase contrast and
-                # a near-incompressible phase make the system ill-conditioned.
-                # Left unset the deck says nothing and ccx uses its default.
-                solver = os.environ.get('SPAX_CCX_SOLVER', '').strip().upper()
-                if solver:
-                    allowed = ('SPOOLES', 'ITERATIVE CHOLESKY',
-                               'ITERATIVE SCALING', 'PARDISO', 'PASTIX')
-                    if solver not in allowed:
-                        raise DeckError(
-                            "SPAX_CCX_SOLVER={} is not one of {}".format(
-                                solver, ', '.join(allowed)))
-                    out.append('*STATIC, SOLVER={}'.format(solver))
+                # ccx's own default is SPOOLES, a DIRECT solver: its memory
+                # grows far faster than the model, and a stock ccx is usually
+                # linked against nothing else. Measured on these cells it needs
+                # 3.4x the memory of the iterative solver at 167k equations and
+                # 4.1x at 488k, while being slower -- and it does not finish a
+                # 1.4M-equation cell in an hour on 30 GB. Running a direct
+                # solver at production size is not a trade-off, it is a wall.
+                #
+                # So the default here is ITERATIVE CHOLESKY, whose memory is
+                # linear in the model and whose iteration count did not grow
+                # over the range measured. It needs a tightened convergence
+                # criterion to be trustworthy -- see solve() and
+                # calculix/patches/0001-iterative-tolerance.patch -- and
+                # `equilibrium_gap` in the extraction is what confirms, per
+                # cell, that it converged.
+                solver = os.environ.get('SPAX_CCX_SOLVER',
+                                        DEFAULT_SOLVER).strip().upper()
+                allowed = ('SPOOLES', 'ITERATIVE CHOLESKY',
+                           'ITERATIVE SCALING', 'PARDISO', 'PASTIX', 'DEFAULT')
+                if solver not in allowed:
+                    raise DeckError(
+                        "SPAX_CCX_SOLVER={} is not one of {}".format(
+                            solver, ', '.join(allowed)))
+                if solver == 'DEFAULT':
+                    out.append('*STATIC')      # leave it to ccx
                 else:
-                    out.append('*STATIC')
+                    out.append('*STATIC, SOLVER={}'.format(solver))
                 section = 'pass'
                 continue
 
@@ -580,6 +622,21 @@ def solve(inp_path, cpus=None, timeout=None, log_path=None):
     if cpus:
         env['OMP_NUM_THREADS'] = str(cpus)
         env['CCX_NPROC_STIFFNESS'] = str(cpus)
+    env.setdefault('CCX_ITER_TOL',
+                   os.environ.get('SPAX_CCX_ITER_TOL', DEFAULT_ITER_TOL))
+
+    # Did this deck ask for an iterative solve? Only then does the tolerance
+    # matter, and only then is an unpatched ccx a problem.
+    wants_iterative = False
+    try:
+        with open(job + '.inp') as f:
+            for line in f:
+                if line.strip().upper().startswith('*STATIC') \
+                        and 'ITERATIVE' in line.upper():
+                    wants_iterative = True
+                    break
+    except IOError:
+        pass
     try:
         proc = subprocess.Popen(
             [ccx_executable(), os.path.basename(job)],
@@ -595,10 +652,34 @@ def solve(inp_path, cpus=None, timeout=None, log_path=None):
         with open(log_path, 'w') as f:
             f.write(log)
 
+    # The patched ccx echoes the tolerance it used. A stock one prints nothing,
+    # silently falls back to its built-in 0.5% criterion, and returns a modulus
+    # ~0.15% low that looks entirely reasonable. Since the iterative solver is
+    # the default here, say so rather than let it pass.
+    if wants_iterative and 'iterative solver: tolerance' not in log:
+        _warn_unpatched()
+
     dat = job + '.dat'
     ok = (rc == 0 and 'Job finished' in log
           and os.path.isfile(dat) and os.path.getsize(dat) > 0)
     return ok, log
+
+
+_warned_unpatched = [False]
+
+
+def _warn_unpatched():
+    """Once per process: this ccx ignores CCX_ITER_TOL."""
+    if _warned_unpatched[0]:
+        return
+    _warned_unpatched[0] = True
+    print("\n  WARNING: this ccx does not honour CCX_ITER_TOL, so the iterative\n"
+          "  solve stopped at its built-in criterion (residual = 0.5% of the mean\n"
+          "  load). On these cells that leaves E_eff about 0.15% low. Either apply\n"
+          "  calculix/patches/0001-iterative-tolerance.patch and rebuild, or set\n"
+          "  SPAX_CCX_SOLVER=SPOOLES and accept the memory. Check equilibrium_gap\n"
+          "  in the results: it reads ~2e-3 when this bites and ~2e-7 when it does\n"
+          "  not.\n")
 
 
 # =====================================================================

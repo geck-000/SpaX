@@ -26,6 +26,7 @@ SIZES=${SIZES:-"0.30 0.42 0.55"}
 TIMEOUT=${TIMEOUT:-3600}
 CPUS=${CPUS:-8}
 CCX=${CCX:-ccx_spax}
+export SPAX_CCX=$CCX
 # The stock iterative criterion (c1=0.005) is 0.15% wrong on this problem;
 # 1e-5 matches the direct solver to five decimals. See iterative_tolerance.sh.
 ITER_TOL=${ITER_TOL:-1e-5}

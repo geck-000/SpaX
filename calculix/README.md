@@ -111,6 +111,42 @@ was measured at one inclusion fraction on one packing; a cell where the soft
 phase percolates and carries load could behave differently, and the twin
 comparison above is the cheap way to re-check it.
 
+### If it ever does need building
+
+Two routes, and they are not the same size of job.
+
+**A true mixed displacement/pressure element** — an extra pressure unknown per
+element entering the global system — is the invasive one. `lakon`, the element
+type string, is consumed in 38 source files; a new global DOF also touches the
+matrix structure (`mastruct.c`), the solvers and the results recovery. This is
+not a weekend.
+
+**B-bar (mean dilatation) is the tractable one, and it is the standard fix.**
+`e_c3d.f` assembles the isotropic stiffness directly from the Lamé constants,
+with the volumetric and deviatoric parts already written as separate terms:
+
+```fortran
+s(ii1,jj1) = s(ii1,jj1) + (al*w(1,1) +
+&              um*(2.d0*w(1,1)+w(2,2)+w(3,3)))*weight
+```
+
+Locking lives entirely in the `al` (λ) term, which blows up as ν → 0.5. B-bar
+replaces the discrete divergence operator in that term by its element average —
+accumulate it through the integration loop, then add the volumetric
+contribution once afterwards instead of at every point. No extra DOF, no change
+to the matrix structure, no solver changes; roughly 50–100 lines in `e_c3d.f`
+plus registering a type name, and a matching change in `resultsmech.f` so the
+recovered volumetric stress uses the same operator.
+
+**But note what B-bar would not buy here.** The 4 % order-1 error above is not
+volumetric — the compressible twin shows the same 4 % — so a B-bar C3D4 would
+*not* let these cells drop from quadratic to linear elements. Its only effect
+would be on the near-incompressible phase, which is precisely where the
+measurement says there is nothing to recover. On the evidence, this work has no
+payoff for this repository's physics; it becomes worth doing if a stiff
+near-incompressible phase is ever introduced, or if the soft phase is made to
+percolate and carry load.
+
 ## Two ccx incompatibilities worth knowing
 
 **Node sets in `*EQUATION`.** CalculiX resolves set names everywhere else but
