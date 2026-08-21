@@ -515,11 +515,40 @@ does, against a 0.61 % noise floor. **1.6 % is the number to carry**, not the
 +2.1 points the order comparison suggested and not the 11 % the under-resolved
 cell suggested.
 
-One caution about this level specifically: `L_mesh` = 0.0240 puts only ~1.3
-elements through the 0.0159 brine slab, so it sits in the same under-resolved
-regime that discredited the numbers above. It is the campaign's own setting for
-this deck, which is why it is worth measuring — but whether the 1.6 % is
-locking or unresolved slab is exactly what refinement has to separate.
+### The campaign already answered the resolution question — in Abaqus, with C3D4H
+
+Before reading anything into 1.6 %, note what `9104261` (2026-08-13, *"Mesh
+gate result: size every layered cell per its own layer thickness"*) measured.
+It is the same convergence study, run **in Abaqus with the hybrid element**, at
+φ = 0.10, b = 0.293:
+
+| elements across the layer | drained error | undrained error |
+|---|---|---|
+| 3.0 | 0.0 % | 0.0 % |
+| 2.2 | 0.3 % | 0.3 % |
+| 1.5 | 1.0 % | **20.7 %** |
+| 0.7 | 8.7 % | **35.0 %** |
+
+**The undrained response needs about twice the resolution the drained one
+does, and C3D4H does not rescue it.** A mesh that resolves the drained modulus
+to 1 % is 21 % out on the undrained one — in Abaqus, with the mixed
+formulation, on the very cells this section is about. Whatever makes a confined
+near-incompressible layer hard to discretise, the hybrid element is not the
+cure for it.
+
+That gate is also the cross-check that `R` is the right metric, because the
+campaign reached for the same quantity without calling it that: *"the
+undrained/drained ratio there is 2.47 against 1.99 converged."* Those are `R`
+at `L_mesh` 0.0240 and 0.0060 in `results_layermesh.csv` — 2.4701 and 1.9897.
+The ratio this comparison uses to cancel packing is the campaign's own
+convergence measure.
+
+So the coarse level has to be read in that light. `L_mesh` = 0.0240 is 0.7–1.3
+elements across the layer, where the gate says **Abaqus is 35 % out**. The
+CalculiX-vs-Abaqus excess measured there is 1.6 %. The two codes' disagreement
+is more than an order of magnitude smaller than the discretisation error they
+both carry, and the campaign has already retired that setting — production
+sizing is now `L_mesh = t/2.5` clipped to [0.005, 0.012].
 
 **One limitation to keep in view.** This validated `E_eff`, `G_eff` and
 `nu_eff` — homogenised quantities, which average over the inclusion interiors.
