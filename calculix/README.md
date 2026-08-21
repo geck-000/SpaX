@@ -190,6 +190,41 @@ strips the `H`, and the phase the generator marked hybrid — the brine, at
 `nu >= SPAX_HYBRID_NU` — runs on the plain displacement element that is
 supposed to volumetrically lock as `nu -> 0.5`.
 
+The CalculiX community thread on this
+([discourse 1509](https://calculix.discourse.group/t/incompressible-material-models/1509))
+confirms the limitation from the manual — *"Perfectly incompressible materials
+require hybrid finite elements. CalculiX does not provide such elements"* — and
+offers two remedies. **Neither transfers to this problem**, and it is worth
+saying why, because both look applicable at first glance:
+
+* **Reduced integration (`C3D20R`), the manual's advice for isochoric
+  behaviour.** CalculiX has reduced integration only for hexahedra — `C3D8R`
+  and `C3D20R`. There is no reduced-integration tetrahedron (`C3D4`, `C3D10`,
+  `C3D15` only), and the periodic mesher produces tets for these geometries.
+  Not available.
+
+* **Accept `nu ≈ 0.475`** (ccx's own default when a hyperelastic `D1` is zero).
+  That advice is for `*HYPERELASTIC`, where incompressibility is a modelling
+  choice. Here the brine is `*ELASTIC` and its `nu` is not a knob — it encodes
+  a measured bulk modulus. Because `G` is only 0.44 MPa, `K` is violently
+  sensitive to `nu` near 0.5:
+
+  | ν | K | vs the specified 2.2 GPa |
+  |---|---|---|
+  | 0.49990 | 2.2 GPa | as specified |
+  | 0.499 | 220 MPa | 0.10× |
+  | 0.490 | 21.9 MPa | 0.010× |
+  | 0.475 | 8.65 MPa | **0.0039×** |
+
+  Capping at 0.475 cuts the brine's bulk modulus by **254×**, turning the
+  undrained cell into something close to its drained twin. Since K = 2.2 GPa
+  against the ice's 9.25 GPa is exactly what makes the confined brine a load
+  path, that does not work around the numerics — it deletes the physics under
+  test.
+
+Which leaves the two routes below, and the cheap alternative of solving those
+cells at order 2.
+
 **Measured, it does not.** One frozen packing (`SPAX_SAVE_PACKING`), the same
 geometry throughout, inclusion fraction 0.295:
 
@@ -229,8 +264,68 @@ incompressibility *is* being represented — `nu_eff` reads 0.336 with the brine
 against 0.307 with the compressible twin — it simply is not what governs.
 
 That also says exactly when the conclusion would stop holding: a soft phase
-that **percolates** and carries load, or a **stiff** near-incompressible phase.
-Neither is present in these decks.
+that **percolates** and carries load, or geometric **confinement**. Both are
+present in the layered decks — see below.
+
+### The layered cells: where it does show up
+
+`layered_incompressible.sh` tests the case the spherical result does not cover.
+The layered decks carry drained/undrained pairs:
+
+| | K | G | ν | Abaqus element |
+|---|---|---|---|---|
+| drained | 2.2 MPa | 0.44 MPa | 0.406 | C3D4 (below the 0.45 threshold) |
+| **undrained** | **2.2 GPa** | 0.44 MPa | **0.49993** | **C3D4H — hybrid** |
+
+The undrained cell has everything the spherical one lacked: the brine is a
+cell-spanning slab, confined between ice plates, with the ice bridges as
+constrictions — and K = 2.2 GPa is only 4× below the ice, so it genuinely
+carries load. Pressure transmission through that confined brine is the
+mechanism the layered closure rests on. The campaigns also run it on linear
+tets (`5196ff1`, "Run the layered sweeps with linear elements to fit the
+face-constraint limit").
+
+One geometry per element order; the drained twin made by rewriting the single
+inclusion elastic card on the **identical mesh**, so drainage is the only
+difference:
+
+| order 1 vs order 2 | E_x (across layers) | E_z (in-plane) |
+|---|---|---|
+| drained, ν = 0.406 | **+9.08 %** | +0.75 % |
+| undrained, ν = 0.49993 | **+11.19 %** | +1.06 % |
+| **attributable to incompressibility** | **+2.11 points** | +0.32 points |
+| *spherical brine vs its twin, for contrast* | *−0.41 points (none)* | — |
+
+**Read the control before the headline.** The raw +11.19 % looks like locking
+and mostly is not: the drained cell, which Abaqus also meshes without hybrid
+elements, loses +9.08 % on the same geometry. That is ordinary linear-tet
+stiffness amplified by thin slabs and narrow bridges, and **Abaqus carries it
+too** — it is not a CalculiX-versus-Abaqus difference at all.
+
+What *is* CalculiX-specific is the excess: **+2.1 points** in E_x, the part
+Abaqus recovers with C3D4H and CalculiX cannot. Small next to the geometry
+term, but real, and qualitatively unlike the spherical case where the
+incompressibility penalty was zero (−0.41 points, i.e. the brine tracked its
+compressible twin exactly). It is also directional — 2.1 points across the
+layers against 0.3 in-plane — which is the signature of the confined phase
+having to deform near-isochorically under pressure.
+
+So the expected CalculiX-vs-Abaqus discrepancy on an undrained layered cell at
+order 1 is of order **2 % in the across-layer modulus**, not 11 %.
+
+**Exposure: 204 undrained cells across 14 decks** (`rve_bracket_*`,
+`rve_layerb`, `rve_layercol*`, `rve_layermesh`, `rve_layerskel`,
+`rve_weibull_layer`). The drained-only decks (`rve_eringen_layer`,
+`rve_nlgeom_layer`, `rve_torsion_layer`) sit at ν = 0.406, below the hybrid
+threshold, so Abaqus used no hybrid there either and CalculiX matches it.
+
+Two caveats. This infers the hybrid benefit from an order-1-vs-order-2
+comparison rather than measuring C3D4 against C3D4H directly — that needs one
+Abaqus run on an undrained layered deck, and the deck the converter reads is
+the same file Abaqus would solve. And it is one geometry: `n_slabs=4`,
+`n_bridges=2`, `bridge_fraction=0.29`. Narrower bridges mean tighter
+constrictions, so the penalty should be re-checked at the low-`bridge_fraction`
+end of `rve_bracket_bridge.csv` before the number is relied on.
 
 **One limitation to keep in view.** This validated `E_eff`, `G_eff` and
 `nu_eff` — homogenised quantities, which average over the inclusion interiors.
@@ -273,14 +368,19 @@ to the matrix structure, no solver changes; roughly 50–100 lines in `e_c3d.f`
 plus registering a type name, and a matching change in `resultsmech.f` so the
 recovered volumetric stress uses the same operator.
 
-**But note what B-bar would not buy here.** The 4 % order-1 error above is not
-volumetric — the compressible twin shows the same 4 % — so a B-bar C3D4 would
-*not* let these cells drop from quadratic to linear elements. Its only effect
-would be on the near-incompressible phase, which is precisely where the
-measurement says there is nothing to recover. On the evidence, this work has no
-payoff for this repository's physics; it becomes worth doing if a stiff
-near-incompressible phase is ever introduced, or if the soft phase is made to
-percolate and carry load.
+**What B-bar would and would not buy here.** For the spherical decks, nothing:
+the 4 % order-1 error is not volumetric — the compressible twin shows the same
+4 % — so B-bar would not let those cells drop from quadratic to linear
+elements, and there is no incompressibility penalty to recover.
+
+For the **undrained layered** decks it would buy the +2.1 points measured
+above, which is the part Abaqus gets from C3D4H. That is the one place in this
+repository where the missing hybrid element costs something measurable. It is
+worth weighing against the alternative, which costs nothing to try: solve those
+cells at `SPAX_MESH_ORDER=2`, where the penalty is by construction absent.
+The campaigns moved to linear elements for a reason (`5196ff1`, the
+face-constraint limit), so that alternative may not be free in practice — but
+it should be priced before writing Fortran.
 
 ## Two ccx incompatibilities worth knowing
 
