@@ -94,6 +94,62 @@ _WRAPPER_CARDS = frozenset([
 _NO_STRAIN_MODES = frozenset(['bend', 'tors'])
 
 
+# CalculiX reads free-format input by copying each comma-separated field into a
+# fixed 20-character buffer, and a longer field is TRUNCATED rather than
+# rejected. Python's repr routinely exceeds that: a coordinate of
+# 3.8163916471489756E-17 is 22 characters, truncates to "3.8163916471489756E-",
+# and ccx stops with "*ERROR reading *NODE".
+#
+# The error is the lucky case. Truncation only fails loudly when it lands
+# mid-exponent; a field that truncates to a still-valid number is accepted
+# silently at the wrong value. An *Equation coefficient of 3.469446951953614e-18
+# (21 characters) truncates to 3.469446951953614e-1 -- a periodicity constraint
+# off by seventeen orders of magnitude, in a deck that solves without a murmur.
+#
+# So every numeric field is re-emitted at a width that cannot truncate rather
+# than only the ones observed to break. 12 significant digits spans at most 19
+# characters ("-1.23456789012e-308") and is far more precision than mesh
+# coordinates or constraint coefficients carry meaning at.
+_CCX_FIELD_WIDTH = 20
+_NUM_DIGITS = 12
+
+_INT_RE = re.compile(r'^[-+]?\d+$')
+_FLOAT_RE = re.compile(r'^[-+]?(\d+\.?\d*|\.\d+)([eEdD][-+]?\d+)?$')
+
+
+def _fmt_field(tok):
+    """One data-line field, guaranteed to survive ccx's 20-character buffer.
+
+    Integers (node and element labels, degrees of freedom) are passed through
+    exactly -- reformatting a label would be a correctness bug, and no label in
+    these decks comes close to the limit. Set names are passed through. Floats
+    are re-rendered at 12 significant digits.
+    """
+    t = tok.strip()
+    if not t or _INT_RE.match(t):
+        return t
+    if _FLOAT_RE.match(t):
+        v = float(t.replace('D', 'E').replace('d', 'e'))
+        s = '%.*g' % (_NUM_DIGITS, v)
+        if len(s) > _CCX_FIELD_WIDTH:
+            # Unreachable for finite doubles at 12 digits, but a wrong number
+            # here is invisible, so check rather than assume.
+            raise DeckError(
+                "cannot render {} within {} characters".format(
+                    t, _CCX_FIELD_WIDTH))
+        return s
+    if len(t) > _CCX_FIELD_WIDTH:
+        raise DeckError(
+            "field '{}' is {} characters; CalculiX truncates at {}".format(
+                t, len(t), _CCX_FIELD_WIDTH))
+    return t
+
+
+def _fmt_data(line):
+    """Re-emit a comma-separated data line with every field width-safe."""
+    return ', '.join(_fmt_field(t) for t in line.split(','))
+
+
 def _card(line):
     """The keyword of a card line, upper-cased, without its parameters."""
     return line.strip().split(',')[0].strip().upper()
@@ -389,7 +445,27 @@ def convert_deck(src_path, dst_path, frd=False):
                 continue
 
             if c == '*STATIC':
-                out.append('*STATIC')
+                # ccx's default is SPOOLES, a direct solver whose memory grows
+                # far faster than the model. A stock ccx is often linked
+                # against nothing else (check with `ldd`: no PARDISO, no
+                # PaStiX), and the campaign's production cells run to millions
+                # of elements, where SPOOLES will not fit. SPAX_CCX_SOLVER
+                # switches to one of ccx's built-in iterative solvers, which
+                # need very little memory -- at the cost of convergence trouble
+                # on exactly this kind of model, where a 70x phase contrast and
+                # a near-incompressible phase make the system ill-conditioned.
+                # Left unset the deck says nothing and ccx uses its default.
+                solver = os.environ.get('SPAX_CCX_SOLVER', '').strip().upper()
+                if solver:
+                    allowed = ('SPOOLES', 'ITERATIVE CHOLESKY',
+                               'ITERATIVE SCALING', 'PARDISO', 'PASTIX')
+                    if solver not in allowed:
+                        raise DeckError(
+                            "SPAX_CCX_SOLVER={} is not one of {}".format(
+                                solver, ', '.join(allowed)))
+                    out.append('*STATIC, SOLVER={}'.format(solver))
+                else:
+                    out.append('*STATIC')
                 section = 'pass'
                 continue
 
@@ -414,7 +490,7 @@ def convert_deck(src_path, dst_path, frd=False):
             continue
 
         if section == 'pass':
-            out.append(s)
+            out.append(_fmt_data(s))
             continue
 
         if section == 'eqcount':
@@ -429,7 +505,8 @@ def convert_deck(src_path, dst_path, frd=False):
                 raise DeckError("{}: malformed *Equation term '{}'".format(
                     src_name, s))
             node = _resolve_node(parts[0], nsets, src_name)
-            out.append('{}, {}, {}'.format(node, parts[1], parts[2]))
+            out.append('{}, {}, {}'.format(node, _fmt_field(parts[1]),
+                                           _fmt_field(parts[2])))
             eq_left -= 1
             if eq_left == 0:
                 section = None
