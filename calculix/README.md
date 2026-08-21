@@ -624,13 +624,50 @@ disqualifying rather than merely measurable.
 
 **And it kills the cheap fixes.** B-bar is a no-op on C3D4 — one integration
 point, so the element mean of the divergence is the pointwise value
-(`0002-bbar-mean-dilatation.patch`, verified bit-identical). Order 2 was the
-other cheap answer, and the order-2 convergence sweep already refused to
-certify it. What is left is nodal-averaged B-bar (needs `mastruct.c` and a new
-assembly path), a true mixed element (38 files), or the hydrostatic fluid
-cavity sketched under *Fluid elements* above — which now looks like the best
-of the three, because it removes the incompressibility from the element
-formulation entirely rather than trying to make a displacement element carry it.
+(`0002-bbar-mean-dilatation.patch`, verified bit-identical). C3D10 has four
+integration points, so B-bar is *not* trivial there — but see below, it does
+not help either. What is left is nodal-averaged B-bar (needs `mastruct.c` and a
+new assembly path), a true mixed element (38 files), or the hydrostatic fluid
+cavity sketched under *Fluid elements* above.
+
+### B-bar on C3D10: it only acts where the mesh is already wrong
+
+`0002-bbar-mean-dilatation.patch` advertises that it *"acts only at order 2
+(C3D10, 4 integration points), where it moves E_x on the confined undrained
+layered cell by −11.5 %"*. That is true and it is misleading, because of which
+cell it was measured on.
+
+| C3D10 undrained, `CCX_BBAR_NU` = 0.45 | elements through the slab | `E_x` change |
+|---|---|---|
+| `out_layerinc` (L = 0.30, `L_mesh` = 0.015) | 0.9–1.7 | **−11.52 %** |
+| `out_layerres` (L = 0.15, `L_mesh` = 0.0045) | **4.2**, the campaign's own | **−0.003 %** |
+
+Same patch, same threshold, same morphology, both confirmed active (ccx echoes
+`SPAX B-bar active for nu >= 0.45` and the equilibrium gap flips from 3.96e-7
+to exactly 1.00, which is the documented signature of the switch engaging).
+`E_z` moves −0.069 % on the resolved cell.
+
+**Element-level B-bar does something on C3D10 only where the slab is
+unresolved — which is precisely where the answer is wrong for an unrelated
+reason.** Resolve the slab and C3D10 is not locking, so there is no volumetric
+penalty for the mean-dilatation term to remove. The −11.5 % is not a recovery;
+it is one under-resolved wrong answer moving toward a different wrong answer.
+
+The reason is structural, not a defect in the patch. Element-mean B-bar on a
+quadratic tet is a P2/P0 pressure approximation: it imposes one dilatation
+constraint per element against 30 displacement DOFs. On a linear tet that one
+constraint is the whole element (and hence trivially satisfied); on a quadratic
+one it is too weak to change a field that was not badly constrained to begin
+with. Making it bite needs the pressure space refined with the displacement
+space — P2/P1 Taylor-Hood — which is the true mixed element, not a B-bar.
+
+**Caution when using the patch at all.** With B-bar active only the stiffness is
+patched; `resultsmech.f` still recovers internal forces with the standard B, so
+`equilibrium_gap` reads ~1.0 and the repository's only reference-free
+convergence check is unavailable on exactly the runs that most need it. The
+volume-averaged stress stays consistent — the element mean of λ·div(u) *is* the
+B-bar pressure — so `E_eff` is readable, but always solve an unpatched twin
+beside it as the control.
 
 **One limitation to keep in view.** This validated `E_eff`, `G_eff` and
 `nu_eff` — homogenised quantities, which average over the inclusion interiors.
