@@ -450,9 +450,16 @@ assuming it does.
 
 What survives that objection is the direction. Locking makes order 1 too stiff;
 if it were biting, the undrained cell's order-1 error would exceed the drained
-one's. It is smaller, by more than the in-plane term is large. The honest
-statement is **no evidence of a locking penalty at campaign resolution**, not a
-measurement of a negative one.
+one's. It is smaller, by more than the in-plane term is large.
+
+**And that inference is wrong, for a reason this comparison structurally cannot
+see.** An order-1-vs-order-2 test can only detect an error the two orders do
+*not* share. C3D10 locks on this cell too — the order-2 convergence sweep
+already refused to certify it — so both orders are stiff, the difference
+between them says little, and the whole method is blind here. The direct
+measurement against Abaqus's hybrid element, two sections down, puts the cost
+at 8–12 %. Read *Refine, and the gap opens* before using anything in this
+subsection.
 
 One caveat stands either way: this is one morphology, `n_bridges=2`,
 `bridge_fraction=0.29`. Narrower bridges mean tighter constrictions, so the
