@@ -650,44 +650,41 @@ A second real bug found alongside it: patch element ids started at 1e8, so
 ccx's `ne = max(ne, id)` sized every element array for 100 million elements.
 Ids now continue from the deck's real maximum.
 
-### The equilibrium gap: periodic-specific, and NOT the MPCs
+### The equilibrium gap: isolated to the RVE's full 3D periodic constraints
 
-Per-material U6 is exact everywhere except a periodic cell:
+Everything else has been eliminated by test:
 
-| test | equilibrium gap | |
-|---|---|---|
-| two-material confined block, exact half-half | **2.28e-07** | RF exact to 7 figures |
-| same block driven through an **MPC** reference point | **1.28e-07** | forces do distribute through `*EQUATION` |
-| small periodic RVE, two-material | **2.24e-01** | fails (C3D4: 2.89e-07) |
-| small periodic RVE, **homogeneous** | fails | not a two-material effect |
+| test | result |
+|---|---|
+| two-material confined block, exact half-half split | gap **2.28e-07**, RF exact to 7 figures |
+| same block driven through an **MPC** reference point | gap **1.28e-07** — forces distribute through `*EQUATION` |
+| same block with **three-term** periodic constraints `u_m − u_s − u_RP = 0` | ratio **1.000000**, exact |
+| **the real RVE mesh** (voids, two phases, unstructured), uniform strain at every node | `<σxx>` exact: **+0.002 %** matrix, **+0.000 %** brine |
+| patch coverage over the RVE | 0 of 9798 U5 nodes lack a patch |
+| tet orientation in the RVE | 0 of 47 279 negatively oriented |
+| small periodic RVE, two-material | gap **2.24e-01** (C3D4: 2.89e-07) |
+| small periodic RVE, **homogeneous** | still fails — not a two-material effect |
 
-The confined block uses the closed-form series solution
-`σ = ε L / (L_A/M_A + L_B/M_B)` with the interface on a cell boundary
-(`V_A = V_B = 0.500000`), and U5+U6 reproduces 3.802298e5 to seven figures.
+So the element, the per-material patching, the K-weighting and the mesh are all
+fine. What is left is the RVE's **full 3D periodic constraint system**: three-term
+equations on every DOF of every face-node pair in all three directions, where
+edge and corner nodes appear in several equations at once and ccx must cascade
+them. The structured-block test exercised one face and one DOF; that passed.
 
-**The MPC hypothesis is dead.** Replacing the prescribed end displacement with
-a reference point tied by `*EQUATION` — the same mechanism the RVE uses to
-apply macroscopic strain — keeps the gap at 1.28e-07 for both C3D4 and U5+U6.
-U6's internal forces reach a reference point through a constraint correctly.
+Next: build the same block with periodicity on all three axes so edge and
+corner nodes are dependent in multiple equations, and see whether the gap
+appears. That is the last untested difference.
 
-And it is **not** a two-material effect: giving both phases identical
-properties leaves the periodic cell failing.
+**A latent bug found on the way, not the cause here.** `u6patch.f` computes
+`vol = xsj/6` with no `abs`, while the generator uses `abs(det)/6`. The RVE
+mesh happens to have no negatively-oriented tets, so it does not bite — but a
+mesh that did would silently give a patch negative volume.
 
-So what remains specific to the periodic RVE is the *form* of its constraints —
-three-term equations `u_master − u_slave − u_RP = 0` on every DOF of every
-face-node pair, rather than the two-term ties tested above — and the presence
-of voids. Those are the next things to separate.
-
-One caution for whoever resumes: **use `SpaX_PostProcess`'s `equilibrium_gap`,
-not a hand-rolled `<σ>·A` versus `RF(RP-1)` comparison.** The hand formula
-reports 5.6e-04 for plain C3D4 on a cell where the post-processor reports
-2.9e-07, so it carries its own systematic error and will mislead.
-
-The identity survives one-sided patches at a periodic face: every node of every
-element has a patch of its own material, so
-`Σ_a V_a θ_a = Σ_e V_e div(u)|_e` holds regardless, and the volume-averaged
-stress should be right — consistent with `<σxx>` looking sane while the
-reaction is 22 % short.
+**Methodological note.** Use `SpaX_PostProcess`'s `equilibrium_gap`, not a
+hand-rolled `<σ>·A` versus `RF(RP-1)`. The hand formula reports 5.6e-04 for
+plain C3D4 where the post-processor reports 2.9e-07. Gaps quoted earlier from
+the hand formula (1.37e-01, 2.88e-01) are approximate; the post-processor gives
+**2.24e-01** for the small cell.
 
 ### Two earlier claims to correct
 
