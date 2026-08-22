@@ -650,35 +650,44 @@ A second real bug found alongside it: patch element ids started at 1e8, so
 ccx's `ne = max(ne, id)` sized every element array for 100 million elements.
 Ids now continue from the deck's real maximum.
 
-### The equilibrium gap is specific to PERIODIC boundary conditions
+### The equilibrium gap: periodic-specific, and NOT the MPCs
 
-Per-material U6 is **exact** on a two-material problem and fails only with
-periodic constraints:
+Per-material U6 is exact everywhere except a periodic cell:
 
-| test | reaction | equilibrium gap |
+| test | equilibrium gap | |
 |---|---|---|
-| two-material confined block, exact half-half split | 3.802298e5 vs exact 3.802298e5 | **2.28e-07** |
-| small periodic RVE | — | **2.88e-01** |
-| same periodic cell, plain C3D4 | — | 2.9e-07 |
+| two-material confined block, exact half-half | **2.28e-07** | RF exact to 7 figures |
+| same block driven through an **MPC** reference point | **1.28e-07** | forces do distribute through `*EQUATION` |
+| small periodic RVE, two-material | **2.24e-01** | fails (C3D4: 2.89e-07) |
+| small periodic RVE, **homogeneous** | fails | not a two-material effect |
 
 The confined block uses the closed-form series solution
-`σ = ε L / (L_A/M_A + L_B/M_B)` with the interface on a cell boundary, so
-`V_A = V_B = 0.500000` exactly. U5+U6 hits it to seven figures. (An earlier
-version of this test split by centroid mid-cell, producing elements that
-straddled both materials; the +23 % / +14 % numbers it gave were an artefact
-and are withdrawn — with a clean interface C3D4 does not lock here either.)
+`σ = ε L / (L_A/M_A + L_B/M_B)` with the interface on a cell boundary
+(`V_A = V_B = 0.500000`), and U5+U6 reproduces 3.802298e5 to seven figures.
 
-**The signature points at the reaction, not the solution.** On the periodic
-cell `<σxx>` = 5.697e7, which implies RF = 5.697e5, while the measured RF is
-4.423e5 — 22 % short. The displacement field and the element stresses look
-right; what is missing is force reaching the reference points.
+**The MPC hypothesis is dead.** Replacing the prescribed end displacement with
+a reference point tied by `*EQUATION` — the same mechanism the RVE uses to
+apply macroscopic strain — keeps the gap at 1.28e-07 for both C3D4 and U5+U6.
+U6's internal forces reach a reference point through a constraint correctly.
 
-That is consistent with U6's internal forces not being fully distributed
-through the periodic `*EQUATION` constraints, and it is where to resume. Note
-the identity itself survives one-sided patches at a periodic face: each element
-still feeds exactly four patches of its own material, so
-`Σ_a V_a θ_a = Σ_e V_e div(u)|_e` holds regardless — meaning the volume-averaged
-stress should be right, which matches what is observed.
+And it is **not** a two-material effect: giving both phases identical
+properties leaves the periodic cell failing.
+
+So what remains specific to the periodic RVE is the *form* of its constraints —
+three-term equations `u_master − u_slave − u_RP = 0` on every DOF of every
+face-node pair, rather than the two-term ties tested above — and the presence
+of voids. Those are the next things to separate.
+
+One caution for whoever resumes: **use `SpaX_PostProcess`'s `equilibrium_gap`,
+not a hand-rolled `<σ>·A` versus `RF(RP-1)` comparison.** The hand formula
+reports 5.6e-04 for plain C3D4 on a cell where the post-processor reports
+2.9e-07, so it carries its own systematic error and will mislead.
+
+The identity survives one-sided patches at a periodic face: every node of every
+element has a patch of its own material, so
+`Σ_a V_a θ_a = Σ_e V_e div(u)|_e` holds regardless, and the volume-averaged
+stress should be right — consistent with `<σxx>` looking sane while the
+reaction is 22 % short.
 
 ### Two earlier claims to correct
 
