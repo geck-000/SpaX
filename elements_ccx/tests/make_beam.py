@@ -65,7 +65,7 @@ def main():
         L.append("%d, %.12e, %.12e, %.12e" % (i, x, y, z))
     if etype == "U4":
         L.append("*USER ELEMENT,TYPE=U4,NODES=4,"
-                 "INTEGRATIONPOINTS=15,MAXDOF=4")
+                 "INTEGRATIONPOINTS=1,MAXDOF=4")
     L.append("*ELEMENT,TYPE=%s,ELSET=EALL" % etype)
     for i, n in enumerate(els, 1):
         L.append("%d, %d, %d, %d, %d" % (i, n[0], n[1], n[2], n[3]))

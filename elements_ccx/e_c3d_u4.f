@@ -20,7 +20,7 @@
 !     DOF LAYOUT: node-major, 4 dof per node -- 1,2,3 displacement, 4 pressure.
 !     Declare in the deck with
 !
-!         *USER ELEMENT,TYPE=U4,NODES=4,INTEGRATIONPOINTS=15,MAXDOF=4
+!         *USER ELEMENT,TYPE=U4,NODES=4,INTEGRATIONPOINTS=1,MAXDOF=4
 !
 !     MAXDOF=4 raises mi(2) in allocation.f, which is what gives mastruct.c
 !     room for the fourth nodal dof.

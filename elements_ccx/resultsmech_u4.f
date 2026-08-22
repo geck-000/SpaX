@@ -24,8 +24,7 @@
      &     ielorien(mi(3),*),norien,ntmat_,ithermal(*),iperturb(*),
      &     iout,nmethod,nplicon(0:ntmat_,*),nplkcon(0:ntmat_,*),
      &     npmat_,ncmat_,calcul_fn,calcul_qa,nal,nelem,nelcon(2,*),
-     &     nrhcon(*),nalcon(2,*),indexe,i,j,c,imat,iorien,kode,istiff,
-     &     ihyper,mattyp,kk,m
+     &     nrhcon(*),nalcon(2,*),indexe,i,j,c,imat,kk
 !
       real*8 co(3,*),v(0:mi(2),*),stx(6,mi(1),*),
      &     elcon(0:ncmat_,ntmat_,*),
@@ -37,10 +36,9 @@
 !
       real*8 xl(3,4),um,xk,e,un,aull(12,12),bl(4,12),cc(4,4),abi(3,3),
      &     alb(12,3),bb(4,3),ul(12),pl(4),ub(3),fu(12),fp(4),
-     &     shp(4,4),xsj,xi,et,ze,gl(3,4),lv(4),bv,dbv(3),eps(3,3),
+     &     shp(4,4),xsj,gl(3,4),eps(3,3),
      &     tr,pg,sig(3,3)
 !
-      include "gauss.f"
 !
       indexe=ipkon(nelem)
       do i=1,4
@@ -124,67 +122,55 @@
         enddo
       endif
 !
-!     stresses at the integration points: sigma = 2*mu*dev(eps) + p*I, with
-!     eps taken from the linear field plus the recovered bubble.
+!     Stress. With closed-form integration there is one output point and it
+!     carries the EXACT element volume average, which is the quantity the
+!     homogenisation reads. That is exact rather than approximate because the
+!     bubble contributes nothing to the mean strain -- int grad(b) dV = 0 --
+!     so the average strain is the linear part alone, and the average pressure
+!     is (p1+p2+p3+p4)/4 since int L_i dV = V/4 for each.
 !
-      do kk=1,15
-        xi=gauss3d6(1,kk)
-        et=gauss3d6(2,kk)
-        ze=gauss3d6(3,kk)
-        call shape4tet(xi,et,ze,xl,xsj,shp,3)
-        do i=1,4
-          lv(i)=shp(4,i)
-          do j=1,3
-            gl(j,i)=shp(j,i)
-          enddo
-        enddo
-        bv=256.d0*lv(1)*lv(2)*lv(3)*lv(4)
-        do m=1,3
-          dbv(m)=256.d0*(gl(m,1)*lv(2)*lv(3)*lv(4)
-     &                  +lv(1)*gl(m,2)*lv(3)*lv(4)
-     &                  +lv(1)*lv(2)*gl(m,3)*lv(4)
-     &                  +lv(1)*lv(2)*lv(3)*gl(m,4))
-        enddo
+!     This also removes a trap. ccx's .dat reader collapses integration points
+!     by ARITHMETIC mean, which equals the volume average only for equal
+!     quadrature weights. The 15-point tet rule does not have equal weights, so
+!     the previous version was feeding the homogenisation a slightly wrong
+!     element average. One exact point cannot be wrong that way.
 !
-        do i=1,3
-          do j=1,3
-            eps(i,j)=0.d0
-          enddo
+      call shape4tet(0.25d0,0.25d0,0.25d0,xl,xsj,shp,3)
+      do i=1,4
+        do j=1,3
+          gl(j,i)=shp(j,i)
         enddo
-        do i=1,4
-          do c=1,3
-            do j=1,3
-              eps(c,j)=eps(c,j)+0.5d0*ul(3*(i-1)+c)*gl(j,i)
-              eps(j,c)=eps(j,c)+0.5d0*ul(3*(i-1)+c)*gl(j,i)
-            enddo
-          enddo
+      enddo
+!
+      do i=1,3
+        do j=1,3
+          eps(i,j)=0.d0
         enddo
+      enddo
+      do i=1,4
         do c=1,3
           do j=1,3
-            eps(c,j)=eps(c,j)+0.5d0*ub(c)*dbv(j)
-            eps(j,c)=eps(j,c)+0.5d0*ub(c)*dbv(j)
+            eps(c,j)=eps(c,j)+0.5d0*ul(3*(i-1)+c)*gl(j,i)
+            eps(j,c)=eps(j,c)+0.5d0*ul(3*(i-1)+c)*gl(j,i)
           enddo
         enddo
-!
-        pg=0.d0
-        do i=1,4
-          pg=pg+lv(i)*pl(i)
-        enddo
-        tr=(eps(1,1)+eps(2,2)+eps(3,3))/3.d0
-        do i=1,3
-          do j=1,3
-            sig(i,j)=2.d0*um*eps(i,j)
-          enddo
-          sig(i,i)=sig(i,i)-2.d0*um*tr+pg
-        enddo
-!
-        stx(1,kk,nelem)=sig(1,1)
-        stx(2,kk,nelem)=sig(2,2)
-        stx(3,kk,nelem)=sig(3,3)
-        stx(4,kk,nelem)=sig(1,2)
-        stx(5,kk,nelem)=sig(1,3)
-        stx(6,kk,nelem)=sig(2,3)
       enddo
+!
+      pg=(pl(1)+pl(2)+pl(3)+pl(4))/4.d0
+      tr=(eps(1,1)+eps(2,2)+eps(3,3))/3.d0
+      do i=1,3
+        do j=1,3
+          sig(i,j)=2.d0*um*eps(i,j)
+        enddo
+        sig(i,i)=sig(i,i)-2.d0*um*tr+pg
+      enddo
+!
+      stx(1,1,nelem)=sig(1,1)
+      stx(2,1,nelem)=sig(2,2)
+      stx(3,1,nelem)=sig(3,3)
+      stx(4,1,nelem)=sig(1,2)
+      stx(5,1,nelem)=sig(1,3)
+      stx(6,1,nelem)=sig(2,3)
 !
       nal=nal+4
 !
