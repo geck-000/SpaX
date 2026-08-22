@@ -329,3 +329,75 @@ it is correct, and it is the recommendation until someone builds a properly
 inf-sup stable element scaled for K/μ ~ 5000. `pressure_check.py` and the
 neighbour-deviation measure are the acceptance test any such element must pass,
 alongside the refinement sequence.
+
+# Next: nodal-averaged B-bar, and why it escapes the trap
+
+## Why U4 cannot be rescued
+
+`S = B_b A_bb⁻¹ B_bᵀ` is *simultaneously* the stabilisation and the spurious
+compliance. `CAPPED` scaled S down; `STIFFB` stiffened `A_bb`, which also
+shrinks S. Two different-looking fixes, one identical lever:
+
+| variant | u_x | u_y | u_z | pressure | R @0.0240 |
+|---|---|---|---|---|---|
+| MINI | 0.367 | 0.794 | 0.780 | **0.754** OK | 1.2751 |
+| CAPPED | 0.614 | 0.825 | 0.761 | **1.034** above controls | 2.2627 |
+| STIFFB | 0.653 | 0.834 | 0.781 | **1.061** above controls | 2.3241 |
+
+Any pressure stabilisation for a P1/P1-type space scales as h²/μ on dimensional
+grounds, while the physical compressibility scales as h²/K. At K/μ = 5000 the
+stabilisation exceeds the physics by ~K/μ **regardless of mesh**. Shrink it to
+protect the bulk stiffness and you fall below inf-sup. No window exists at this
+contrast — a property of the linear tet, not of this implementation, and why
+Abaqus's own C3D4H is only +19.5 % at `L_mesh` = 0.0120.
+
+## Why nodal-averaged B-bar is different
+
+Stability comes from **patch averaging**, a geometric construction, not a
+1/μ-scaled penalty, so the scaling argument does not apply. It carries **no
+pressure DOF**: a pure displacement method, so the matrix stays symmetric
+**positive definite** and incomplete-Cholesky PCG works. PARDISO becomes an
+option rather than a requirement.
+
+```
+V_a = sum over elements at node a of V_e/4            (nodal volume)
+θ_a = (1/V_a) sum over those elements of (V_e/4) div(u)|_e
+K   = K_dev (element-wise, as now) + K_vol (built from θ)
+```
+
+## Cost, measured on `LMESH_m0p0120` (1 211 410 elements, 214 539 nodes)
+
+| | equations | nnz |
+|---|---|---|
+| C3D4 | 601k | 26.5 M |
+| **nodal B-bar** | **601k** | **126.5 M** (4.8× C3D4) |
+| C3D10 | 4.9M | 343 M |
+
+2.7× fewer nonzeros than C3D10 and 8× fewer equations. Elements per node 22.6;
+1-ring 14.7 mean / **27 max**; 2-ring 70.1 mean / 132 max.
+
+## Implementation route — no `mastruct.c` change needed
+
+The objection to nodal B-bar is that `K_vol` couples a whole patch, widening
+the stencil past the element graph. Not needed here: `*USER ELEMENT` accepts up
+to **255 nodes** (`userelements.f:83`) and `mastruct.c:137` reads the node count
+from the element label, so a patch *is* expressible as an element. Our worst
+patch is 27 nodes.
+
+Two pure-displacement user elements, both `MAXDOF=3`:
+
+| type | nodes | role |
+|---|---|---|
+| `U5` | 4 | linear tet, **deviatoric only** — C3D4 minus its volumetric term |
+| `U6` | the 1-ring of one node (≤27 here) | that node's volumetric patch stiffness |
+
+One `U6` per mesh node, one `U5` per tet. Every piece of plumbing already
+exists and is exercised: label-driven `nope`, `mafillsm` dispatch,
+`resultsmech_u` recovery, and the `printoutelem.f` volume fix. A generator
+computes the 1-rings and writes the `U6` connectivity, as `u4ify.py` writes the
+periodic pressure equations.
+
+Acceptance tests unchanged — they caught every failure so far: patch test
+exact, refinement tracking Abaqus toward R = 1.9897, and the *volumetric strain*
+field checked for oscillation against the displacement controls on the same
+mesh, the way `pressure_check.py` checks pressure.

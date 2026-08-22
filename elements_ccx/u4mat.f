@@ -78,11 +78,12 @@
       real*8 xl(3,4),um,xk,aull(12,12),bl(4,12),cc(4,4),abi(3,3),
      &     alb(12,3),bb(4,3),abb(3,3),shp(4,4),xsj,vol,g(3,4),
      &     gm(3,3),gbb,det,fac,cbb,cbl,tmp2(3,4),trc,trs,theta,
-     &     stab(4,3),strow(4)
+     &     stab(4,3),strow(4),xlam
       character*132 spaxenv
-      integer istab
-      save istab
+      integer istab,ivol
+      save istab,ivol
       data istab /-1/
+      data ivol /-1/
 !
 !     gradients and volume: constant over a straight tet, so one evaluation at
 !     the centroid is exact. iflag=3 -- iflag=2 returns before the inverse
@@ -138,6 +139,48 @@
         enddo
         abb(c,c)=abb(c,c)+um*gbb
       enddo
+!
+!     THE BUBBLE'S VOLUMETRIC ENERGY.
+!
+!     abb above is deviatoric only, which leaves the bubble able to dilate
+!     inside the element at a cost of order mu. The P1 pressure resists only
+!     the projection int q div(b); everything orthogonal to that four-
+!     dimensional space is unresisted, so with K/mu = 5000 the element acquires
+!     a dilatation channel 5000x softer than the physics it bypasses. That is
+!     the 440x excess compliance measured on one element, and it is why
+!     unscaled MINI reads within 4.5% of a DRAINED cell.
+!
+!     Scaling the condensed stabilisation cannot fix this -- CCX_U4_STAB=CAPPED
+!     tried, and bought under-stabilisation instead (pressure oscillation 1.034
+!     against 0.754 for MINI, above every displacement control on the mesh).
+!     The missing term is not a constant, it is energy.
+!
+!     STIFFB adds the bubble's own volumetric stiffness, lambda (div b)^2 with
+!     lambda = K - 2mu/3, so abb scales with K rather than mu and the condensed
+!     term S = B_b abb^-1 B_b^T drops to the order of C. It slightly double
+!     counts the P1-visible part of the bubble divergence, which errs stiff --
+!     the safe direction, and small because most of div(b) is orthogonal to P1.
+!
+!     int db_c/dx_c db_d/dx_d over the tet is cbb*gm(c,d), the same integral
+!     already formed above, so the volumetric term costs nothing extra.
+!
+      if(ivol.lt.0) then
+        spaxenv=' '
+        call getenv('CCX_U4_STAB',spaxenv)
+        if(spaxenv(1:6).eq.'STIFFB') then
+          ivol=1
+        else
+          ivol=0
+        endif
+      endif
+      if(ivol.eq.1) then
+        xlam=xk-2.d0*um/3.d0
+        do c=1,3
+          do d=1,3
+            abb(c,d)=abb(c,d)+xlam*cbb*gm(c,d)
+          enddo
+        enddo
+      endif
 !
 !     couplings and compressibility
 !
