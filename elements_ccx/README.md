@@ -671,9 +671,33 @@ equations on every DOF of every face-node pair in all three directions, where
 edge and corner nodes appear in several equations at once and ccx must cascade
 them. The structured-block test exercised one face and one DOF; that passed.
 
-Next: build the same block with periodicity on all three axes so edge and
-corner nodes are dependent in multiple equations, and see whether the gap
-appears. That is the last untested difference.
+**Full 3D periodicity is also clean.** The same block made periodic on all
+three axes -- 147 three-term equations on every DOF, disjoint dependent sets so
+a master is itself dependent in another equation, forcing ccx to cascade --
+gives ratio **1.000000** for both C3D4 and U5+U6.
+
+And the RVE's own constraints are only forms already tested: 1540 three-term
+and 3080 two-term equations, every coefficient ±1, no node dependent more than
+once per DOF. The two elsets do not overlap (0 shared elements, 47 279 total,
+all converted).
+
+**One caveat on the uniform-strain result above:** prescribing every node leaves
+almost no free DOFs, so it validates the stress *output* but barely exercises
+the stiffness -- the same blind spot as a patch test. It does not clear the
+mesh.
+
+So the cause is still open. What is genuinely established is narrow but solid:
+the element is exact wherever it has been tested with free DOFs on a structured
+mesh (confined, MPC-driven, one-axis periodic, fully 3D periodic), and its
+stress output is exact on the real RVE mesh. The failure needs free DOFs *and*
+the real periodic RVE together.
+
+The next test to run is the one this session did not manage cleanly: the real
+RVE mesh with free interior DOFs and a boundary condition whose traction
+resultant is unambiguous, so `<σ>·A` can be compared against a reaction without
+lateral constraints muddying it. An affine-BC attempt failed on exactly that
+point -- the lateral `uy = uz = 0` constraints carry load, so the x-face
+reaction is not `σ·A` and the ratio was meaningless.
 
 **A latent bug found on the way, not the cause here.** `u6patch.f` computes
 `vol = xsj/6` with no `abs`, while the generator uses `abs(det)/6`. The RVE
