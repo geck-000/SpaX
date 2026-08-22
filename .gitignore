@@ -7,3 +7,4 @@ results/scf_fields/
 
 # ODB->VTK intermediates for the 3D field renders (regenerable, ~8 MB each)
 results/*.vtk
+out_*.log

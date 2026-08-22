@@ -111,14 +111,26 @@ grep -m1 "Element types" "$ROOT/$STEM.gen.log" | sed 's/^ */  /'
 # und_o2   : C3D10, stock assembly
 # und_bbar : C3D10, B-bar on the brine only
 # drn_o2   : C3D10 drained twin, identical mesh, one elastic card rewritten
+#
+# Each config is skipped if its .out.csv already exists: at ~4.9M equations a
+# full set is hours, and an interrupted run should not have to redo the ones
+# that finished.
 for w in und_o2 und_bbar drn_o2; do
-    d="$ROOT/${STEM}_$w"; rm -rf "$d"; mkdir -p "$d"
+    d="$ROOT/${STEM}_$w"
+    [ -f "$ROOT/${STEM}_$w.out.csv" ] && continue
+    rm -rf "$d"; mkdir -p "$d"
     cp "$gen"/Job-LAY-ut*.inp "$d/"
+    case "$w" in
+        drn_o2) for f in "$d"/Job-LAY-ut*.inp; do drain_deck "$f"; done ;;
+    esac
 done
-for f in "$ROOT/${STEM}_drn_o2"/Job-LAY-ut*.inp; do drain_deck "$f"; done
 
 run_one () {   # $1 = subdir tag, $2 = binary, $3 = bbar threshold or empty
     w="$ROOT/${STEM}_$1"
+    if [ -f "$ROOT/${STEM}_$1.out.csv" ]; then
+        echo "  -- $1  (already done, skipping)"
+        return 0
+    fi
     echo "  -- $1  ($2${3:+, CCX_BBAR_NU=$3})"
     SPAX_CCX="$2" python3 SpaX_CalculiX.py convert "$w" > /dev/null
     if [ -n "${3:-}" ]; then

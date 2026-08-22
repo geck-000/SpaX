@@ -625,7 +625,7 @@ disqualifying rather than merely measurable.
 
 **And it kills the cheap fixes.** B-bar is a no-op on C3D4 — one integration
 point, so the element mean of the divergence is the pointwise value
-(`0002-bbar-mean-dilatation.patch`, verified bit-identical). C3D10 has four
+(`../patches_ccx/0002-bbar-mean-dilatation.patch`, verified bit-identical). C3D10 has four
 integration points, so B-bar is *not* trivial there — but see below, it does
 not help either. What is left is nodal-averaged B-bar (needs `mastruct.c` and a
 new assembly path), a true mixed element (38 files), or the hydrostatic fluid
@@ -811,7 +811,7 @@ convergence test in `pcgsolver.c` stops once the residual max-norm falls to
 0.5 % of the mean load (`c1 = 0.005`, a local constant no input deck reaches),
 which leaves `E_eff` 0.15 % below the direct answer on the same deck.
 
-`patches/0001-iterative-tolerance.patch` exposes it as `CCX_ITER_TOL`:
+`../patches_ccx/0001-iterative-tolerance.patch` exposes it as `CCX_ITER_TOL`:
 
 | `CCX_ITER_TOL` | iters | wall | peak | `E_eff` error | equilibrium gap |
 |---|---|---|---|---|---|
