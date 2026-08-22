@@ -650,28 +650,35 @@ A second real bug found alongside it: patch element ids started at 1e8, so
 ccx's `ne = max(ne, id)` sized every element array for 100 million elements.
 Ids now continue from the deck's real maximum.
 
-### Still unresolved: the RVE equilibrium gap
+### The equilibrium gap is specific to PERIODIC boundary conditions
 
-With a valid deck, per-material U6 on `LMESH_m0p0240` gives R = 2.2377
-(+12.5 % from converged, against Abaqus C3D4H's +24.1 %) — but
-`equilibrium_gap = 1.37e-01`, so the number is **not** trustworthy.
+Per-material U6 is **exact** on a two-material problem and fails only with
+periodic constraints:
 
-The identity does hold per material:
-`Σ_a kva·θ_a = K_m Σ_e V_e div(u)|_e`, since `kva = K_m V_a` for a
-single-material patch and each element feeds four nodes. So the volume-averaged
-stress ought to match the reaction, and it does not.
+| test | reaction | equilibrium gap |
+|---|---|---|
+| two-material confined block, exact half-half split | 3.802298e5 vs exact 3.802298e5 | **2.28e-07** |
+| small periodic RVE | — | **2.88e-01** |
+| same periodic cell, plain C3D4 | — | 2.9e-07 |
 
-A two-material confined block isolates the behaviour without settling it.
-Against the exact series solution `σ = ε L / (L_A/M_A + L_B/M_B)` ≈ 3.80e5:
+The confined block uses the closed-form series solution
+`σ = ε L / (L_A/M_A + L_B/M_B)` with the interface on a cell boundary, so
+`V_A = V_B = 0.500000` exactly. U5+U6 hits it to seven figures. (An earlier
+version of this test split by centroid mid-cell, producing elements that
+straddled both materials; the +23 % / +14 % numbers it gave were an artefact
+and are withdrawn — with a clean interface C3D4 does not lock here either.)
 
-| | reaction |
-|---|---|
-| C3D4 | 4.667e5 (+23 %, locking) |
-| U5+U6 per-material | 4.322e5 (+14 %) |
+**The signature points at the reaction, not the solution.** On the periodic
+cell `<σxx>` = 5.697e7, which implies RF = 5.697e5, while the measured RF is
+4.423e5 — 22 % short. The displacement field and the element stresses look
+right; what is missing is force reaching the reference points.
 
-U6 relieves roughly a third of the locking here, so the element is doing
-something right — but the split-by-centroid makes the reference approximate,
-and it does not explain the RVE gap. That is where to resume.
+That is consistent with U6's internal forces not being fully distributed
+through the periodic `*EQUATION` constraints, and it is where to resume. Note
+the identity itself survives one-sided patches at a periodic face: each element
+still feeds exactly four patches of its own material, so
+`Σ_a V_a θ_a = Σ_e V_e div(u)|_e` holds regardless — meaning the volume-averaged
+stress should be right, which matches what is observed.
 
 ### Two earlier claims to correct
 
