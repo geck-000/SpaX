@@ -548,3 +548,55 @@ other two are insensitive to an overall volumetric scale error.
 Only **reaction against a closed-form modulus on a confined block** found it,
 and that test should run before any RVE, not after. It is now
 `tests/oedometer_m2.inp`.
+
+### Root cause: overlapping MPCs, not the method
+
+Every candidate was eliminated by test, not by argument:
+
+| hypothesis | test | verdict |
+|---|---|---|
+| U5 stiffness wrong | confined block, deviatoric only | exact, 1.0000 |
+| nodal volumes wrong | Σ V_a vs mesh volume | exact |
+| divergence operator wrong | θ_a vs analytic field | exact, 1e-4 everywhere |
+| emitted equations wrong | θ reconstructed from the deck | exact, 1e-4 everywhere |
+| `SPRING1` convention wrong | k=1, u=1 | RF = 1.0 |
+| MPC + spring condensation broken | 2 nodes, θ = 3u, k = 1, F = 1 | u = 1/9 **exact** |
+| equations over-constrain u | equations with springs removed | deviatoric exactly, 1.0000 |
+| **the operator itself** | **same operator assembled in Python** | **exact, 1.0000** |
+
+The discriminator:
+
+| patches | Python | ccx |
+|---|---|---|
+| 1 | 7.069748e+01 | **7.069748e+01** |
+| 27 (all) | 2.200587e+05 | 3.407531e+05 |
+
+**One patch is exact; the full set is 1.55× too stiff.** ccx handles a single
+`*EQUATION` + `SPRING1` pair perfectly and degrades once many equations share
+the same displacement DOFs — which is intrinsic here, because adjacent node
+patches overlap by construction. Each mesh DOF appears as an independent term
+in up to ~24 equations.
+
+This cannot be fixed in the generator. The volumetric term has to reach the
+matrix without going through ccx's MPC machinery.
+
+### The fix: make the patch a real element after all
+
+Give `K_vol^a = K V_a b⊗b` to a `U6` element spanning the patch's 1-ring —
+the original design, which the `*USER SECTION` per-set-constants limit pushed
+me away from. Two ways to supply the per-patch data:
+
+1. **Compute it inside the element.** Make node 1 of the `U6` connectivity the
+   patch centre and have `e_c3d_u6.f` build a node→element map once (cached,
+   built in a serial phase to stay safe under the OpenMP assembly), then form
+   `b` from the surrounding tets exactly as `nodalbbar.py` does. No deck
+   plumbing at all.
+2. **Feed the matrices in.** ccx's substructure path (`matrix2userelem.f`,
+   `writesubmatrix.f`) reads an externally assembled stiffness matrix as a user
+   element, and the Python assembly above already produces exactly these
+   matrices — but one file per patch makes this impractical at 36 000 patches.
+
+Route 1 is the one to build. `*USER ELEMENT` already permits 255 nodes
+(worst patch here is 27), `mastruct.c` reads the count from the label, and U5
+plus the dispatcher and volume fixes are all in place — the remaining work is
+one element routine.
