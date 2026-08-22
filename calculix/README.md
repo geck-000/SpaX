@@ -182,13 +182,14 @@ CalculiX has none, and says so rather than guessing:
 C3D4H    is an unknown element type
 ```
 
-There is no user-defined route to one. `*USER ELEMENT` exists in `ccx` but is
-the substructure/superelement interface, not a way to code a mixed
-displacement/pressure formulation from the deck; adding a genuine hybrid tet
-means changing ccx's Fortran element routines and rebuilding. So the converter
-strips the `H`, and the phase the generator marked hybrid — the brine, at
-`nu >= SPAX_HYBRID_NU` — runs on the plain displacement element that is
-supposed to volumetrically lock as `nu -> 0.5`.
+There is no route to one *from the deck*. So the converter strips the `H`, and
+the phase the generator marked hybrid — the brine, at `nu >= SPAX_HYBRID_NU` —
+runs on the plain displacement element that is supposed to volumetrically lock
+as `nu -> 0.5`.
+
+`*USER ELEMENT` is not the escape hatch it is in Abaqus, but it is also not
+nothing — see *What `*USER ELEMENT` actually is* below, which corrects an
+earlier claim in this file that it was merely the substructure interface.
 
 The CalculiX community thread on this
 ([discourse 1509](https://calculix.discourse.group/t/incompressible-material-models/1509))
@@ -630,6 +631,40 @@ not help either. What is left is nodal-averaged B-bar (needs `mastruct.c` and a
 new assembly path), a true mixed element (38 files), or the hydrostatic fluid
 cavity sketched under *Fluid elements* above.
 
+### What `*USER ELEMENT` actually is
+
+CalculiX has **no Abaqus-style UEL**: there is no separately compiled
+subroutine you supply and link, no `AMATRX`, no `RHS` callback
+(`grep -rn amatrx src/*.f src/*.c` returns nothing). Any new element means
+editing ccx's Fortran and rebuilding.
+
+But this file previously called `*USER ELEMENT` "the substructure/superelement
+interface", and that is wrong — substructures are only its fall-through branch.
+It is a genuine user-element slot, and **the plumbing a mixed element needs is
+already in place**:
+
+| what a mixed u/p element needs | where ccx already has it |
+|---|---|
+| declare a new element type | `*USER ELEMENT, TYPE=Uxxxx, NODES=n, INTEGRATIONPOINTS=p, MAXDOF=d` — same syntax as Abaqus, parsed in `userelements.f` |
+| raise the per-node DOF ceiling | `allocation.f:1109-1110`, `mi(1)=max(mi(1),iuel(2,id))` and **`mi(2)=max(mi(2),iuel(3,id))`** — `MAXDOF` raises the global limit, so `mt=mi(2)+1` grows |
+| room in the matrix structure | `mastruct.c:137` reads `ndof` per node from the element label, `:186` sets `nactdof[mt*node+k]=1` for `k=1..ndof` — **extra nodal DOFs beyond 3 are already supported** |
+| get called during assembly | `mafillsm.f:167` recognises `lakon(1:1)=='U'` and reads `ndof`/`nope` from the label; `:302` calls `e_c3d_u` |
+| get called for stress recovery | `resultsmech.f:115` calls `resultsmech_u` |
+
+`e_c3d_u.f` is a hard-coded dispatcher on the type character — `U1` is a
+Timoshenko beam, `US45`/`US3` are flat shells, anything else falls through to
+the substructure path. So **adding a mixed element means adding a branch to
+`e_c3d_u.f` and `resultsmech_u.f`**, not touching `lakon` handling across 38
+files. The global-DOF work the earlier estimate feared is done.
+
+**The one real awkwardness** is that `ndof` is uniform across every node of the
+element type, while Taylor-Hood P2/P1 — which is what `C3D10H` is — wants
+pressure on the four corner nodes only. The practical route is to declare
+`MAXDOF=4` on all ten nodes and constrain the six midside pressure DOFs to
+zero, which gives genuine P2/P1 at the cost of six dead DOFs per element.
+P2/P0 is the alternative that needs no constraining, and the section below
+shows it is too weak to be worth it.
+
 ### B-bar on C3D10: it only acts where the mesh is already wrong
 
 `0002-bbar-mean-dilatation.patch` advertises that it *"acts only at order 2
@@ -692,11 +727,10 @@ cells satisfy.
 
 Two routes, and they are not the same size of job.
 
-**A true mixed displacement/pressure element** — an extra pressure unknown per
-element entering the global system — is the invasive one. `lakon`, the element
-type string, is consumed in 38 source files; a new global DOF also touches the
-matrix structure (`mastruct.c`), the solvers and the results recovery. This is
-not a weekend.
+**A true mixed displacement/pressure element** — an extra pressure unknown
+entering the global system — was estimated here as touching 38 source files,
+because `lakon` is consumed in that many. **That estimate was wrong**, and the
+reason is the user-element slot: see below.
 
 **B-bar (mean dilatation) is the tractable one, and it is the standard fix.**
 `e_c3d.f` assembles the isotropic stiffness directly from the Lamé constants,
