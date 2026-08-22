@@ -15,9 +15,9 @@
       integer mi(*)
       integer kon(*),ipkon(*),ielmat(mi(3),*),ncmat_,ntmat_,
      &     nelcon(2,*),nelem,ne,calcul_fn,nal,i,c,nope,indexe,acen,
-     &     imat,konl(255)
+     &     konl(255)
       real*8 co(3,*),v(0:mi(2),*),elcon(0:ncmat_,ntmat_,*),
-     &     fn(0:mi(2),*),e,un,xk,va,bb(3,255),theta,fac
+     &     fn(0:mi(2),*),va,kva,bb(3,255),theta,fac
 !
       nope=ichar(lakon(nelem)(8:8))
       indexe=ipkon(nelem)
@@ -26,12 +26,9 @@
       enddo
       acen=konl(1)
 !
-      imat=ielmat(1,nelem)
-      e=elcon(1,1,imat)
-      un=elcon(2,1,imat)
-      xk=e/(3.d0*(1.d0-2.d0*un))
-!
-      call u6patch(co,kon,ipkon,lakon,ne,konl,nope,acen,va,bb,nelem)
+      call u6patch(co,kon,ipkon,lakon,ne,konl,nope,acen,va,kva,bb,
+     &     nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,
+     &     ielmat(1,nelem))
       if(va.le.0.d0) return
 !
 !     theta = b . u
@@ -42,7 +39,7 @@
           theta=theta+bb(c,i)*v(c,konl(i))
         enddo
       enddo
-      fac=xk*va*theta
+      fac=kva*theta
 !
       if(calcul_fn.eq.1) then
         do i=1,nope

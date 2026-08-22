@@ -43,7 +43,7 @@
      &     nelcon(2,*),nelem,ne,stiffness,i,j,c,d,ii,jj,nope,indexe,
      &     acen,imat,konl(255)
       real*8 co(3,*),s(60,60),ff(60),elcon(0:ncmat_,ntmat_,*),
-     &     e,un,xk,va,bb(3,255)
+     &     e,un,xk,va,kva,bb(3,255)
 !
       nope=ichar(lakonl(8:8))
       indexe=ipkon(nelem)
@@ -60,17 +60,9 @@
       enddo
       if(stiffness.eq.0) return
 !
-      imat=ielmat(1,nelem)
-      if(nelcon(1,imat).ne.2) then
-        write(*,*) '*ERROR in e_c3d_u6: element',nelem,' needs an'
-        write(*,*) '       isotropic *ELASTIC card (2 constants)'
-        call exit(201)
-      endif
-      e=elcon(1,1,imat)
-      un=elcon(2,1,imat)
-      xk=e/(3.d0*(1.d0-2.d0*un))
-!
-      call u6patch(co,kon,ipkon,lakon,ne,konl,nope,acen,va,bb,nelem)
+      call u6patch(co,kon,ipkon,lakon,ne,konl,nope,acen,va,kva,bb,
+     &     nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,
+     &     ielmat(1,nelem))
       if(va.le.0.d0) return
 !
       do i=1,nope
@@ -79,7 +71,7 @@
           do j=1,nope
             do d=1,3
               jj=3*(j-1)+d
-              s(ii,jj)=xk*va*bb(c,i)*bb(d,j)
+              s(ii,jj)=kva*bb(c,i)*bb(d,j)
             enddo
           enddo
         enddo

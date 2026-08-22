@@ -33,7 +33,8 @@
 !     from its node count.
 !
       subroutine u6patch(co,kon,ipkon,lakon,ne,konl,nope,acen,
-     &     va,bb,nelem)
+     &     va,kva,bb,nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,
+     &     imatf)
 !
 !     Shared by e_c3d_u6 (stiffness) and resultsmech_u6 (internal forces), so
 !     the two cannot drift apart -- the failure that leaves the B-bar patch
@@ -42,9 +43,12 @@
       implicit none
 !
       character*8 lakon(*)
+      integer mi(*)
       integer kon(*),ipkon(*),ne,konl(*),nope,acen,nelem,
-     &     i,j,k,c,ie,ipos,n4(4)
-      real*8 co(3,*),va,bb(3,*),xl(3,4),shp(4,4),xsj,vol,w
+     &     i,j,k,c,ie,ipos,n4(4),ielmat(mi(3),*),nelcon(2,*),
+     &     ncmat_,ntmat_,imat,imatf
+      real*8 co(3,*),va,kva,bb(3,*),xl(3,4),shp(4,4),xsj,vol,w,
+     &     elcon(0:ncmat_,ntmat_,*),ek,eun,xke
 !
       integer mapdone,maxn,nlen
       integer, allocatable, save :: nstart(:),nlist(:)
@@ -99,6 +103,7 @@
       endif
 !
       va=0.d0
+      kva=0.d0
       do i=1,nope
         do c=1,3
           bb(c,i)=0.d0
@@ -112,6 +117,19 @@
 !
       do ie=nstart(acen)+1,nstart(acen+1)
         i=nlist(ie)
+!
+!       PER-MATERIAL PATCHES. Only elements of the patch's own material
+!       contribute. Averaging theta across a phase boundary breaks the identity
+!       the stress recovery depends on -- sum_a V_a theta_a = sum_e V_e div(u)|_e
+!       holds for ONE K, and across the brine/ice interface it mixes
+!       divergences over a 1000x modulus contrast. Measured: equilibrium_gap
+!       2.5e-3 at L_mesh=0.0240 and 2.6e-1 at 0.0120 with a shared patch.
+!       Splitting by material restores it exactly, and still gives the ice its
+!       own averaging -- which it needs, because locking follows isochoric
+!       DEFORMATION, not the material's own nu, and ice next to an
+!       incompressible slab is forced to deform isochorically.
+!
+        if(ielmat(1,i).ne.imatf) cycle
         do j=1,4
           n4(j)=kon(ipkon(i)+j)
           do k=1,3
@@ -122,6 +140,17 @@
         vol=xsj/6.d0
         w=vol/4.d0
         va=va+w
+!
+!       K-weighted volume. Replacing the element divergence by the nodal one in
+!       sum_e (1/2) K_e V_e theta_e^2 gives (1/2) theta_a^2 sum_e K_e V_e/4, so
+!       a patch spanning two phases carries sum K_e V_e/4, NOT K times V_a.
+!       That matters here: an interface patch mixes K = 2.2 GPa with 9.25 GPa.
+!
+        imat=ielmat(1,i)
+        ek=elcon(1,1,imat)
+        eun=elcon(2,1,imat)
+        xke=ek/(3.d0*(1.d0-2.d0*eun))
+        kva=kva+xke*w
         do j=1,4
           ipos=0
           do k=1,nope

@@ -600,3 +600,62 @@ Route 1 is the one to build. `*USER ELEMENT` already permits 255 nodes
 (worst patch here is 27), `mastruct.c` reads the count from the label, and U5
 plus the dispatcher and volume fixes are all in place — the remaining work is
 one element routine.
+
+## Per-material patches: the design, and an unresolved deck-format failure
+
+Applying U5+U6 to the brine alone leaves interface brine nodes with one-sided
+patches, and in a slab 2-3 elements thick most brine nodes *are* interface
+nodes -- so the averaging has little to average over. Measured: R goes
+2.3843 -> 2.5602 under refinement, i.e. back to plain C3D4, while the *same
+element* gains 8.9x -> 50.9x over C3D4 on a homogeneous cantilever as the mesh
+refines. The element is fine; treating one phase is not.
+
+**The ice needs patches too.** Locking follows isochoric *deformation*, not the
+material's own ν: ice beside a near-incompressible slab is forced to deform
+almost isochorically, so C3D4 ice locks despite ν = 0.33.
+
+**But patches must not span the interface.** The stress recovery relies on
+`Σ_a V_a θ_a = Σ_e V_e div(u)|_e`, which holds for ONE K. Across a 1000×
+modulus jump it fails, and the reported stress stops matching the transmitted
+force. So: one patch per (node, material). `u6patch` filters contributing tets
+by the patch element's own material; the generator emits one `*USER ELEMENT`
+type per (material, ring size).
+
+### Status: blocked on a deck-format failure, cause not yet found
+
+The per-material deck for `LMESH_m0p0240` (93 904 patches, 58 types) is
+**internally consistent** -- a validator confirms all 93 904 elements match
+their declared `NODES` -- but ccx rejects exactly **three** of them:
+
+```
+42793,42797,64315,64872                             (an 18-node patch)
+41957,41963,63846,64085,64121,64537                 (20-node)
+41961,41962,63860,64125,64154,64490,64495,64522     (22-node)
+```
+
+each reported as *"element N is already defined"*, i.e. the continuation line
+read as a fresh element card.
+
+Ruled out by test, not by argument:
+
+| hypothesis | test | verdict |
+|---|---|---|
+| missing trailing comma on continued cards | added, then removed | no change |
+| >16 fields overflowing `textpart(16)` | dropped to 15 fields/line | no change |
+| interleaved `*USER ELEMENT` / `*ELEMENT` hitting a keyword-chain boundary | grouped all declarations first | no change |
+| a cap on user-element types | `nuel_` is counted dynamically | not a cap |
+| continuation broken in general | minimal 18-node deck, continuation line deliberately starting with a colliding element id | **parses correctly** |
+| deck internally malformed | validator over all 93 904 elements | 0 mismatches |
+
+So continuation works, the deck is well-formed, and only three specific large
+patches fail. That is where the next session should start.
+
+### Two earlier claims to correct
+
+* The shared-patch (both-phase) run gave `equilibrium_gap` 2.5e-3 at 0.0240 and
+  2.6e-1 at 0.0120, and I attributed that to the K-identity breaking across the
+  interface. **Those decks were also malformed** by the same continuation issue,
+  so the attribution is unproven -- the algebra stands, the demonstration does
+  not.
+* `R = 2.1568` (+8.4 % from converged) from that run was reported as a large
+  improvement before its equilibrium gap was checked. It is not trustworthy.
