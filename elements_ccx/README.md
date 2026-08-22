@@ -681,10 +681,35 @@ is unstructured, with rings from 4 to 32 nodes and a wide spread of element
 sizes. A reaction near zero with a plausible stress means `fn` is being
 accumulated for only a small part of the model.
 
-The next thing to check is the obvious one this points at: whether
-`resultsmech_u5` and `resultsmech_u6` are invoked for every element on this
-mesh, and whether their `fn` contributions survive. A counter in each, compared
-against the element counts in the deck, settles it in one run.
+**The recovery routines are invoked, and the stiffness assembles.** Counters
+in both showed `resultsmech_u5` passing 80 000 calls (≈2 × 47 279 elements,
+ccx calls results twice) and `resultsmech_u6` passing 20 000 (≈2 × 14 128
+patches), so every element is visited. And deleting the patch elements changes
+`<σxx>` from 5.13e5 to 2.49e6, so the patch stiffness is genuinely assembling
+and carrying the solution.
+
+| | `<σxx>` | reaction |
+|---|---|---|
+| C3D4 | 5.8196e5 | **5.8179e3** |
+| U5+U6 | 5.1345e5 | −1.2985e2 |
+| U5 only, patches deleted | 2.4912e6 | 1.1e-11 |
+
+Also ruled out: the per-material filter in `u6patch` is not rejecting tets
+(guarding it on `imatf > 0` changes nothing), and both patch elsets receive a
+material (`*SOLID SECTION` accepted, 2 materials reported).
+
+**So the fault is narrow: the stiffness is right and the recovered internal
+forces are not.** `resultsmech_u6` computes `f = kva·θ·b` where the stiffness is
+`kva·b⊗b`, which is algebraically the same operator — so either the two calls to
+`u6patch` return different `b`/`kva`, or `θ` is built from the wrong solution
+array. Both `e_c3d_u6` and `resultsmech_u6` build `konl` from
+`kon(ipkon(nelem)+i)` and call `u6patch` identically, which is what makes the
+discrepancy puzzling and is exactly where to look next.
+
+Note this is the same class of failure as the B-bar patch's `equilibrium_gap`
+of 1.0, which `u6patch` was introduced to prevent by sharing one operator
+between stiffness and recovery. Sharing the routine was necessary but evidently
+not sufficient.
 
 ### Two earlier claims to correct
 

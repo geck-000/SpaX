@@ -19,6 +19,8 @@
       real*8 co(3,*),v(0:mi(2),*),elcon(0:ncmat_,ntmat_,*),
      &     fn(0:mi(2),*),va,kva,bb(3,255),theta,fac
 !
+!$omp critical(u6cnt)
+!$omp end critical(u6cnt)
       nope=ichar(lakon(nelem)(8:8))
       indexe=ipkon(nelem)
       do i=1,nope

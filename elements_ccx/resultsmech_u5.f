@@ -47,6 +47,8 @@
       real*8 xl(3,4),um,xk,e,un,shp(4,4),xsj,vol,g(3,4),ul(12),
      &     eps(3,3),tr,sig(3,3),fu(12),fac,gh,divu
 !
+!$omp critical(u5cnt)
+!$omp end critical(u5cnt)
       indexe=ipkon(nelem)
       do i=1,4
         konl(i)=kon(indexe+i)
