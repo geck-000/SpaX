@@ -650,65 +650,41 @@ A second real bug found alongside it: patch element ids started at 1e8, so
 ccx's `ne = max(ne, id)` sized every element array for 100 million elements.
 Ids now continue from the deck's real maximum.
 
-### The equilibrium gap: isolated to the RVE's full 3D periodic constraints
+### The equilibrium gap: NOT the constraints -- the internal forces vanish
 
-Everything else has been eliminated by test:
+Corrects an earlier conclusion in this file. With **no constraints of any kind**
+-- the real RVE mesh, uniaxial displacement on the two x-faces, lateral faces
+traction-free, so the average-stress theorem gives `<σxx>·A = F` exactly:
 
-| test | result |
+| | `<σxx>·A` | reaction | ratio |
+|---|---|---|---|
+| C3D4 | 5.8196e3 | 5.8179e3 | **1.000291** |
+| U5+U6 | 5.1345e3 | **−1.2985e2** | **−39.5** |
+
+The U5+U6 reaction is essentially zero while its volume-averaged stress is
+sane. Internal forces are not reaching the constrained nodes. This reproduces
+without periodic constraints, so everything ruled out earlier about MPCs,
+three-term equations and 3D chaining was ruled out correctly but was never the
+issue -- the failure needs only the real mesh and free DOFs.
+
+What is now known:
+
+| condition | result |
 |---|---|
-| two-material confined block, exact half-half split | gap **2.28e-07**, RF exact to 7 figures |
-| same block driven through an **MPC** reference point | gap **1.28e-07** — forces distribute through `*EQUATION` |
-| same block with **three-term** periodic constraints `u_m − u_s − u_RP = 0` | ratio **1.000000**, exact |
-| **the real RVE mesh** (voids, two phases, unstructured), uniform strain at every node | `<σxx>` exact: **+0.002 %** matrix, **+0.000 %** brine |
-| patch coverage over the RVE | 0 of 9798 U5 nodes lack a patch |
-| tet orientation in the RVE | 0 of 47 279 negatively oriented |
-| small periodic RVE, two-material | gap **2.24e-01** (C3D4: 2.89e-07) |
-| small periodic RVE, **homogeneous** | still fails — not a two-material effect |
+| structured block, free DOFs, any constraint form tested | **exact** |
+| real RVE mesh, every node prescribed | stress **exact**, but no free DOFs to exercise the stiffness |
+| real RVE mesh, free DOFs, no constraints | **reaction ≈ 0** |
 
-So the element, the per-material patching, the K-weighting and the mesh are all
-fine. What is left is the RVE's **full 3D periodic constraint system**: three-term
-equations on every DOF of every face-node pair in all three directions, where
-edge and corner nodes appear in several equations at once and ccx must cascade
-them. The structured-block test exercised one face and one DOF; that passed.
+So the discriminator is the *mesh*, not the boundary conditions. The structured
+block has patches built from a regular 6-tets-per-hex subdivision; the RVE mesh
+is unstructured, with rings from 4 to 32 nodes and a wide spread of element
+sizes. A reaction near zero with a plausible stress means `fn` is being
+accumulated for only a small part of the model.
 
-**Full 3D periodicity is also clean.** The same block made periodic on all
-three axes -- 147 three-term equations on every DOF, disjoint dependent sets so
-a master is itself dependent in another equation, forcing ccx to cascade --
-gives ratio **1.000000** for both C3D4 and U5+U6.
-
-And the RVE's own constraints are only forms already tested: 1540 three-term
-and 3080 two-term equations, every coefficient ±1, no node dependent more than
-once per DOF. The two elsets do not overlap (0 shared elements, 47 279 total,
-all converted).
-
-**One caveat on the uniform-strain result above:** prescribing every node leaves
-almost no free DOFs, so it validates the stress *output* but barely exercises
-the stiffness -- the same blind spot as a patch test. It does not clear the
-mesh.
-
-So the cause is still open. What is genuinely established is narrow but solid:
-the element is exact wherever it has been tested with free DOFs on a structured
-mesh (confined, MPC-driven, one-axis periodic, fully 3D periodic), and its
-stress output is exact on the real RVE mesh. The failure needs free DOFs *and*
-the real periodic RVE together.
-
-The next test to run is the one this session did not manage cleanly: the real
-RVE mesh with free interior DOFs and a boundary condition whose traction
-resultant is unambiguous, so `<σ>·A` can be compared against a reaction without
-lateral constraints muddying it. An affine-BC attempt failed on exactly that
-point -- the lateral `uy = uz = 0` constraints carry load, so the x-face
-reaction is not `σ·A` and the ratio was meaningless.
-
-**A latent bug found on the way, not the cause here.** `u6patch.f` computes
-`vol = xsj/6` with no `abs`, while the generator uses `abs(det)/6`. The RVE
-mesh happens to have no negatively-oriented tets, so it does not bite — but a
-mesh that did would silently give a patch negative volume.
-
-**Methodological note.** Use `SpaX_PostProcess`'s `equilibrium_gap`, not a
-hand-rolled `<σ>·A` versus `RF(RP-1)`. The hand formula reports 5.6e-04 for
-plain C3D4 where the post-processor reports 2.9e-07. Gaps quoted earlier from
-the hand formula (1.37e-01, 2.88e-01) are approximate; the post-processor gives
-**2.24e-01** for the small cell.
+The next thing to check is the obvious one this points at: whether
+`resultsmech_u5` and `resultsmech_u6` are invoked for every element on this
+mesh, and whether their `fn` contributions survive. A counter in each, compared
+against the element counts in the deck, settles it in one run.
 
 ### Two earlier claims to correct
 
