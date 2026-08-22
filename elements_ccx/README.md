@@ -269,3 +269,63 @@ the pressure mass term being nonzero — true here, because the brine is
 This is a deliberate departure from the textbook element and is **not yet
 validated**. It must be measured against Abaqus C3D4H before use, exactly as
 the unscaled version was.
+
+# CAPPED also fails, for the opposite reason. Use C3D10.
+
+`CCX_U4_STAB=CAPPED` was meant to stop the stabilisation swamping the physics.
+It does — and it breaks stability instead.
+
+| element | L_mesh | R | vs converged (1.9897) |
+|---|---|---|---|
+| Abaqus C3D4H | 0.0240 | 2.4701 | +24.1 % |
+| Abaqus C3D4H | 0.0120 | 2.3786 | +19.5 % |
+| CalculiX C3D4 | 0.0240 | 2.5094 | +26.1 % |
+| CalculiX C3D4 | 0.0120 | 2.5852 | +29.9 % |
+| **CalculiX C3D10** | **0.0120** | **2.1249** | **+6.8 %** |
+| CalculiX U4 MINI | 0.0240 | 1.2751 | −35.9 % |
+| CalculiX U4 CAPPED | 0.0240 | 2.2627 | +13.7 % |
+| CalculiX U4 CAPPED | 0.0120 | 1.7020 | −14.5 % |
+
+CAPPED passes *through* the right answer between the two meshes and keeps
+softening. The coarse-mesh +13.7 % was a crossing, not agreement.
+
+## The pressure field says why — and the first metric for it was wrong
+
+The obvious checkerboard measure, RMS edge-to-edge jump over RMS field
+variation, gives 0.991 for MINI and 1.281 for CAPPED, which looks conclusive
+and is not. Controls on the same mesh: `u_y`, a physical displacement
+fluctuation, scores **1.316** — higher than either pressure. On an unstructured
+tet mesh that ratio is dominated by edge length, not oscillation.
+
+The measure that does discriminate is each node's deviation from the mean of
+its own neighbours, relative to the field variation:
+
+| | u_x | u_y | u_z | **pressure** |
+|---|---|---|---|---|
+| MINI | 0.367 | 0.794 | 0.780 | **0.754** |
+| CAPPED | 0.614 | 0.825 | 0.761 | **1.034** |
+
+MINI's pressure (0.754) sits *inside* the range of the physical fluctuation
+fields — no checkerboard, exactly as inf-sup stability promises. CAPPED's
+(1.034) exceeds every displacement control on the same mesh and is 37 % above
+MINI's. **CAPPED is under-stabilised**, which is why it is too soft and why it
+gets worse under refinement.
+
+So the two failures are complementary and neither is fixable by tuning:
+
+* **MINI** — pressure stable, but the Stokes-scaled stabilisation destroys the
+  brine's bulk stiffness (R = 1.28, within 4.5 % of a drained cell).
+* **CAPPED** — bulk stiffness restored, stability lost.
+
+## What to use instead
+
+**Plain C3D10, and nothing else needs building.** At `L_mesh` = 0.0120 it is
++6.8 % from the converged answer, against Abaqus's own C3D4H at +19.5 % and
+CalculiX C3D4 at +29.9 % on the same mesh. No new element, no MKL, no mixed
+formulation — order 2 simply does not lock enough to matter here.
+
+The cost is 8× the equations (601k → 4.9M on this cell) and it is not free, but
+it is correct, and it is the recommendation until someone builds a properly
+inf-sup stable element scaled for K/μ ~ 5000. `pressure_check.py` and the
+neighbour-deviation measure are the acceptance test any such element must pass,
+alongside the refinement sequence.
