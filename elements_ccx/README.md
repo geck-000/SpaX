@@ -401,3 +401,84 @@ Acceptance tests unchanged — they caught every failure so far: patch test
 exact, refinement tracking Abaqus toward R = 1.9897, and the *volumetric strain*
 field checked for oscillation against the displacement controls on the same
 mesh, the way `pressure_check.py` checks pressure.
+
+# U5 + nodal-averaged B-bar
+
+The route that replaces U4. Two pieces, and only one of them is an element:
+
+| file | role |
+|---|---|
+| `e_c3d_u5.f`, `resultsmech_u5.f` | `U5` — linear tet carrying the **deviatoric** stiffness only |
+| `nodalbbar.py` | builds the volumetric half out of existing ccx features |
+
+```
+K = K_dev   per tet (U5)
+  + K_vol   per node: theta_a tied to the surrounding displacements by an
+            *EQUATION, given energy by a grounded SPRING1
+```
+
+The bulk modulus never enters an element-local operator, so it cannot lock.
+Stability comes from averaging over the node patch — geometry, with no 1/μ
+scaling anywhere — which is exactly what U4 could not have: there the
+stabilisation and the spurious compliance were the same term.
+
+And there is **no pressure unknown**, so the matrix stays symmetric positive
+definite: `SOLVER=ITERATIVE CHOLESKY` works, PARDISO optional rather than
+mandatory.
+
+## Why no patch element was needed
+
+`U6` was going to be a patch element — one per node, spanning its 1-ring.
+`*USER SECTION` can attach constants to user elements, but only the *same*
+constants to a whole set, so per-patch data would have meant ~36 000
+single-element sections. Carrying θ as one extra DOF on a dummy node instead
+needs no new element at all, and ccx's MPC cascade handles the widened stencil
+that `mastruct.c` would otherwise have to build.
+
+Two details that make it practical:
+
+* **Every spring is identical.** With `t_a = √(K·V_a)·θ_a` the energy is exactly
+  `½ t_a²`, so one `*SPRING` of unit stiffness covers every patch and `V_a`
+  lives in the `*EQUATION` coefficients. Otherwise each node needs its own
+  element set.
+* **The θ node's unused DOFs must be constrained.** It carries three DOFs and
+  only DOF 1 is used; left free the matrix is singular and SPOOLES *stops
+  silently* after "Factoring the system of equations" — no error, no
+  `Job finished`, an empty `.dat`.
+
+## Stress output uses a different operator from the stiffness, deliberately
+
+`resultsmech_u5` reports `σ = 2μ dev(ε) + K div(u)` from the **element's** own
+divergence, while the stiffness contains no volumetric term at all. That is
+exact for the homogenisation because θ_a is the V-weighted mean of the
+surrounding element divergences and each element feeds four nodes:
+
+```
+sum_a V_a theta_a  =  sum_e V_e div(u)|_e
+```
+
+so the volume-*integrated* volumetric stress is identical computed either way.
+Internal forces stay deviatoric, matching the stiffness; the springs supply the
+rest of the reaction, so `equilibrium_gap` stays a real check rather than the
+~1.0 it reads under the B-bar patch.
+
+## Verification
+
+| test | U5 + nodal B-bar | for contrast |
+|---|---|---|
+| patch test, ν = 0.33, unit tet | **exact** 1.397192E+07 | — |
+| patch test, ν = 0.4999, distorted | **exact** 2.200587E+06 | — |
+| locking sweep, vs EB at ν = 0.49999 | **0.5632**, settling | C3D4 0.0155 |
+| volumetric strain smoothness | **0.456**, controls 0.412/0.620/0.608 | U4 pressure: MINI 0.754, CAPPED 1.034, STIFFB 1.061 |
+
+θ is smoother than two of the three displacement controls, which is what a
+patch average should be. This is the measure that failed both U4 repairs.
+
+**Still open:** the layered RVE against Abaqus at both mesh levels. CAPPED
+cleared the coarse point and then shot past the converged answer under
+refinement, so a single good R proves nothing — the 0.0120 point is the test.
+Also untested: the phase interface. Only the brine is split into U5 + patches;
+the ice stays ordinary C3D4, and patches at interface nodes cover brine
+elements only, so no 1000× modulus contrast is smeared. That is a design
+assertion, not yet a measurement, and a bad interface treatment would show up
+as an offset in R rather than in any of the four tests above.
