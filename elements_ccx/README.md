@@ -482,3 +482,69 @@ the ice stays ordinary C3D4, and patches at interface nodes cover brine
 elements only, so no 1000× modulus contrast is smeared. That is a design
 assertion, not yet a measurement, and a bad interface treatment would show up
 as an offset in R rather than in any of the four tests above.
+
+## STATUS: the formulation is right, the ccx delivery is not
+
+The RVE match looked perfect and is not to be believed. On `LMESH_m0p0240`,
+`R = 2.4677` against Abaqus's 2.4701 — 0.10 %, inside the 0.61 % seed spread —
+but `equilibrium_gap = 6.93e-01` and `E_z` came out 3.6 % *stiffer* than C3D4,
+which replacing volumetric stiffness with an average can never do.
+
+A confined-compression block, where the answer is closed form
+(`M = K + 4G/3`), isolates it:
+
+| mesh | free displacement DOFs | reaction / exact |
+|---|---|---|
+| 1×1×1 (6 tets, 8 nodes) | none | **1.0000** |
+| 2×2×2 (48 tets, 27 nodes) | few | 1.5485 |
+| 4×4×4 (384 tets, 125 nodes) | many | 3.0515 |
+
+The error appears **only when displacement DOFs are free** and grows with the
+interior-node count.
+
+**Every ingredient is exact in isolation:**
+
+| checked | result |
+|---|---|
+| U5 deviatoric stiffness, confined block | reaction ratio **1.0000** |
+| nodal volumes | Σ V_a = mesh volume exactly |
+| divergence operator vs an analytic field | θ_a = 1e-4 = div(u) at every node |
+| `SPRING1` convention | k = 1, u = 1 → RF = 1.0 |
+| **the whole operator, assembled in Python** | **reaction ratio 1.0000** |
+
+That last row is the one that settles it. The same `K_dev + Σ_a K V_a b⊗b`
+assembled directly reproduces the closed form exactly; routed through ccx's
+`*EQUATION` + `SPRING1` it does not. **Nodal B-bar is sound here — the delivery
+mechanism is at fault.**
+
+It is also provably a bug rather than a limitation: nodal averaging satisfies
+`Σ_a V_a θ_a² ≤ Σ_e V_e θ_e²` by Cauchy–Schwarz, so this method can only ever be
+*softer* than element-wise volumetric stiffness. Coming out 3× stiffer is
+impossible for a correct assembly.
+
+**Prime suspect**: the θ DOF carries the spring *and* is the dependent DOF of
+its own `*EQUATION`, so its stiffness entry has both indices MPC-dependent.
+`mafillsm.f` has a distinct branch for that case and it is the one path none of
+the passing tests exercises.
+
+**Routes out**, in order of preference:
+
+1. Give the volumetric term to a real element so no MPC is involved — the
+   original `U6` patch element. `*USER SECTION` blocks the obvious per-patch
+   data route, but ccx's substructure path (`matrix2userelem.f`,
+   `writesubmatrix.f`) reads an externally assembled stiffness matrix as a user
+   element, and the Python assembly above already produces exactly that matrix.
+2. Keep the MPC but move the spring off the dependent DOF.
+3. Fix the both-DOFs-dependent branch in `mafillsm.f`, if that is genuinely
+   where it is.
+
+## What the verification ladder did and did not catch
+
+Patch test, locking sweep and volumetric-strain smoothness (0.456, inside
+controls) **all passed** on the broken assembly. The patch test cannot see it
+because prescribing every displacement means the springs never carry load; the
+other two are insensitive to an overall volumetric scale error.
+
+Only **reaction against a closed-form modulus on a confined block** found it,
+and that test should run before any RVE, not after. It is now
+`tests/oedometer_m2.inp`.
