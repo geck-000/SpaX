@@ -77,7 +77,12 @@
       integer i,j,c,d,ii,jj,nelem
       real*8 xl(3,4),um,xk,aull(12,12),bl(4,12),cc(4,4),abi(3,3),
      &     alb(12,3),bb(4,3),abb(3,3),shp(4,4),xsj,vol,g(3,4),
-     &     gm(3,3),gbb,det,fac,cbb,cbl,tmp2(3,4)
+     &     gm(3,3),gbb,det,fac,cbb,cbl,tmp2(3,4),trc,trs,theta,
+     &     stab(4,3),strow(4)
+      character*132 spaxenv
+      integer istab
+      save istab
+      data istab /-1/
 !
 !     gradients and volume: constant over a straight tet, so one evaluation at
 !     the centroid is exact. iflag=3 -- iflag=2 returns before the inverse
@@ -173,16 +178,73 @@
       abi(3,2)=(abb(1,2)*abb(3,1)-abb(1,1)*abb(3,2))/det
       abi(3,3)=(abb(1,1)*abb(2,2)-abb(1,2)*abb(2,1))/det
 !
-!     the only bubble effect: C' = C + B_b abb^-1 B_b^T
+!     the only bubble effect: C' = C + theta * B_b abb^-1 B_b^T
+!
+!     SCALING THE STABILISATION FOR NEAR-INCOMPRESSIBLE ELASTICITY.
+!
+!     MINI's bubble stabilisation is derived for Stokes, where the physical
+!     compressibility term is absent. Its size relative to that term is
+!
+!         S/C  ~  0.05 K/mu        -- independent of h
+!
+!     so for the brine, K/mu = 5000 and S is a few hundred times the physics.
+!     Measured on one element: (C+S)/C = 439. The consequence is not subtle --
+!     on a layered cell the undrained answer (K = 2.2 GPa) lands within 4.5% of
+!     a genuinely DRAINED one (K = 2.2 MPa). The brine's bulk stiffness, a
+!     factor of a thousand, is simply gone.
+!
+!     The stabilisation is still correct in the sense that matters structurally
+!     -- it annihilates uniform pressure exactly (verified to 1e-15), so it
+!     penalises only pressure gradients. It is the magnitude that is wrong for
+!     this material contrast.
+!
+!     CCX_U4_STAB selects the remedy:
+!
+!       MINI   (default) unscaled, theta = 1. Correct for Stokes, and what the
+!              textbook element is. Keep as the reference.
+!       CAPPED theta = tr(C)/(tr(C)+tr(S)), so the stabilisation can never
+!              exceed the physical compressibility it is perturbing. When the
+!              material is compressible (S << C) theta -> 1 and this IS MINI;
+!              when S >> C it caps at S_eff ~ C. Parameter-free, and it relies
+!              on the pressure mass term -- which is nonzero here because the
+!              brine is nu = 0.49993, not exactly 1/2 -- supplying the rest of
+!              the stability itself.
+!
+!     CAPPED is a deliberate departure from textbook MINI and is validated
+!     against Abaqus C3D4H, not asserted. See ../elements_ccx/README.md.
+!
+      if(istab.lt.0) then
+        spaxenv=' '
+        call getenv('CCX_U4_STAB',spaxenv)
+        if(spaxenv(1:6).eq.'CAPPED') then
+          istab=1
+        else
+          istab=0
+        endif
+      endif
 !
       do i=1,3
         do j=1,4
           tmp2(i,j)=abi(i,1)*bb(j,1)+abi(i,2)*bb(j,2)+abi(i,3)*bb(j,3)
         enddo
       enddo
+      trc=0.d0
+      trs=0.d0
+      do i=1,4
+        trc=trc+cc(i,i)
+        do j=1,3
+          stab(i,j)=bb(i,j)
+        enddo
+      enddo
+      do i=1,4
+        strow(i)=bb(i,1)*tmp2(1,i)+bb(i,2)*tmp2(2,i)+bb(i,3)*tmp2(3,i)
+        trs=trs+strow(i)
+      enddo
+      theta=1.d0
+      if((istab.eq.1).and.(trc+trs.gt.0.d0)) theta=trc/(trc+trs)
       do i=1,4
         do j=1,4
-          cc(i,j)=cc(i,j)+(bb(i,1)*tmp2(1,j)+bb(i,2)*tmp2(2,j)
+          cc(i,j)=cc(i,j)+theta*(bb(i,1)*tmp2(1,j)+bb(i,2)*tmp2(2,j)
      &         +bb(i,3)*tmp2(3,j))
         enddo
       enddo

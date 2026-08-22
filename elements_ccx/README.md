@@ -204,3 +204,68 @@ decks the brine slab spans the cell and reaches the periodic faces, so its
 pressure field needs periodic coupling too. Running U4 on those cells without
 adding pressure equations across the face pairs would leave the pressure
 unconstrained where it matters most.
+
+# STATUS: U4 fails the Abaqus validation. Do not use it yet.
+
+Verified: consistency (patch test exact at ν = 0.4999 on a distorted tet) and
+absence of *shear*-regime locking (cantilever, C3D4 collapses 36×, U4 holds).
+
+**Not correct on a layered RVE.** Against the campaign cell `LMESH_m0p0240`,
+using the drained twin that is C3D4 in both codes:
+
+| | R = E_x(und)/E_x(drn) | vs Abaqus |
+|---|---|---|
+| Abaqus C3D4H / C3D4 | 2.4701 (seed spread 0.61 %) | — |
+| CalculiX C3D4 / C3D4 | 2.5094 | +1.59 % |
+| **CalculiX U4 / C3D4** | **1.2751** | **−48.4 %** |
+
+`equilibrium_gap` was 1.9e-07, so this is a clean solve of a wrong model.
+
+**The diagnosis, and one wrong turn on the way to it.** The stabilisation is
+439× the compressibility term in a single matrix entry, which looks like the
+answer and is not: it annihilates uniform pressure *exactly* (row-sum ratio
+0.99999999999999534), which is precisely what MINI should do. The element is
+structurally right.
+
+What is wrong is magnitude. The bubble penalises pressure *gradients* with a
+coefficient ~h²/μ, derived for Stokes where μ is O(1). Relative to the physical
+compressibility ~h³/K the ratio is
+
+```
+S/C  ~  0.05 K/mu        -- independent of h
+```
+
+and the brine has K/μ = 5000. The consequence, measured on the small cell:
+
+| | E_x (across layers) |
+|---|---|
+| C3D4 undrained, K = 2.2 GPa | 6.349e9 |
+| C3D10 undrained, K = 2.2 GPa | 4.738e9 |
+| **U4 undrained, K = 2.2 GPa** | **3.600e9** |
+| C3D4 **drained**, K = 2.2 MPa | 3.446e9 |
+
+**U4's undrained answer is within 4.5 % of a genuinely drained cell.** A factor
+of a thousand in bulk modulus contributes essentially nothing.
+
+**Why the earlier tests missed it, which is the lesson worth keeping.** Both
+passing tests are structurally blind to this:
+
+* the **patch test** prescribes a uniform field, so the pressure is uniform,
+  `B_bᵀp = 0`, the bubble amplitude is identically zero, and the stabilisation
+  is not exercised at all;
+* the **cantilever** is deviatoric-dominated, so the bulk modulus barely enters.
+
+Consistency and shear behaviour were verified; the bulk response under a
+*varying* pressure field was not, and that is the only regime the confined
+brine occupies. A test that passes is not evidence for behaviour it cannot see.
+
+**The remedy under test.** `CCX_U4_STAB=CAPPED` scales the stabilisation by
+`θ = tr(C)/(tr(C)+tr(S))`, so it can never exceed the physical compressibility
+it perturbs: `θ → 1` when the material is compressible (recovering textbook
+MINI exactly), and `S_eff → C` when it is not. Parameter-free, and it leans on
+the pressure mass term being nonzero — true here, because the brine is
+ν = 0.49993 rather than exactly ½. Default remains unscaled MINI.
+
+This is a deliberate departure from the textbook element and is **not yet
+validated**. It must be measured against Abaqus C3D4H before use, exactly as
+the unscaled version was.

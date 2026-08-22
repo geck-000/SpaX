@@ -689,8 +689,12 @@ def _warn_unpatched():
 # Each result block in a .dat opens with a header naming the quantity, the set
 # and the time, e.g.
 #   stresses (elem, integ.pnt.,sxx,syy,szz,sxy,sxz,syz) for set MATRIX_ONLY and time  0.1000000E+01
+# The parenthesised component list can itself contain parentheses: with a
+# user element in the model ccx writes 'displacements (v(i),i=1..ndof)'
+# instead of 'displacements (vx,vy,vz)', and [^)]* stops at the ')' of 'v(i)'
+# so the header stops matching entirely and its text reaches the float parser.
 _BLOCK_RE = re.compile(
-    r'^\s*(?P<what>[a-z][a-z .]*?)\s*(?:\([^)]*\))?\s*'
+    r'^\s*(?P<what>[a-z][a-z .]*?)\s*(?:\(.*\))?\s*'
     r'for set\s+(?P<set>\S+)\s+and time\s+(?P<time>[-+0-9.eEdD]+)\s*$')
 
 _STEP_RE = re.compile(r'^\s*S\s*T\s*E\s*P\s+(\d+)\s*$')
@@ -765,6 +769,15 @@ def read_dat(dat_path):
         if cur is None:
             return
         frame, kind, setname, per_row = cur
+        if kind in ('disp', 'force'):
+            # A user element with MAXDOF>3 raises mi(2), and ccx then prints
+            # that many components for EVERY nodal block, reference points
+            # included -- 'node p1 p2 p3 p4' where the fourth is the U4
+            # pressure. Take the width from the data rather than assuming 3
+            # components; only the first three are displacements.
+            first = next((l.split() for l in buf if l.split()), None)
+            if first is not None and len(first) > per_row:
+                per_row = len(first)
         rows = _numbers(' '.join(buf), per_row, kind, dat_path)
         if kind in ('disp', 'force'):
             frame[kind][setname] = dict(

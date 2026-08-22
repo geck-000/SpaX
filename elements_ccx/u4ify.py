@@ -34,6 +34,7 @@ Three edits:
    is symmetric indefinite and the incomplete-Cholesky PCG this repository
    defaults to cannot be used on it.
 """
+import os
 import sys
 
 
@@ -131,7 +132,7 @@ def main():
                 final.append('%d, 4, %s' % (b, repr(cb)))
             done = True
         if is_kw(ln) and kwname(ln) == '*STATIC':
-            ln = '*STATIC, SOLVER=SPOOLES'
+            ln = '*STATIC, SOLVER=' + os.environ.get('SPAX_U4_SOLVER', 'PARDISO')
         final.append(ln)
 
     open(dst, 'w').write('\n'.join(final))
@@ -139,7 +140,8 @@ def main():
     print('  %d elements retyped to U4 in ELSET=%s' % (n_u4, elset))
     print('  %d nodes carry a pressure dof' % len(u4nodes))
     print('  %d periodic pressure equations added' % len(pairs))
-    print('  solver forced to SPOOLES (the mixed system is indefinite)')
+    print('  solver set to %s (the mixed system is indefinite)'
+          % os.environ.get('SPAX_U4_SOLVER', 'PARDISO'))
 
 
 if __name__ == '__main__':
