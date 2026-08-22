@@ -55,9 +55,18 @@
       save mapdone,maxn
       data mapdone /0/
 !
+!
+!     The map is built once and then read by every thread.  The test MUST
+!     stay inside the critical region: with the cheap double-checked
+!     `if(mapdone.eq.0)` outside it, a thread could see mapdone=1 before
+!     the nstart/nlist writes were visible to it and read a half-built
+!     map, which silently corrupted va/kva/bb for that patch -- in the
+!     stiffness and in the force recovery alike.  Measured on the sphere
+!     cell: equilibrium_gap 8.7e-08 at 1-2 threads, 7.3e-01 at 8.
+!     One lock acquire per patch element is nothing next to that.
+!
+      call u6lock()
       if(mapdone.eq.0) then
-!$omp critical(u6map)
-        if(mapdone.eq.0) then
           maxn=0
           nlen=0
           do i=1,ne
@@ -97,10 +106,9 @@
             nstart(i)=nstart(i-1)
           enddo
           nstart(1)=0
-          mapdone=1
-        endif
-!$omp end critical(u6map)
+        mapdone=1
       endif
+      call u6unlock()
 !
       va=0.d0
       kva=0.d0
