@@ -621,34 +621,57 @@ force. So: one patch per (node, material). `u6patch` filters contributing tets
 by the patch element's own material; the generator emits one `*USER ELEMENT`
 type per (material, ring size).
 
-### Status: blocked on a deck-format failure, cause not yet found
+### The deck-format failure: found and fixed
 
-The per-material deck for `LMESH_m0p0240` (93 904 patches, 58 types) is
-**internally consistent** -- a validator confirms all 93 904 elements match
-their declared `NODES` -- but ccx rejects exactly **three** of them:
+**Cause: ccx's built-in element dispatch claims type names containing
+digits.** `elements.f:361` has `elseif(label(4:4).eq.'4') then nope=4`, `:358`
+has `'10' -> nope=10`, `:320` has `'20' -> nope=20`. A user element named
+`U614` therefore gets `nope=4` from the digit rule *before* the `*USER ELEMENT`
+lookup runs, so ccx reads 4 nodes instead of 18 and treats the continuation
+line as a fresh element card.
 
-```
-42793,42797,64315,64872                             (an 18-node patch)
-41957,41963,63846,64085,64121,64537                 (20-node)
-41961,41962,63860,64125,64154,64490,64495,64522     (22-node)
-```
+Only 3 of ~36 000 continuation-needing patches reported an error, because
+`"element N is already defined"` fires only when the misread line's first field
+collides with a real element id. The rest were corrupted silently.
 
-each reported as *"element N is already defined"*, i.e. the continuation line
-read as a fresh element card.
+The fix is to name types from **letters only** (`U6AA`…`U6ZZ`, 676 available
+against 58 needed), which avoids every digit-keyed rule.
 
-Ruled out by test, not by argument:
+Ruled out on the way, all by test rather than argument: a missing or extra
+trailing comma on continued cards; more than 16 fields overflowing
+`textpart(16)`; interleaving `*USER ELEMENT` with `*ELEMENT` across a
+keyword-chain boundary; a cap on the number of user element types (`nuel_` is
+dynamic); the deck being internally malformed (a validator found 0 mismatches
+over all 93 904 elements); and continuation being broken in general (a minimal
+18-node deck whose continuation line deliberately starts with a colliding
+element id parses correctly).
 
-| hypothesis | test | verdict |
-|---|---|---|
-| missing trailing comma on continued cards | added, then removed | no change |
-| >16 fields overflowing `textpart(16)` | dropped to 15 fields/line | no change |
-| interleaved `*USER ELEMENT` / `*ELEMENT` hitting a keyword-chain boundary | grouped all declarations first | no change |
-| a cap on user-element types | `nuel_` is counted dynamically | not a cap |
-| continuation broken in general | minimal 18-node deck, continuation line deliberately starting with a colliding element id | **parses correctly** |
-| deck internally malformed | validator over all 93 904 elements | 0 mismatches |
+A second real bug found alongside it: patch element ids started at 1e8, so
+ccx's `ne = max(ne, id)` sized every element array for 100 million elements.
+Ids now continue from the deck's real maximum.
 
-So continuation works, the deck is well-formed, and only three specific large
-patches fail. That is where the next session should start.
+### Still unresolved: the RVE equilibrium gap
+
+With a valid deck, per-material U6 on `LMESH_m0p0240` gives R = 2.2377
+(+12.5 % from converged, against Abaqus C3D4H's +24.1 %) — but
+`equilibrium_gap = 1.37e-01`, so the number is **not** trustworthy.
+
+The identity does hold per material:
+`Σ_a kva·θ_a = K_m Σ_e V_e div(u)|_e`, since `kva = K_m V_a` for a
+single-material patch and each element feeds four nodes. So the volume-averaged
+stress ought to match the reaction, and it does not.
+
+A two-material confined block isolates the behaviour without settling it.
+Against the exact series solution `σ = ε L / (L_A/M_A + L_B/M_B)` ≈ 3.80e5:
+
+| | reaction |
+|---|---|
+| C3D4 | 4.667e5 (+23 %, locking) |
+| U5+U6 per-material | 4.322e5 (+14 %) |
+
+U6 relieves roughly a third of the locking here, so the element is doing
+something right — but the split-by-centroid makes the reference approximate,
+and it does not explain the RVE gap. That is where to resume.
 
 ### Two earlier claims to correct
 

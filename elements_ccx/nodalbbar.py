@@ -166,15 +166,40 @@ def main():
     # One *USER ELEMENT type per (material, ring size): NODES= is fixed per
     # type. Two suffix characters give 36^2 names -- the label only has to
     # start 'U6' for the dispatcher, and positions 7-8 carry ndof and nope.
-    alnum = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
-    names = [a + c for a in alnum for c in alnum]
+    # LETTERS ONLY. ccx's built-in element dispatch keys on digits in the
+    # label: elements.f:361 has "label(4:4).eq.'4' -> nope=4", :358 has
+    # "label(4:5).eq.'10' -> nope=10", and :320 "'20' -> nope=20". A user type
+    # named U614 is therefore claimed by the nope=4 rule before the
+    # *USER ELEMENT lookup, so ccx reads 4 nodes instead of 18 and treats the
+    # continuation line as a new element -- reported as "element N is already
+    # defined" only when that line's first field happens to collide with a real
+    # element id, which is why just 3 of ~36000 showed up. 26x26 names is ample.
+    letters = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    names = [a + c for a in letters for c in letters]
     if len(bysize) > len(names):
         raise SystemExit('nodalbbar: %d (material, ring size) groups, more '
                          'than the U6 type names available' % len(bysize))
     suffix = {g: names[i] for i, g in enumerate(sorted(bysize))}
 
+    # Patch element ids continue from the deck's real maximum. Starting at
+    # 1e8 makes ccx's ne = max(ne, id) run to 100 million, and every
+    # element-sized array (ipkon, lakon, ielmat, ...) is allocated to that.
+    maxel = 0
+    mode2 = None
+    for ln in lines:
+        if iskw(ln):
+            mode2 = 'e' if ln.upper().replace(' ', '').startswith('*ELEMENT') \
+                else None
+            continue
+        if mode2 == 'e':
+            f2 = [x.strip() for x in ln.split(',') if x.strip()]
+            if f2:
+                try:
+                    maxel = max(maxel, int(f2[0]))
+                except ValueError:
+                    pass
     out, done_step, u5decl = [], False, False
-    eid = 10 ** 8
+    eid = maxel
     for ln in lines:
         if iskw(ln):
             u = ln.upper().replace(' ', '')
