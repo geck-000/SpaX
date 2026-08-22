@@ -17,7 +17,7 @@
      &     nelcon(2,*),nelem,ne,calcul_fn,nal,i,c,nope,indexe,acen,
      &     konl(255)
       real*8 co(3,*),v(0:mi(2),*),elcon(0:ncmat_,ntmat_,*),
-     &     fn(0:mi(2),*),va,kva,bb(3,255),theta,fac
+     &     fn(0:mi(2),*),va,kva,bb(3,255),theta,fac,bsum
 !
 !$omp critical(u6cnt)
 !$omp end critical(u6cnt)
@@ -41,6 +41,15 @@
           theta=theta+bb(c,i)*v(c,konl(i))
         enddo
       enddo
+      if(nelem.eq.47280) then
+        bsum=0.d0
+        do i=1,nope
+          bsum=bsum+dabs(bb(1,i))+dabs(bb(2,i))+dabs(bb(3,i))
+        enddo
+        write(*,*) ' RECV n',nope,' va',va
+        write(*,*) ' RECV kva',kva,' bsum',bsum
+        write(*,*) ' RECV th',theta,' cfn',calcul_fn
+      endif
       fac=kva*theta
 !
       if(calcul_fn.eq.1) then

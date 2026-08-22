@@ -43,7 +43,7 @@
      &     nelcon(2,*),nelem,ne,stiffness,i,j,c,d,ii,jj,nope,indexe,
      &     acen,imat,konl(255)
       real*8 co(3,*),s(60,60),ff(60),elcon(0:ncmat_,ntmat_,*),
-     &     e,un,xk,va,kva,bb(3,255)
+     &     e,un,xk,va,kva,bb(3,255),bsum
 !
       nope=ichar(lakonl(8:8))
       indexe=ipkon(nelem)
@@ -64,6 +64,14 @@
      &     nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,
      &     ielmat(1,nelem))
       if(va.le.0.d0) return
+      if(nelem.eq.47280) then
+        bsum=0.d0
+        do i=1,nope
+          bsum=bsum+dabs(bb(1,i))+dabs(bb(2,i))+dabs(bb(3,i))
+        enddo
+        write(*,*) ' STIF n',nope,' va',va
+        write(*,*) ' STIF kva',kva,' bsum',bsum
+      endif
 !
       do i=1,nope
         do c=1,3

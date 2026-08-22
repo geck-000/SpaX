@@ -681,35 +681,44 @@ is unstructured, with rings from 4 to 32 nodes and a wide spread of element
 sizes. A reaction near zero with a plausible stress means `fn` is being
 accumulated for only a small part of the model.
 
-**The recovery routines are invoked, and the stiffness assembles.** Counters
-in both showed `resultsmech_u5` passing 80 000 calls (≈2 × 47 279 elements,
-ccx calls results twice) and `resultsmech_u6` passing 20 000 (≈2 × 14 128
-patches), so every element is visited. And deleting the patch elements changes
-`<σxx>` from 5.13e5 to 2.49e6, so the patch stiffness is genuinely assembling
-and carrying the solution.
+### ROOT CAUSE: patches larger than 20 nodes overflow ccx's element matrix
 
-| | `<σxx>` | reaction |
-|---|---|---|
-| C3D4 | 5.8196e5 | **5.8179e3** |
-| U5+U6 | 5.1345e5 | −1.2985e2 |
-| U5 only, patches deleted | 2.4912e6 | 1.1e-11 |
+`mafillsm.f:69` and `e_c3d_u.f:68` declare **`s(60,60)`** — 60 DOFs, i.e. 20
+nodes at 3 DOF/node. U6 patch rings reach **32 nodes on the small cell and 37
+on the campaign cell**, so `e_c3d_u6` writes `s(ii,jj)` with indices up to 96
+into a 60×60 array. Fortran does not bounds-check: the writes land in other
+columns or past the array, and `mafillsm` reads the same out-of-bounds entries
+when assembling.
 
-Also ruled out: the per-material filter in `u6patch` is not rejecting tets
-(guarding it on `imatf > 0` changes nothing), and both patch elsets receive a
-material (`*SOLID SECTION` accepted, 2 materials reported).
+It accounts for every observation:
 
-**So the fault is narrow: the stiffness is right and the recovered internal
-forces are not.** `resultsmech_u6` computes `f = kva·θ·b` where the stiffness is
-`kva·b⊗b`, which is algebraically the same operator — so either the two calls to
-`u6patch` return different `b`/`kva`, or `θ` is built from the wrong solution
-array. Both `e_c3d_u6` and `resultsmech_u6` build `konl` from
-`kon(ipkon(nelem)+i)` and call `u6patch` identically, which is what makes the
-discrepancy puzzling and is exactly where to look next.
+| observation | explanation |
+|---|---|
+| structured block exact under every BC | its rings are ≤15 nodes = 45 DOFs, inside the limit |
+| real RVE mesh fails with free DOFs | rings to 32 nodes = 96 DOFs, past the limit |
+| stress output exact under prescribed strain | stress comes from `u6patch`, never from `s` |
+| stiffness and recovery return **bit-identical** `va`, `kva`, `b` | both call `u6patch`, which is correct — the corruption is downstream, in `s` |
+| reaction ≈ 0 with a plausible `<σxx>` | the assembled stiffness is corrupted, so the solution is too soft, while U5 still reports `K_e·div(u)` at full stiffness |
 
-Note this is the same class of failure as the B-bar patch's `equilibrium_gap`
-of 1.0, which `u6patch` was introduced to prevent by sharing one operator
-between stiffness and recovery. Sharing the routine was necessary but evidently
-not sufficient.
+Two things this clears, both of which looked like suspects and were not:
+
+* **U5-only giving RF ≈ 1.1e-11 is physically correct**, not a missing
+  assembly: deviatoric-only means `K = 0`, so `E = 9KG/(3K+G) = 0` and a
+  laterally-free bar has genuinely zero axial stiffness.
+* **`va = 2.8e-10` on a 4-node ring is correct too.** Its centre node sits in 7
+  tets but only one of that material, so per-material patching is working as
+  designed.
+
+**The fix** is to enlarge the element matrix along the whole user-element path —
+`s`, `sm` and `ff` in `mafillsm.f`, `e_c3d_u.f` and the U5/U6 routines — to at
+least `3 × max_ring`. Capping the ring instead is not an option: dropping nodes
+from a patch breaks `Σ_a V_a θ_a = Σ_e V_e div(u)|_e`, and the rank-one patch
+stiffness cannot be split across two elements.
+
+A cheap interim check, before touching ccx: regenerate with only patches of ≤20
+nodes given to U6 and the rest left as plain C3D4. That is not the right
+method, but if the equilibrium gap collapses it confirms the diagnosis end to
+end.
 
 ### Two earlier claims to correct
 
