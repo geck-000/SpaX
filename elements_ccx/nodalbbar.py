@@ -69,9 +69,21 @@ def main():
     if not els:
         raise SystemExit('nodalbbar: no elements in ELSET=%s' % elset)
 
+    # material actually assigned to the target elset, from its section card
+    matname = None
+    for ln in lines:
+        u = ln.upper().replace(' ', '')
+        if u.startswith('*SOLIDSECTION') and ('ELSET=' + elset).upper() in u:
+            for fld in ln.split(','):
+                if fld.strip().upper().startswith('MATERIAL='):
+                    matname = fld.split('=', 1)[1].strip()
+            break
+    if matname is None:
+        raise SystemExit('nodalbbar: no *SOLID SECTION for ELSET=%s' % elset)
     E = nu = None
     for i, ln in enumerate(lines):
-        if ln.strip().lower().startswith('*material, name=mat_inclusion'):
+        if ln.strip().upper().replace(' ', '').startswith(
+                '*MATERIAL,NAME=' + matname.upper()):
             for j in range(i + 1, min(i + 5, len(lines))):
                 f = [x.strip() for x in lines[j].split(',') if x.strip()]
                 if len(f) == 2 and not lines[j].startswith('*'):
@@ -115,10 +127,31 @@ def main():
         for n in b[a]:
             b[a][n] /= Va[a]
 
-    # --- emit --------------------------------------------------------------
+    # --- emit ----------------------------------------------------------
+    #
+    # The volumetric term goes in as U6 PATCH ELEMENTS, not as *EQUATION +
+    # SPRING1. That first design was verified correct in every part -- and in
+    # ccx it still came out 1.55x too stiff on a confined block, because
+    # adjacent patches overlap so each mesh dof appears as an independent term
+    # in ~24 equations and ccx's MPC machinery does not survive that. One
+    # patch alone reproduced an independent Python assembly exactly; the full
+    # set did not. As elements the MPCs are gone.
+    #
+    # *USER ELEMENT fixes NODES= per TYPE, and ring sizes vary, so one type is
+    # declared per distinct ring size.
     nodes = sorted(Va)
-    tnode = {a: maxnode + 1 + i for i, a in enumerate(nodes)}
+    ring = {a: [a] + sorted(n for n in b[a] if n != a) for a in nodes}
+    bysize = {}
+    for a in nodes:
+        bysize.setdefault(len(ring[a]), []).append(a)
+    alnum = '0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+    if len(bysize) > len(alnum):
+        raise SystemExit('nodalbbar: %d distinct ring sizes, more than the '
+                         'available U6 type suffixes' % len(bysize))
+    suffix = {sz: alnum[i] for i, sz in enumerate(sorted(bysize))}
+
     out, done_step = [], False
+    eid = 10 ** 8
     for ln in lines:
         if iskw(ln):
             u = ln.upper().replace(' ', '')
@@ -129,66 +162,33 @@ def main():
                 continue
             if u.startswith('*STEP') and not done_step:
                 done_step = True
-                out.append('** SPAX nodal-averaged B-bar: %d node patches'
+                out.append('** SPAX nodal-averaged B-bar: %d patch elements'
                            % len(nodes))
-                out.append('*NODE')
-                for a in nodes:
-                    x, y, z = co[a]
-                    out.append('%d, %.12e, %.12e, %.12e'
-                               % (tnode[a], x, y, z))
-                out.append('*ELEMENT,TYPE=SPRING1,ELSET=BBARSPR')
-                for i, a in enumerate(nodes):
-                    out.append('%d, %d' % (10 ** 8 + i, tnode[a]))
-                out.append('*SPRING,ELSET=BBARSPR')
-                out.append('1')
-                out.append('1.0')
-                # Each theta node carries three dofs but only dof 1 is used by
-                # the spring and its *EQUATION. Left free, dofs 2 and 3 are
-                # unconstrained and the matrix is singular -- SPOOLES simply
-                # stops after "Factoring the system of equations".
-                out.append('*BOUNDARY')
-                for a in nodes:
-                    out.append('%d, 2, 3, 0.' % tnode[a])
-                # Node set for reading theta back out. The printed dof 1 is
-                # t_a = sqrt(K V_a) theta_a, so divide by that to recover the
-                # nodal volumetric strain -- the field whose smoothness is the
-                # displacement-method analogue of the pressure check.
-                out.append('*NSET,NSET=BBARTHETA')
-                tl = [tnode[a] for a in nodes]
-                for i in range(0, len(tl), 8):
-                    out.append(','.join(str(x) for x in tl[i:i + 8]))
-                for a in nodes:
-                    sc = (K * Va[a]) ** 0.5
-                    terms = [(tnode[a], 1, 1.0)]
-                    for n, v in b[a].items():
-                        for d in range(3):
-                            if abs(v[d]) > 0.0:
-                                terms.append((n, d + 1, -sc * float(v[d])))
-                    out.append('*EQUATION')
-                    out.append(str(len(terms)))
-                    for nd, dof, c in terms:
-                        out.append('%d, %d, %.12e' % (nd, dof, c))
-        if iskw(ln) and ln.strip().upper().startswith('*END STEP'):
-            pass
+                for sz in sorted(bysize):
+                    t = 'U6' + suffix[sz]
+                    out.append('*USER ELEMENT,TYPE=%s,NODES=%d,'
+                               'INTEGRATIONPOINTS=1,MAXDOF=3' % (t, sz))
+                    out.append('*ELEMENT,TYPE=%s,ELSET=BBARP' % t)
+                    for a in bysize[sz]:
+                        eid += 1
+                        r = ring[a]
+                        row = [str(eid)] + [str(x) for x in r]
+                        # ccx takes at most 16 fields per line
+                        out.append(','.join(row[:16]))
+                        for k in range(16, len(row), 16):
+                            out.append(','.join(row[k:k + 16]))
+                out.append('*SOLID SECTION,ELSET=BBARP,MATERIAL=%s' % matname)
         out.append(ln)
 
-    # theta output, just before the step closes
-    for i in range(len(out) - 1, -1, -1):
-        if out[i].strip().upper().startswith('*END STEP'):
-            out[i:i] = ['*NODE PRINT,NSET=BBARTHETA', 'U']
-            break
-
     open(dst, 'w').write('\n'.join(out))
-    with open(dst + '.theta', 'w') as fh:
-        for a in nodes:
-            fh.write('%d %d %.12e\n' % (a, tnode[a], (K * Va[a]) ** 0.5))
-    ring = [len(b[a]) for a in nodes]
+    rsz = [len(ring[a]) for a in nodes]
     print('nodalbbar: %s -> %s' % (src, dst))
     print('  %d elements retyped to U5 in ELSET=%s' % (len(els), elset))
-    print('  %d node patches, 1-ring %d..%d nodes (mean %.1f)'
-          % (len(nodes), min(ring), max(ring), sum(ring) / len(ring)))
-    print('  K = %.4e from the Mat_Inclusion card' % K)
-    print('  one *SPRING of unit stiffness; V_a folded into the *EQUATIONs')
+    print('  %d U6 patch elements, ring %d..%d nodes (mean %.1f), '
+          '%d types' % (len(nodes), min(rsz), max(rsz),
+                        sum(rsz) / len(rsz), len(bysize)))
+    print('  K = %.4e from material %s' % (K, matname))
+    print('  volumetric term delivered as elements -- no MPCs')
 
 
 if __name__ == '__main__':
