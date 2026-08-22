@@ -67,11 +67,11 @@
      &     iendset(*),ialset(*),ntie,integerglob(*),nasym,
      &     nplicon(0:ntmat_,*),nplkcon(0:ntmat_,*),npmat_
 !
-      real*8 co(3,*),xl(3,4),veold(0:mi(2),*),s(60,60),bodyfx(3),
-     &     ff(60),p1(3),p2(3),rhcon(0:1,ntmat_,*),reltime,prop(*),
+      real*8 co(3,*),xl(3,4),veold(0:mi(2),*),s(150,150),bodyfx(3),
+     &     ff(150),p1(3),p2(3),rhcon(0:1,ntmat_,*),reltime,prop(*),
      &     alcon(0:6,ntmat_,*),alzero(*),orab(7,*),t0(*),t1(*),
      &     xloadold(2,*),vold(0:mi(2),*),xload(2,*),omx,e,un,um,
-     &     coefmpc(*),sm(60,60),sti(6,mi(1),*),stx(6,mi(1),*),
+     &     coefmpc(*),sm(150,150),sti(6,mi(1),*),stx(6,mi(1),*),
      &     thicke(mi(3),*),doubleglob(*),
      &     plicon(0:2*npmat_,ntmat_,*),plkcon(0:2*npmat_,ntmat_,*),
      &     xstiff(27,mi(1),*),dtime,ttime,time,

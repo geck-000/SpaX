@@ -131,7 +131,7 @@
       stx(5,1,nelem)=sig(1,3)
       stx(6,1,nelem)=sig(2,3)
 !
-      nal=nal+4
+      nal=nal+3*4
 !
       return
       end

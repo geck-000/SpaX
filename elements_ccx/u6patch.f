@@ -137,7 +137,7 @@
           enddo
         enddo
         call shape4tet(0.25d0,0.25d0,0.25d0,xl,xsj,shp,3)
-        vol=xsj/6.d0
+        vol=dabs(xsj)/6.d0
         w=vol/4.d0
         va=va+w
 !

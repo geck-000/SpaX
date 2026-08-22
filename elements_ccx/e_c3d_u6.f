@@ -42,10 +42,24 @@
       integer kon(*),ipkon(*),ielmat(mi(3),*),ncmat_,ntmat_,
      &     nelcon(2,*),nelem,ne,stiffness,i,j,c,d,ii,jj,nope,indexe,
      &     acen,imat,konl(255)
-      real*8 co(3,*),s(60,60),ff(60),elcon(0:ncmat_,ntmat_,*),
-     &     e,un,xk,va,kva,bb(3,255),bsum
+      real*8 co(3,*),s(150,150),ff(150),elcon(0:ncmat_,ntmat_,*),
+     &     e,un,xk,va,kva,bb(3,255)
 !
       nope=ichar(lakonl(8:8))
+!
+!     SPAX: hard capacity guard.  The patch spans the centre node's whole
+!     1-ring, so nope follows mesh valence.  s is dimensioned (150,150)
+!     in mafillsm and along the whole user-element path; overrunning it
+!     used to corrupt the assembly silently.  Stop loudly instead.
+!
+      if(3*nope.gt.150) then
+        write(*,*) '*ERROR in e_c3d_u6: patch element ',nelem
+        write(*,*) '       spans ',nope,' nodes (',3*nope,' DOF).'
+        write(*,*) '       The element matrix holds 150 DOF (50 nodes).'
+        write(*,*) '       Raise nduser in mafillsm.f and the s/sm/ff'
+        write(*,*) '       dimensions in the e_c3d_u* family together.'
+        call exit(201)
+      endif
       indexe=ipkon(nelem)
       do i=1,nope
         konl(i)=kon(indexe+i)
@@ -64,14 +78,6 @@
      &     nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,
      &     ielmat(1,nelem))
       if(va.le.0.d0) return
-      if(nelem.eq.47280) then
-        bsum=0.d0
-        do i=1,nope
-          bsum=bsum+dabs(bb(1,i))+dabs(bb(2,i))+dabs(bb(3,i))
-        enddo
-        write(*,*) ' STIF n',nope,' va',va
-        write(*,*) ' STIF kva',kva,' bsum',bsum
-      endif
 !
       do i=1,nope
         do c=1,3
