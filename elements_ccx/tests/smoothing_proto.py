@@ -49,6 +49,26 @@ def dmat(K, G, part='full'):
     return vol + dev
 
 
+_JIT_SHRUNK = {}
+
+
+def _tets_of(n):
+    """Connectivity only, for the jitter quality check."""
+    def nid(i, j, k):
+        return (i * (n + 1) + j) * (n + 1) + k
+    split = ((0, 1, 3, 7), (0, 1, 7, 5), (0, 5, 7, 4),
+             (0, 3, 2, 7), (0, 6, 4, 7), (0, 2, 6, 7))
+    t = []
+    for i in range(n):
+        for j in range(n):
+            for k in range(n):
+                c = [nid(i + (v & 1), j + ((v >> 1) & 1), k + ((v >> 2) & 1))
+                     for v in range(8)]
+                for sp_ in split:
+                    t.append([c[sp_[0]], c[sp_[1]], c[sp_[2]], c[sp_[3]]])
+    return np.array(t)
+
+
 def mesh_box(n, slab_lo, slab_hi, jitter=0.0, seed=7, geom=None):
     """n^3 hexes, 6 tets each (Freudenthal).  Returns nodes, tets, mat.
 
@@ -70,7 +90,29 @@ def mesh_box(n, slab_lo, slab_hi, jitter=0.0, seed=7, geom=None):
         key = np.round(np.mod(nodes * n, n)).astype(int)      # 0..n-1, wrapped
         uniq, inv = np.unique(key, axis=0, return_inverse=True)
         d = (rng.random((len(uniq), 3)) - 0.5) * 2.0 * jitter * h
-        nodes = nodes + d[inv]
+        # QUALITY CONTROL, and it is not optional.  At jitter 0.3 this mesh
+        # TANGLES: 1 inverted tet at n=6, 14 at n=16.  grads() silently flips
+        # their node order, which makes the volumes positive again and hides
+        # it, but the tets still overlap their neighbours, the mesh is no
+        # longer a partition of the cell, and every scheme -- C3D4 included --
+        # then fails its own patch test (measured: fluc 1.4e-3 and a residual
+        # of 0.21 against the exact affine field, at interior nodes).
+        # Shrink the amplitude until no tet is inverted and the worst is still
+        # a reasonable fraction of the mean, exactly as make_block.py does.
+        base = nodes.copy()
+        amp, qmin = 1.0, float(os.environ.get('SPAX_MESH_QMIN', 0.15))
+        for _ in range(40):
+            nodes = base + amp * d[inv]
+            p4 = nodes[_tets_of(n)]
+            vv = np.linalg.det(p4[:, 1:, :] - p4[:, :1, :]) / 6.0
+            if vv.min() > 0 and vv.min() >= qmin * vv.mean():
+                break
+            amp *= 0.8
+        else:
+            raise RuntimeError('mesh_box: cannot jitter n=%d without tangling'
+                               % n)
+        if amp < 1.0:
+            _JIT_SHRUNK[(n, jitter, seed)] = amp
 
     def nid(i, j, k):
         return (i * (n + 1) + j) * (n + 1) + k
@@ -459,8 +501,13 @@ def run(scheme, n, slab, props, eps=1e-3, stab=0.0, bubble=False,
     un = u[:3 * nn]
     aff = np.zeros_like(un)
     aff[0::3] = eps * nodes[:, 0]
-    fluct = un - aff
-    fluct = fluct - fluct.mean()
+    # Remove the rigid translation PER COMPONENT.  u is interleaved
+    # [ux,uy,uz,...], so a single scalar mean mixes the three directions and
+    # leaves part of the translation that pinning q[0:3] = 0 introduced --
+    # which showed up as C3D4 apparently failing its own patch test on a
+    # jittered mesh (fluc 2e-3 where the answer is 0).
+    fluct = (un - aff).reshape(-1, 3)
+    fluct = fluct - fluct.mean(axis=0)
     fl = np.abs(fluct).max() / eps
 
     # PRESSURE OSCILLATION, measured rather than assumed.
@@ -690,3 +737,157 @@ def fbar_es_operators(nodes, tets, mat, g, vol, cycles, m, jinput=None):
         Ac = (Ac @ A).tocsr()
     S = (E @ Ac @ R @ E).tocsr() if jinput == 'edge' else (E @ Ac).tocsr()
     return sel, idx, ekeys, edges, Vh, E, S, R
+
+
+# ==========================================================================
+# F-barES-FEM-T4 AT FINITE STRAIN -- the paper's element, not its linearisation
+# ==========================================================================
+#
+# Onishi, Iida & Amaya, IJCM 15(7) 1845003 (2018), eqs. (1)-(18), elastic
+# (the Prony terms of eq. (13) dropped, g_i = 0, so T^dev = 2G H^dev).
+# Read off the typeset equations, not a text extraction -- pdftotext drops
+# every tilde and bar in this paper and the diacritics carry the meaning.
+#
+# Two readings that the glyphs settle, and that a text dump does not:
+#
+#   eq. (6)  the input to the first cycle is `Elem_e J`, with NO tilde: the
+#            raw element Jacobian.  eq. (10) then states outright that the
+#            whole chain is a weighted mean of the raw `Elem_e J`, which is
+#            what makes it the single linear operator S = E A^c.
+#   eq. (19) the push-forward is `Edge_h Ftilde^-1`, WITH a tilde, not Fbar^-1.
+#            So the kinematics -- F~, the stretching D~, the push-forward and
+#            the volume -- are the ES-FEM motion throughout, and the only
+#            F-bar modification is that T is evaluated from the recombined F
+#            of eq. (11).  That is de Souza Neto's F-bar exactly.
+#
+# The tangent of eq. (19) is "omitted here" in the paper (it forwards to
+# Onishi et al. 2017, which we do not have), so deriving it would be the one
+# place a mistake could hide.  It is not needed: the internal force is fully
+# specified by eqs. (1)-(18), and a modified Newton iteration driven by the
+# small-strain operator converges to the same displacement field that the
+# consistent tangent would.  The converged answer is the paper's element; only
+# the path to it differs.
+class FbarNL:
+    """Internal force of F-barES-FEM-T4(c), finite strain, Hencky elastic."""
+
+    def __init__(self, nodes, tets, mat, g, vol, props, cycles):
+        self.tets, self.g, self.props = tets, g, props
+        self.nn = len(nodes)
+        self.parts = []
+        for m in sorted(set(int(x) for x in mat)):
+            sel, idx, ekeys, edges, Vh, E, S, R = fbar_es_operators(
+                nodes, tets, mat, g, vol, cycles, m)
+            # (edge, element, weight) incidence of eq. (1): every element
+            # hands V_e/6 to each of its 6 edges.
+            hh, ee, ww = [], [], []
+            Ec = E.tocoo()
+            for h, j, w in zip(Ec.row, Ec.col, Ec.data):
+                hh.append(h); ee.append(j); ww.append(w)
+            hh = np.array(hh); ee = np.array(ee); ww = np.array(ww)
+            gsel = g[sel][ee]                        # (L,4,3)
+            nodesel = tets[sel][ee]                  # (L,4)
+            dof = (nodesel[:, :, None] * 3 + np.arange(3)).ravel()
+            self.parts.append(dict(sel=sel, E=E, S=S, Vh=Vh, K=props[m][0],
+                                   G=props[m][1], hh=hh, ww=ww, gsel=gsel,
+                                   dof=dof))
+
+    def force(self, u):
+        U = u[:3 * self.nn].reshape(-1, 3)
+        # eq. (1) input: the element deformation gradient, F = I + grad u
+        F = np.einsum('eai,eaj->eij', U[self.tets], self.g)
+        F += np.eye(3)
+        J = np.linalg.det(F)
+        f = np.zeros(3 * self.nn)
+        for p in self.parts:
+            sel, E, S, Vh = p['sel'], p['E'], p['S'], p['Vh']
+            K, G = p['K'], p['G']
+            # eq. (1): edge-smoothed F~
+            Ftil = (E @ F[sel].reshape(len(sel), 9)).reshape(-1, 3, 3)
+            Jtil = np.linalg.det(Ftil)                       # eq. (5)
+            # eqs. (6)-(8): c cycles elem->node->elem, then elem->edge
+            Jbar = S @ J[sel]
+            # eqs. (4), (9), (11):  F = Jbar^(1/3) * Jtil^(-1/3) * F~
+            Fbar = (Jbar / Jtil)[:, None, None] ** (1.0 / 3.0) * Ftil
+            # Hencky strain of the recombined F, eq. (12) note
+            B = Fbar @ np.transpose(Fbar, (0, 2, 1))
+            w, V = np.linalg.eigh(B)
+            H = np.einsum('hij,hj,hkj->hik', V, 0.5 * np.log(w), V)
+            trH = np.trace(H, axis1=1, axis2=2)
+            # eqs. (12)-(13), elastic: T = K tr(H) I + 2G dev(H)
+            Tstr = (K * trH)[:, None, None] * np.eye(3) \
+                + 2.0 * G * (H - (trH / 3.0)[:, None, None] * np.eye(3))
+            # eq. (17): paired with D~, pushed forward by F~^-1, over the
+            # current volume of the ES-FEM motion, v = J~ V^ini
+            A = np.linalg.solve(Ftil, Tstr)                  # (F~^-1 T)[k,p]
+            v = Jtil * Vh
+            # f_{P:p} = N~^ini_{P,k} (F~^-1 T)_{kp} v, accumulated per (h,e)
+            contrib = (p['ww'] * v[p['hh']])[:, None, None] \
+                * (p['gsel'] @ A[p['hh']])
+            f += np.bincount(p['dof'], weights=contrib.ravel(),
+                             minlength=3 * self.nn)
+        return f
+
+
+def run_nl(scheme, n, slab, props, eps=1e-3, jitter=0.0, geomname='sphere',
+           tol=1e-10, maxit=60, verbose=False):
+    """Periodic cell driven by macroscopic eps_xx, solved with the finite-strain
+    F-barES-FEM-T4 internal force and a modified Newton iteration whose
+    iteration matrix is the small-strain operator of the same scheme."""
+    cyc = int(scheme.split('_')[-1])
+    nodes, tets, mat = mesh_box(n, slab[0], slab[1], jitter,
+                                geom=GEOM[geomname])
+    g, vol = grads(nodes, tets)
+    faces, patch = topology(tets, mat)
+    Klin = assemble('fbar_%d' % cyc, nodes, tets, mat, g, vol, faces, patch,
+                    props, 0.0, False, None)
+    nl = FbarNL(nodes, tets, mat, g, vol, props, cyc)
+
+    nn = len(nodes)
+    ndof = Klin.shape[0]
+    tolp = 1e-9
+    base = np.mod(np.round(nodes * 1e9) / 1e9, 1.0)
+    base[np.abs(base - 1.0) < tolp] = 0.0
+    key = np.round(base * 1e7).astype(np.int64)
+    uniq, inv = np.unique(key, axis=0, return_inverse=True)
+    first = np.full(len(uniq), -1, dtype=int)
+    for i in range(nn):
+        if first[inv[i]] < 0:
+            first[inv[i]] = i
+    master = first[inv]
+    shift = nodes - nodes[master]
+    nm = len(uniq)
+    rows, cols, vals = [], [], []
+    for i in range(nn):
+        for c in range(3):
+            rows.append(3 * i + c); cols.append(3 * inv[i] + c); vals.append(1.0)
+    Tm = sp.coo_matrix((vals, (rows, cols)), shape=(ndof, 3 * nm)).tocsr()
+    a = np.zeros(ndof)
+    a[0:3 * nn:3] = eps * shift[:, 0]
+
+    keep = np.ones(3 * nm, dtype=bool)
+    keep[0:3] = False
+    Kr = (Tm.T @ Klin @ Tm).tocsr()[keep][:, keep].tocsc()
+    lu = spl.splu(Kr)
+
+    q = np.zeros(3 * nm)
+    f0 = np.linalg.norm((Tm.T @ nl.force(a))[keep]) or 1.0
+    for it in range(maxit):
+        u = Tm @ q + a
+        r = (Tm.T @ nl.force(u))[keep]
+        rn = np.linalg.norm(r) / f0
+        if verbose:
+            print('      it %2d  |r| = %.3e' % (it, rn))
+        if rn < tol:
+            break
+        q[keep] -= lu.solve(r)
+    else:
+        raise RuntimeError('modified Newton did not converge, |r| = %.3e' % rn)
+
+    u = Tm @ q + a
+    c1111 = (a @ nl.force(u)) / eps ** 2
+    un = u[:3 * nn]
+    aff = np.zeros_like(un)
+    aff[0::3] = eps * nodes[:, 0]
+    fl = (un - aff).reshape(-1, 3)
+    fl = fl - fl.mean(axis=0)
+    return c1111, np.abs(fl).max() / eps, it, rn

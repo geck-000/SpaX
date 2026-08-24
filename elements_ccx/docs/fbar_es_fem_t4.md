@@ -125,7 +125,7 @@ with `W = diag(ᵸV)`.  Test space `E D_div`, trial space `E A^c D_div`.
 At `c = 0` the two spaces coincide and the scheme collapses to plain selective
 ES-FEM-T4, symmetric.  That is the only `c` for which symmetry is legitimate.
 
-## 4. Why the symmetric form fails, and by how much
+## 4. The Petrov-Galerkin form, and what it does not change
 
 The obvious-looking Galerkin assembly `B̄ᵀ D B̄` is not what section 2f
 specifies, and the difference is measurable.  What it is *not* is a change in
@@ -147,19 +147,8 @@ count at `c ≥ 1`.  An ideal constraint *count* is not inf-sup stability,
 though, which is the open question in section 6.
 
 What the Petrov-Galerkin form changes is the distribution of internal force and
-energy across those modes, not which modes exist.  Measured on the brine-sphere
-cell (n=8, jitter 0.3, K/G 500), displacement fluctuation per unit applied
-strain:
-
-| c | `B̄ᵀDB̄` (wrong) | `B̃ᵀDB̄` (paper) |
-|---|---|---|
-| 0 | 0.51 | 0.51 (identical by construction) |
-| 1 | 2.29 | 1.77 |
-| 2 | 3.19 | 2.38 |
-
-The correction is real and in the right direction, and it is required by
-eq. (17) regardless of its size.  It is not on its own sufficient to reverse
-the trend with `c`.  See section 6.
+energy across those modes, not which modes exist.  It is required by eq. (17)
+regardless of how large the difference turns out to be.
 
 **Consequence for a CalculiX implementation.** ccx calls PARDISO with
 `mtype = -2`, symmetric indefinite, and stores one triangle.  A correct
@@ -169,7 +158,7 @@ This is a second, independent blocker on top of the `lakon(8:8)` 255-node
 connectivity cap, which the `E A^c` stencil (~2c+1 element rings) breaches at
 `c ≥ 2` and is already tight at `c = 1`.
 
-## 5. The envelope the paper actually claims
+## 5. The envelope the paper claims for itself
 
 Verbatim, section 3.1:
 
@@ -179,9 +168,11 @@ Verbatim, section 3.1:
 
 and the validation material is `E = 1 MPa, ν = 0.3` instantaneous relaxing to
 `ν ≈ 0.49` long-term.  **ν = 0.49 is K/G ≈ 50.**  Our operating point is
-K/G = 500 (ν = 0.499); brine as specified is K/G = 5000 (ν = 0.4999).  Every
-published result for this method sits one to two orders of magnitude below
-where we need it, and `c` is stated to be ν-dependent with no formula given.
+K/G = 500 (ν = 0.499); brine as specified is K/G = 5000 (ν = 0.4999).  So we
+are asking the method for one to two orders of magnitude beyond anything the
+authors published, with `c` stated to be ν-dependent and no formula given for
+it.  That is a reason to measure our own operating point rather than to assume
+either outcome; section 7 does.  It is not, on the evidence there, a wall.
 
 ## 6. Verification
 
@@ -196,6 +187,20 @@ where we need it, and `c` is stated to be ν-dependent with no formula given.
   ES-FEM-T4 exactly, as it must.
 * **V4** the constraint-count table in section 4.
 
+`elements_ccx/tests/verify_fbar_nl.py` checks the finite-strain element of
+section 2 against closed-form answers, all passing:
+
+* **N1** `f(0) = 0`; **N2** `f(rigid translation) = 0`.
+* **N3a** unjittered box, free surfaces, uniform stretch: interior nodal
+  residual vanishes to 1e-13 relative, and the resultant on the `x = 1` face
+  matches the analytic Hencky Cauchy stress `(K + 4G/3) ln λ` to 1e-13, for
+  `c = 0..3` at both `λ = 1.001` and `λ = 1.2`.  A 20% stretch, so this
+  exercises eqs. (1)-(18) well away from the linear regime.
+* **N3b** jittered periodic cell, homogeneous: the affine field is recovered
+  with fluctuation 2e-12.
+* **N4** the finite-strain element converges to its own small-strain reduction
+  at O(eps): 6e-6 relative in C1111 at `eps = 1e-5`, for `c = 0, 1, 2`.
+
 The reading ambiguity in eq. (6) — the input to the first cycle is written
 `ᵉJ̃`, with the tilde the paper otherwise reserves for smoothed quantities, so
 it is either the raw element Jacobian `det(ᵉF)` or an element restriction of
@@ -205,61 +210,73 @@ changes no conclusion below.  `elem` is the default.
 
 ## 7. What it does, measured
 
-Brine sphere `r = 0.30` in ice, periodic cell, jitter 0.3, `n = 8`.  `fluc` is
-max displacement fluctuation per unit applied strain; `p-sch` is the scheme's
-own pressure field, jump across brine-brine faces over mean `|p|`.
+**A retraction first.**  An earlier version of this section reported that the
+method comes apart above K/G = 50 — fluctuation growing monotonically with `c`
+and 29% of C1111 lost by `c = 3` — and concluded that it could not reach our
+operating point.  That was wrong, and the cause was not the element.  At
+`jitter = 0.3` the prototype's structured mesh **tangles**: one inverted tet at
+`n = 6`, fourteen at `n = 16`.  `grads()` silently flipped their node order,
+which restored positive volumes and hid it, but the tets still overlapped their
+neighbours, so the mesh was not a partition of the cell.  On that mesh nothing
+passes its own patch test — C3D4 included, at `fluc` 1.4e-3 with a residual of
+0.21 against the exact affine field, at interior nodes.  `mesh_box` now shrinks
+the jitter amplitude until no tet is inverted and the worst is at least
+`SPAX_MESH_QMIN` (0.15) of the mean, the same guard `make_block.py` has carried
+since the acceptance suite hit this.  Every number below is remeasured.
 
-| K/G | ν | `fluc` c=1 / 2 / 3 | `p-sch` c=0 → 3 | C1111 loss c=0 → 3 |
+Brine sphere `r = 0.30` in ice, periodic cell, requested jitter 0.3 (shrunk to
+0.64 of that at `n = 8` by the quality guard), `n = 8`.  `fluc` is max
+displacement fluctuation per unit applied strain; `p-sch` is the scheme's own
+pressure field, jump across brine-brine faces over mean `|p|`.
+
+| K/G | scheme | C1111 | fluc | p-sch |
 |---|---|---|---|---|
-| 10   | 0.458  | 0.41 0.41 0.41 | 0.081 → 0.018 | −7% |
-| 25   | 0.481  | 0.41 0.41 0.41 | 0.076 → 0.010 | −7% |
-| 50   | 0.4901 | 0.42 0.41 0.42 | 0.071 → 0.006 | −6% |
-| 100  | 0.495  | 0.55 0.68 0.75 | 0.066 → 0.004 | −6% |
-| 250  | 0.498  | 1.05 1.38 1.61 | 0.060 → 0.003 | −7% |
-| 500  | 0.499  | 1.77 2.38 2.86 | 0.057 → 0.002 | −9% |
-| 1000 | 0.4995 | 3.03 4.08 5.11 | 0.054 → 0.002 | −12% |
-| 5000 | 0.4999 | 10.67 13.26 16.05 | 0.043 → 0.004 | −29% |
+| 500  | c3d4   | 2.6926e+08 | 0.44 | 0.193 |
+| 500  | ns_vol | 2.5067e+08 | 0.45 | 0.009 |
+| 500  | fbar_0 | 2.5788e+08 | 0.54 | 0.049 |
+| 500  | fbar_1 | 2.4946e+08 | 0.51 | 0.005 |
+| 500  | fbar_2 | 2.4841e+08 | 0.44 | 0.002 |
+| 500  | fbar_3 | 2.4814e+08 | 0.41 | 0.001 |
+| 5000 | c3d4   | 2.5110e+09 | 0.38 | 0.139 |
+| 5000 | ns_vol | 2.4141e+09 | 0.92 | 0.004 |
+| 5000 | fbar_0 | 2.4527e+09 | 0.67 | 0.035 |
+| 5000 | fbar_1 | 2.4102e+09 | 1.07 | 0.002 |
+| 5000 | fbar_2 | 2.4046e+09 | 0.61 | 0.001 |
+| 5000 | fbar_3 | 2.4032e+09 | 0.47 | 0.000 |
 
-Two things are true at once, and both are reproduced faithfully:
+Both of the paper's claims now hold at our operating point and beyond it:
 
-1. **The pressure claim holds everywhere.**  `p-sch` falls monotonically with
-   `c` at every K/G, which is the paper's Fig. 6.  Nothing about the
-   checkerboard suppression fails at high K/G.
-2. **The displacement claim holds only inside the paper's envelope.**  Up to
-   K/G = 50 — precisely the `ν = 0.49 at most` of section 5 — `fluc` is flat in
-   `c`, which is the paper's "regardless of the number of cyclic smoothings".
-   From K/G = 100 it starts to drift, and by K/G = 5000 it is an order of
-   magnitude out with 29% of the macroscopic stiffness gone.
+1. **Pressure.**  `p-sch` falls monotonically with `c` at every K/G, by two
+   orders of magnitude from C3D4 by `c = 3`.  This is Fig. 6 of the paper.
+2. **Displacement.**  `fluc` is not degraded by `c`; at K/G = 5000 it is
+   non-monotone and `c = 3` (0.47) is *better* than `c = 0` (0.67) and better
+   than NS-FEM's 0.92.  C1111 moves only −2.0% from `c = 0` to `c = 3` at
+   K/G = 5000, against −29% on the tangled mesh.  This is the paper's "regardless
+   of the number of cyclic smoothings".
 
-A 29% loss of C1111 in a cell that is ~12% brine by volume is not locking
-relief; no redistribution of compliance within the soft phase can produce it.
-The oscillation has not been removed, it has been **moved**: out of the
-pressure, which is now averaged over a `2c+1`-ring stencil and therefore looks
-smooth by construction, and into the displacement, where `ker(G_trial)` — 625
-of 933 modes at `c ≥ 1`, section 4 — does not penalise it.  A smooth pressure
-field is a necessary condition for stability, not a sufficient one, and this is
-what the difference looks like.
+At K/G = 5000, `fbar_3` is the best arm in the prototype: it is 4.3% softer
+than C3D4 (which locks, so softer is the right direction), it carries the
+smallest fluctuation of any smoothed scheme, and its pressure field is
+effectively oscillation-free.  It beats the incumbent `ns_vol` on all three.
 
-## 8. Conclusion for the campaign
+The paper's stated envelope (section 5, `ν = 0.49 at most`) is a statement
+about where the authors validated `c`, not a wall we have found.
 
-Implemented to the paper and verified against it, F-barES-FEM-T4 reproduces
-every published claim inside `ν ≤ 0.49` (K/G ≤ 50) and fails outside it.  Our
-operating point is K/G = 500 and the physics target is 5000.  Dropping to
-K/G = 50 to enter the envelope costs a full floor (+1.73%/+1.90% on R, measured
-earlier in the campaign), which is the thing we refused for exactly this
-reason.
+## 8. Where this leaves a CalculiX implementation
 
-Two further blockers stand behind that one, both from section 4, and neither is
-worth paying down until the envelope problem is solved:
+The method works at K/G = 500 and at 5000, so the case for building it is now
+open rather than closed.  Two obstacles are real and neither is about accuracy:
 
-* the tangent is non-symmetric, and ccx calls PARDISO with `mtype = -2`
-  (symmetric indefinite, one triangle stored) — a solver-level change, not a
-  `*USER ELEMENT`;
-* the `E A^c` stencil spans ~`2c+1` element rings, which breaches the
-  `lakon(8:8)` 255-node connectivity cap at `c ≥ 2` and is already tight at
-  `c = 1`.
+* **The tangent is non-symmetric.**  ccx calls PARDISO with `mtype = -2`
+  (symmetric indefinite, one triangle stored).  A correct F-barES-FEM-T4 needs
+  `mtype = 11` and full-matrix storage — a solver-path change, not something a
+  `*USER ELEMENT` can do on its own.
+* **The stencil is wide.**  `E A^c` spans roughly `2c+1` element rings, which
+  breaches the `lakon(8:8)` 255-node connectivity cap at `c ≥ 2` and is already
+  tight at `c = 1`.  The measurements above want `c = 2` or `3`.
 
-Recommendation: do not implement F-barES-FEM-T4 in CalculiX.  The incumbent
-unstabilised U5+U6 nodal B-bar at K/G = 500 remains the better candidate; its
-known defect is a 2-3 point over-softening that grows with refinement, which is
-a smaller and better-characterised error than what is above.
+So the honest position is: the physics is validated in the prototype and the
+blockers are structural to ccx's assembly and solver paths.  Sizing that work
+is the next decision, and it should be taken against the incumbent — the
+unstabilised U5+U6 nodal B-bar at K/G = 500, whose known defect is a 2-3 point
+over-softening that grows with refinement.
