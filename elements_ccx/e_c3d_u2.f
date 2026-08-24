@@ -1,5 +1,5 @@
 !
-!     SPAX: U7 -- edge-based smoothed DEVIATORIC stiffness (ES-FEM-T4).
+!     SPAX: U2 -- edge-based smoothed DEVIATORIC stiffness (ES-FEM-T4).
 !
 !     The deviatoric half of F-barES-FEM-T4 [Onishi, Iida & Amaya, Int. J.
 !     Comput. Methods 15(7) 1845003 (2018)].  One element per edge smoothing
@@ -13,24 +13,24 @@
 !     factor, so dev(H) never sees the cyclic smoothing of J -- the deviatoric
 !     response is pure ES-FEM and this element is the whole of it.
 !
-!     Together with U8 (the volumetric half, eqs. 6-11) this replaces the base
+!     Together with U3 (the volumetric half, eqs. 6-11) this replaces the base
 !     tets' stiffness entirely, so the base 'U5' tets must contribute NOTHING:
 !     run them with CCX_U5_ZERO=1, which makes e_c3d_u5 return a null matrix
-!     while keeping the tets in the model as the geometry U7 and U8 read.
+!     while keeping the tets in the model as the geometry U2 and U3 read.
 !     That is a different arrangement from U5+U6, where U5 carries the
 !     deviatoric itself.
 !
-!         *USER ELEMENT,TYPE=U7,NODES=<ring size>,INTEGRATIONPOINTS=1,MAXDOF=3
+!         *USER ELEMENT,TYPE=U2,NODES=<ring size>,INTEGRATIONPOINTS=1,MAXDOF=3
 !
 !     konl(1) and konl(2) ARE THE TWO EDGE NODES.  The rest is the other nodes
-!     of the tets sharing that edge; u7edge finds the tets themselves.  On the
+!     of the tets sharing that edge; u2edge finds the tets themselves.  On the
 !     campaign's LMESH_m0p0240 cell this ring is 6.3 nodes on average and 14 at
-!     worst, so unlike U8 it sits far inside the element-matrix capacity.
+!     worst, so unlike U3 it sits far inside the element-matrix capacity.
 !
-!     Keep U7 out of any *EL PRINT set: it has no material volume of its own,
+!     Keep U2 out of any *EL PRINT set: it has no material volume of its own,
 !     and printoutelem.f would pick a shape function from its node count.
 !
-      subroutine e_c3d_u7(co,kon,lakonl,s,ff,nelem,elcon,nelcon,
+      subroutine e_c3d_u2(co,kon,lakonl,s,ff,nelem,elcon,nelcon,
      &     ielmat,mi,ncmat_,ntmat_,ipkon,lakon,ne,stiffness)
 !
       implicit none
@@ -49,7 +49,7 @@
 !     overrunning s used to corrupt the assembly silently rather than stop.
 !
       if(3*nope.gt.150) then
-        write(*,*) '*ERROR in e_c3d_u7: edge element ',nelem
+        write(*,*) '*ERROR in e_c3d_u2: edge element ',nelem
         write(*,*) '       spans ',nope,' nodes (',3*nope,' DOF).'
         write(*,*) '       The element matrix holds 150 DOF (50 nodes).'
         write(*,*) '       Raise nduser in mafillsm.f and the s/sm/ff'
@@ -71,7 +71,7 @@
 !
       imat=ielmat(1,nelem)
       if(nelcon(1,imat).ne.2) then
-        write(*,*) '*ERROR in e_c3d_u7: element',nelem,' needs an'
+        write(*,*) '*ERROR in e_c3d_u2: element',nelem,' needs an'
         write(*,*) '       isotropic *ELASTIC card (2 constants)'
         call exit(201)
       endif
@@ -79,11 +79,11 @@
       un=elcon(2,1,imat)
       um=e/(2.d0*(1.d0+un))
 !
-      call u7edge(co,kon,ipkon,lakon,ne,konl,nope,vh,gt,nelem,
+      call u2edge(co,kon,ipkon,lakon,ne,konl,nope,vh,gt,nelem,
      &     ielmat,mi,imat,nfound)
       if(vh.le.0.d0) return
       if(nfound.eq.0) then
-        write(*,*) '*ERROR in e_c3d_u7: element',nelem,' found no tet'
+        write(*,*) '*ERROR in e_c3d_u2: element',nelem,' found no tet'
         write(*,*) '       containing its edge ',konl(1),'-',konl(2)
         call exit(201)
       endif

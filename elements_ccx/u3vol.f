@@ -1,7 +1,10 @@
 !
-!     SPAX: U8 -- the F-barES-FEM-T4 VOLUMETRIC smoothing chain, eqs. (6)-(11).
+!     SPAX: U3 -- the F-barES-FEM-T4 VOLUMETRIC smoothing chain, eqs. (6)-(11).
 !
-!     Geometry and operator shared by e_c3d_u8 (stiffness) and resultsmech_u8
+!     Named U3, not U8: nodalbbar.py already uses U8 for its 5-node theta
+!     carrier and U7<letter> for the graded U5 variants.
+!
+!     Geometry and operator shared by e_c3d_u3 (stiffness) and resultsmech_u3
 !     (internal forces), so the two cannot drift apart.
 !
 !     For edge h this builds the row of  S = E A^c  over elements, where
@@ -39,7 +42,7 @@
 !     character of the label.  c = 2 needs a direct global assembly pass
 !     instead of the element abstraction.
 !
-      subroutine u8vol(co,kon,ipkon,lakon,ne,konl,nope,vh,sbar,tbar,
+      subroutine u3vol(co,kon,ipkon,lakon,ne,konl,nope,vh,sbar,tbar,
      &     xkv,nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,imatf,ncyc)
 !
       implicit none
@@ -154,7 +157,7 @@
       na=konl(1)
       nb=konl(2)
       if((na.gt.maxn).or.(nb.gt.maxn)) then
-        write(*,*) '*ERROR in u8vol: element',nelem,' edge node'
+        write(*,*) '*ERROR in u3vol: element',nelem,' edge node'
         write(*,*) '       ',na,' or ',nb,' is in no U5 element'
         call exit(201)
       endif
@@ -175,7 +178,7 @@
         if((ihit1.eq.0).or.(ihit2.eq.0)) cycle
         ncur=ncur+1
         if(ncur.gt.maxel) then
-          write(*,*) '*ERROR in u8vol: element',nelem,' edge ring'
+          write(*,*) '*ERROR in u3vol: element',nelem,' edge ring'
           write(*,*) '       exceeds maxel =',maxel
           call exit(201)
         endif
@@ -203,7 +206,7 @@
 !     ---- tbar: the UNSMOOTHED edge divergence row, eq. (17)'s test space --
 !
       do i=1,ncur
-        call u8grad(co,kon,ipkon,elcur(i),gsave,n4)
+        call u3grad(co,kon,ipkon,elcur(i),gsave,n4)
         do j=1,4
           ipos=0
           do k=1,nope
@@ -213,7 +216,7 @@
             endif
           enddo
           if(ipos.eq.0) then
-            write(*,*) '*ERROR in u8vol: element',nelem,' node',
+            write(*,*) '*ERROR in u3vol: element',nelem,' node',
      &           n4(j),' not in its own connectivity (tbar)'
             call exit(201)
           endif
@@ -255,7 +258,7 @@
               if(ipos.eq.0) then
                 nnxt=nnxt+1
                 if(nnxt.gt.maxel) then
-                  write(*,*) '*ERROR in u8vol: element',nelem,
+                  write(*,*) '*ERROR in u3vol: element',nelem,
      &                 ' chain exceeds maxel =',maxel
                   call exit(201)
                 endif
@@ -278,7 +281,7 @@
 !     ---- sbar: contract the chain with the element divergence -------------
 !
       do i=1,ncur
-        call u8grad(co,kon,ipkon,elcur(i),gsave,n4)
+        call u3grad(co,kon,ipkon,elcur(i),gsave,n4)
         do j=1,4
           ipos=0
           do k=1,nope
@@ -288,7 +291,7 @@
             endif
           enddo
           if(ipos.eq.0) then
-            write(*,*) '*ERROR in u8vol: element',nelem,' node',
+            write(*,*) '*ERROR in u3vol: element',nelem,' node',
      &           n4(j),' not in its own connectivity (sbar).'
             write(*,*) '       The generator and the element disagree'
             write(*,*) '       about the c =',ncyc,' stencil.'
@@ -304,7 +307,7 @@
       end
 !
 !
-      subroutine u8grad(co,kon,ipkon,ie,g,n4)
+      subroutine u3grad(co,kon,ipkon,ie,g,n4)
 !
 !     Shape-function gradients and node list of one straight tet.
 !

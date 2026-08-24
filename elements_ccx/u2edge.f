@@ -1,7 +1,12 @@
 !
-!     SPAX: U7 -- the edge-based (ES-FEM) DEVIATORIC smoothing domain.
+!     SPAX: U2 -- the edge-based (ES-FEM) DEVIATORIC smoothing domain.
 !
-!     Geometry shared by e_c3d_u7 (stiffness) and resultsmech_u7 (internal
+!     Named U2, not U7: nodalbbar.py already claims U7<letter> for the
+!     graded U5 variants and U8 for its 5-node theta carrier.  U2 and U3 are
+!     the free family digits; mastruct.c's user-element list needs them added
+!     alongside the 4..8 the earlier patches put there.
+!
+!     Geometry shared by e_c3d_u2 (stiffness) and resultsmech_u2 (internal
 !     forces), so the two cannot drift apart -- the failure that leaves a patch
 !     element reporting an equilibrium_gap of 1.0.
 !
@@ -31,7 +36,7 @@
 !     interface edge legitimately gets one smoothing domain per phase, each
 !     with its own V_h.  Summed over both, sum_h V_h = sum_e V_e still holds.
 !
-      subroutine u7edge(co,kon,ipkon,lakon,ne,konl,nope,vh,gt,
+      subroutine u2edge(co,kon,ipkon,lakon,ne,konl,nope,vh,gt,
      &     nelem,ielmat,mi,imatf,nfound)
 !
       implicit none
@@ -104,7 +109,7 @@
       na=konl(1)
       nb=konl(2)
       if((na.gt.maxn).or.(nb.gt.maxn)) then
-        write(*,*) '*ERROR in u7edge: element',nelem,' edge node'
+        write(*,*) '*ERROR in u2edge: element',nelem,' edge node'
         write(*,*) '       ',na,' or ',nb,' is in no U5 element'
         call exit(201)
       endif
@@ -143,7 +148,7 @@
             endif
           enddo
           if(ipos.eq.0) then
-            write(*,*) '*ERROR in u7edge: element',nelem,' node',
+            write(*,*) '*ERROR in u2edge: element',nelem,' node',
      &           n4(j),' not in its own connectivity'
             call exit(201)
           endif

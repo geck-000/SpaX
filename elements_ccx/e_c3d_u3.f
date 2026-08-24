@@ -1,5 +1,5 @@
 !
-!     SPAX: U8 -- edge-based smoothed VOLUMETRIC stiffness, F-barES-FEM-T4.
+!     SPAX: U3 -- edge-based smoothed VOLUMETRIC stiffness, F-barES-FEM-T4.
 !
 !     The volumetric half of the method [Onishi, Iida & Amaya, Int. J. Comput.
 !     Methods 15(7) 1845003 (2018)], eqs. (6)-(11) and (17).  One element per
@@ -24,11 +24,11 @@
 !     element therefore requires the asymmetric assembly path (nasym=1,
 !     mafillsmas.f, PARDISO mtype=11).
 !
-!         *USER ELEMENT,TYPE=U8,NODES=<stencil>,INTEGRATIONPOINTS=1,MAXDOF=3
+!         *USER ELEMENT,TYPE=U3,NODES=<stencil>,INTEGRATIONPOINTS=1,MAXDOF=3
 !
 !     konl(1) and konl(2) ARE THE TWO EDGE NODES; the rest is the full E A^c
 !     support, which the generator must compute with exactly the same walk
-!     u8vol does -- u8vol stops with a message naming the element if it finds
+!     u3vol does -- u3vol stops with a message naming the element if it finds
 !     a node the connectivity does not carry.
 !
 !     CAPACITY.  Measured on LMESH_m0p0240 (soft phase, 184572 edges):
@@ -39,7 +39,7 @@
 !     c = 2 CANNOT be an element at all: userelements.f:83 rejects NODES > 255
 !     and mastruct.c reads the count from one character of the label.
 !
-      subroutine e_c3d_u8(co,kon,lakonl,s,ff,nelem,elcon,nelcon,
+      subroutine e_c3d_u3(co,kon,lakonl,s,ff,nelem,elcon,nelcon,
      &     ielmat,mi,ncmat_,ntmat_,ipkon,lakon,ne,stiffness,nasym)
 !
       implicit none
@@ -58,7 +58,7 @@
       nope=ichar(lakonl(8:8))
 !
       if(3*nope.gt.150) then
-        write(*,*) '*ERROR in e_c3d_u8: edge element ',nelem
+        write(*,*) '*ERROR in e_c3d_u3: edge element ',nelem
         write(*,*) '       spans ',nope,' nodes (',3*nope,' DOF).'
         write(*,*) '       The element matrix holds 150 DOF (50 nodes).'
         write(*,*) '       The c=1 volumetric stencil needs 520 DOF:'
@@ -87,19 +87,19 @@
       ilen=len_trim(cval)
       if(ilen.gt.0) read(cval(1:ilen),*) ncyc
       if((ncyc.lt.0).or.(ncyc.gt.3)) then
-        write(*,*) '*ERROR in e_c3d_u8: CCX_FBAR_C =',ncyc
+        write(*,*) '*ERROR in e_c3d_u3: CCX_FBAR_C =',ncyc
         write(*,*) '       must be 0..3'
         call exit(201)
       endif
 !
       imat=ielmat(1,nelem)
       if(nelcon(1,imat).ne.2) then
-        write(*,*) '*ERROR in e_c3d_u8: element',nelem,' needs an'
+        write(*,*) '*ERROR in e_c3d_u3: element',nelem,' needs an'
         write(*,*) '       isotropic *ELASTIC card (2 constants)'
         call exit(201)
       endif
 !
-      call u8vol(co,kon,ipkon,lakon,ne,konl,nope,vh,sbar,tbar,xkv,
+      call u3vol(co,kon,ipkon,lakon,ne,konl,nope,vh,sbar,tbar,xkv,
      &     nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,imat,ncyc)
       if(vh.le.0.d0) return
 !
