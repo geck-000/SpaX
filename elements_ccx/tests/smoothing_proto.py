@@ -401,8 +401,45 @@ def assemble(scheme, nodes, tets, mat, g, vol, faces, patch, props,
             Gtrial = (Svol @ Ddiv).tocsr()
             Gtest = (Edev @ Ddiv).tocsr()
             W = sp.diags(K * Vh)
+            # SPAX_FBAR_SYM=1 assembles the Galerkin form Bbar^T D Bbar
+            # instead.  That is NOT what eq. (17) specifies, but it is
+            # symmetric, and ccx calls PARDISO with mtype = -2 -- so whether
+            # the difference is measurable decides whether a CalculiX port has
+            # to touch the solver path at all.  Measured, not assumed.
+            if os.environ.get('SPAX_FBAR_SYM') == '1':
+                Gtest = Gtrial
             Kv = (Gtest.T @ W @ Gtrial).tocoo()
             A.r.append(Kv.row); A.c.append(Kv.col); A.v.append(Kv.data)
+
+    # ---- ES-FEM deviatoric + node-patch volumetric ----------------------
+    #
+    # This is F-barES-FEM-T4(1) with eq. (8) -- the final elem->edge smoothing
+    # of J -- DROPPED, so the volumetric energy sits on node patches instead of
+    # edge domains.  It matters because that is the one variant CalculiX can
+    # already deliver: the volumetric half is exactly the existing, debugged U6
+    # nodal B-bar element, and only the deviatoric half is new.  The full
+    # eq. (8) operator cannot be an element (173-node stencil at c=1, 494 at
+    # c=2 against *USER ELEMENT's 255-node limit) and cannot be *EQUATION +
+    # SPRING1 either (tried in this campaign: overlapping patches gave a
+    # confined-compression reaction 1.55x the closed form).
+    if scheme == 'esdev_nsvol':
+        for m in sorted(set(int(x) for x in mat)):
+            sel, idx, ekeys, edges, Vh, E, S, R = fbar_es_operators(
+                nodes, tets, mat, g, vol, 0, m)
+            K, G = props[m]
+            for h, k in enumerate(ekeys):
+                els_h = edges[k]
+                nl = sorted(set(int(x) for e in els_h for x in tets[e]))
+                Bd = sum((vol[e] / 6.0 / Vh[h]) * expand(B[e], tets[e], nl)
+                         for e in els_h)
+                A.add(dofs_of(nl), Vh[h] * Bd.T @ dmat(K, G, 'dev') @ Bd)
+        for (a, m), els in patch.items():
+            nl = sorted(set(int(x) for e in els for x in tets[e]))
+            Va = sum(vol[e] for e in els) / 4.0
+            K, G = props[m]
+            r = sum((vol[e] / 4.0) * (M @ expand(B[e], tets[e], nl))
+                    for e in els) / Va
+            A.add(dofs_of(nl), K * Va * np.outer(r, r))
 
     # ---- node-smoothed parts ------------------------------------------
     if scheme in ('ns_vol', 'ns_full', 'fs_ns'):
@@ -546,7 +583,7 @@ def run(scheme, n, slab, props, eps=1e-3, stab=0.0, bubble=False,
         sel, idx, ekeys, edges, Vh, Ee, Sv, Rr = fbar_es_operators(
             nodes, tets, mat, g, vol, cyc, 1)
         psch[sel] = Kb * (Rr @ (Sv @ theta[sel]))
-    elif scheme in ('ns_vol', 'ns_full', 'fs_ns'):
+    elif scheme in ('ns_vol', 'ns_full', 'fs_ns', 'esdev_nsvol'):
         acc = {}
         for (a, mm), els in patch.items():
             if mm != 1:

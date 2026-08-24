@@ -1,0 +1,128 @@
+!
+!     SPAX: U8 -- edge-based smoothed VOLUMETRIC stiffness, F-barES-FEM-T4.
+!
+!     The volumetric half of the method [Onishi, Iida & Amaya, Int. J. Comput.
+!     Methods 15(7) 1845003 (2018)], eqs. (6)-(11) and (17).  One element per
+!     edge smoothing domain, per material:
+!
+!         K_vol^h = (K V_h) * tbar^T sbar
+!
+!         sbar = (E A^c D_div)_h   trial: the c-time cyclically smoothed J
+!         tbar = (E D_div)_h       test:  the UNSMOOTHED edge divergence
+!
+!     THIS MATRIX IS NOT SYMMETRIC, and that is the definition of F-bar, not an
+!     approximation.  Eq. (17) of the paper, verbatim:
+!
+!       "Note that the stretching tensor in this equation, D~, is not the
+!        deformation rate of F in Eq. (11) but that of F~ in Eq. (1) due to
+!        the adoption of the F-bar method."
+!
+!     so the stress comes from the modified gradient while the virtual work is
+!     paired with the unmodified one.  Assembling the Galerkin form
+!     sbar^T sbar instead is a different element; it happens to measure within
+!     0.02% of this one on C1111, but it is not what the paper specifies.  The
+!     element therefore requires the asymmetric assembly path (nasym=1,
+!     mafillsmas.f, PARDISO mtype=11).
+!
+!         *USER ELEMENT,TYPE=U8,NODES=<stencil>,INTEGRATIONPOINTS=1,MAXDOF=3
+!
+!     konl(1) and konl(2) ARE THE TWO EDGE NODES; the rest is the full E A^c
+!     support, which the generator must compute with exactly the same walk
+!     u8vol does -- u8vol stops with a message naming the element if it finds
+!     a node the connectivity does not carry.
+!
+!     CAPACITY.  Measured on LMESH_m0p0240 (soft phase, 184572 edges):
+!         c = 1   mean 33.7 nodes  p99  78  max 173  ( 519 DOF)
+!         c = 2   mean 93.6 nodes  p99 259  max 494  (1482 DOF)
+!     c = 1 needs the e_c3d_u* family and mafillsm.f widened from 150 to 520
+!     DOF (patch 0006 raised it 60 -> 150 for exactly this reason and says so).
+!     c = 2 CANNOT be an element at all: userelements.f:83 rejects NODES > 255
+!     and mastruct.c reads the count from one character of the label.
+!
+      subroutine e_c3d_u8(co,kon,lakonl,s,ff,nelem,elcon,nelcon,
+     &     ielmat,mi,ncmat_,ntmat_,ipkon,lakon,ne,stiffness,nasym)
+!
+      implicit none
+!
+      character*8 lakonl,lakon(*)
+      integer mi(*)
+      integer kon(*),ipkon(*),ielmat(mi(3),*),ncmat_,ntmat_,
+     &     nelcon(2,*),nelem,ne,stiffness,i,j,c,d,ii,jj,nope,indexe,
+     &     imat,konl(255),ncyc,nasym
+      real*8 co(3,*),s(150,150),ff(150),elcon(0:ncmat_,ntmat_,*),
+     &     vh,xkv,sbar(3,255),tbar(3,255)
+!
+      character*16 cval
+      integer ilen
+!
+      nope=ichar(lakonl(8:8))
+!
+      if(3*nope.gt.150) then
+        write(*,*) '*ERROR in e_c3d_u8: edge element ',nelem
+        write(*,*) '       spans ',nope,' nodes (',3*nope,' DOF).'
+        write(*,*) '       The element matrix holds 150 DOF (50 nodes).'
+        write(*,*) '       The c=1 volumetric stencil needs 520 DOF:'
+        write(*,*) '       raise nduser in mafillsm.f and the s/sm/ff'
+        write(*,*) '       dimensions in the e_c3d_u* family together.'
+        call exit(201)
+      endif
+      indexe=ipkon(nelem)
+      do i=1,nope
+        konl(i)=kon(indexe+i)
+      enddo
+!
+      do i=1,3*nope
+        ff(i)=0.d0
+        do j=1,3*nope
+          s(i,j)=0.d0
+        enddo
+      enddo
+      if(stiffness.eq.0) return
+!
+!     number of cyclic smoothings, eq. (6)-(7).  The paper recommends 1 or 2
+!     for nu <= 0.49 and states that the optimum varies with Poisson's ratio.
+!
+      ncyc=1
+      call getenv('CCX_FBAR_C',cval)
+      ilen=len_trim(cval)
+      if(ilen.gt.0) read(cval(1:ilen),*) ncyc
+      if((ncyc.lt.0).or.(ncyc.gt.3)) then
+        write(*,*) '*ERROR in e_c3d_u8: CCX_FBAR_C =',ncyc
+        write(*,*) '       must be 0..3'
+        call exit(201)
+      endif
+!
+      imat=ielmat(1,nelem)
+      if(nelcon(1,imat).ne.2) then
+        write(*,*) '*ERROR in e_c3d_u8: element',nelem,' needs an'
+        write(*,*) '       isotropic *ELASTIC card (2 constants)'
+        call exit(201)
+      endif
+!
+      call u8vol(co,kon,ipkon,lakon,ne,konl,nope,vh,sbar,tbar,xkv,
+     &     nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,imat,ncyc)
+      if(vh.le.0.d0) return
+!
+!     K_vol = xkv * tbar^T sbar.  Row index carries the TEST space, column the
+!     TRIAL space; swapping them is the transpose and is wrong.
+!
+      do i=1,nope
+        do c=1,3
+          ii=3*(i-1)+c
+          do j=1,nope
+            do d=1,3
+              jj=3*(j-1)+d
+              s(ii,jj)=xkv*tbar(c,i)*sbar(d,j)
+            enddo
+          enddo
+        enddo
+      enddo
+!
+!     Tell the caller the global matrix is asymmetric.  At ncyc = 0 the chain
+!     is the identity, sbar = tbar, and the element is symmetric -- that case
+!     is plain selective ES-FEM-T4 and needs no asymmetric path.
+!
+      if(ncyc.gt.0) nasym=1
+!
+      return
+      end

@@ -112,6 +112,75 @@ for c in (0, 1, 2):
         if eps == 1e-5:
             chk('c=%d  |C1111_nl/C1111_lin - 1| at eps=1e-5' % c, rel, 0.0, 5e-4)
 
+print('\nN5  frame indifference: a rigid rotation carries no force')
+# Under u = (Q - I) x every element sees F = Q, so J = 1, F~ = Q, J~ = 1,
+# Jbar = 1 and Fbar = Q.  Then B = Q Q^T = I and H = 0, so T = 0 exactly.
+# This is the check that a finite-strain formulation is objective, and it is
+# the one that would catch a missing rotation anywhere in eqs. (1)-(11).
+th = 0.7
+Q = np.array([[np.cos(th), -np.sin(th), 0.0],
+              [np.sin(th), np.cos(th), 0.0],
+              [0.0, 0.0, 1.0]])
+ax = np.array([1.0, 2.0, 3.0]); ax /= np.linalg.norm(ax)
+Kx = np.array([[0, -ax[2], ax[1]], [ax[2], 0, -ax[0]], [-ax[1], ax[0], 0]])
+Q = np.eye(3) + np.sin(th) * Kx + (1 - np.cos(th)) * (Kx @ Kx)
+urot = ((Q - np.eye(3)) @ nodes.T).T.ravel()
+for c in (0, 1, 2, 3):
+    nl = P.FbarNL(nodes, tets, mat, g, vol, props, c)
+    fr = nl.force(urot)
+    # scale by the force a comparable STRETCH produces, else 'small' is meaningless
+    ustr = np.zeros(3 * len(nodes)); ustr[0::3] = 0.1 * nodes[:, 0]
+    ref = np.abs(nl.force(ustr)).max()
+    chk('c=%d  max|f(rigid rotation)| / max|f(stretch)|' % c,
+        np.abs(fr).max() / ref, 0.0, 1e-11)
+
+print('\nN6  the linear operator IS df/du at the reference configuration')
+# This is the check that matters for a port: the small-strain stiffness that
+# would be implemented in CalculiX must be exactly the consistent tangent of
+# the paper's element at u = 0, column for column -- not merely something that
+# gives similar answers.  Central differences on the finite-strain force.
+n4, t4, m4 = P.mesh_box(4, 0.375, 0.625, 0.3, geom=P.GEOM['sphere'])
+g4, v4 = P.grads(n4, t4)
+fc4, pt4 = P.topology(t4, m4)
+nd = 3 * len(n4)
+for c in (0, 1, 2):
+    nlj = P.FbarNL(n4, t4, m4, g4, v4, props, c)
+    Klin = P.assemble('fbar_%d' % c, n4, t4, m4, g4, v4, fc4, pt4, props,
+                      0.0, False, None).toarray()
+    hstep = 1e-7 / 4.0
+    Jnum = np.zeros((nd, nd))
+    for j in range(nd):
+        e = np.zeros(nd); e[j] = hstep
+        Jnum[:, j] = (nlj.force(e) - nlj.force(-e)) / (2.0 * hstep)
+    den = np.abs(Klin).max()
+    chk('c=%d  max|df/du - K_lin| / max|K_lin|' % c,
+        np.abs(Jnum - Klin).max() / den, 0.0, 2e-6)
+    # and the structure the port has to reproduce: dev block symmetric,
+    # volumetric block not (section 4 of the formulation)
+    asym = np.abs(Klin - Klin.T).max() / den
+    print('       c=%d  asymmetry max|K - K^T|/max|K| = %.3e %s'
+          % (c, asym, '(non-symmetric, as eq. 17 requires)' if c else
+             '(symmetric, as S = E at c=0 requires)'))
+    if c == 0 and asym > 1e-12:
+        fails.append('c=0 must be symmetric')
+    if c > 0 and asym < 1e-6:
+        fails.append('c=%d must be non-symmetric' % c)
+
+print('\nN7  rigid-body content of the assembled operator')
+# A free (unconstrained) assembly must have exactly 6 zero modes and no more:
+# 3 translations + 3 rotations, and nothing spurious.
+for c in (0, 1, 2, 3):
+    Klin = P.assemble('fbar_%d' % c, n4, t4, m4, g4, v4, fc4, pt4, props,
+                      0.0, False, None).toarray()
+    Ksym = 0.5 * (Klin + Klin.T)
+    ev = np.linalg.eigvalsh(Ksym)
+    scale = ev.max()
+    nz = int((np.abs(ev) < 1e-9 * scale).sum())
+    print('       c=%d  zero modes = %d (expect 6)   lambda_7/lambda_max = %.3e'
+          % (c, nz, ev[6] / scale))
+    if nz != 6:
+        fails.append('c=%d has %d zero modes' % (c, nz))
+
 print('\n%s' % ('all checks passed' if not fails
                 else 'FAILED: ' + ', '.join(fails)))
 sys.exit(1 if fails else 0)

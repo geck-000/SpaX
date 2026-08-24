@@ -262,21 +262,82 @@ effectively oscillation-free.  It beats the incumbent `ns_vol` on all three.
 The paper's stated envelope (section 5, `ν = 0.49 at most`) is a statement
 about where the authors validated `c`, not a wall we have found.
 
-## 8. Where this leaves a CalculiX implementation
+## 8. The CalculiX implementation
 
-The method works at K/G = 500 and at 5000, so the case for building it is now
-open rather than closed.  Two obstacles are real and neither is about accuracy:
+**Correcting section 4.** It said a non-symmetric tangent needs a solver-path
+change ccx cannot make. That is wrong: ccx already carries a full asymmetric
+path — element routines raise `nasym`, `mafillsmasmain.c`/`mafillsmas.f`
+assemble it, and `pardiso.c` selects `mtype = 11` (real unsymmetric, via
+`symmetryflag` / `inputformat = 3`). The Petrov-Galerkin form of eq. (17) is
+therefore deliverable as specified. What `mafillsmas.f` does *not* yet have is
+the `lakon(1:1).eq.'U'` dispatch that `mafillsm.f` has; adding it is the same
+shape of change as patch 0006.
 
-* **The tangent is non-symmetric.**  ccx calls PARDISO with `mtype = -2`
-  (symmetric indefinite, one triangle stored).  A correct F-barES-FEM-T4 needs
-  `mtype = 11` and full-matrix storage — a solver-path change, not something a
-  `*USER ELEMENT` can do on its own.
-* **The stencil is wide.**  `E A^c` spans roughly `2c+1` element rings, which
-  breaches the `lakon(8:8)` 255-node connectivity cap at `c ≥ 2` and is already
-  tight at `c = 1`.  The measurements above want `c = 2` or `3`.
+### What decides the architecture: stencil width, measured
 
-So the honest position is: the physics is validated in the prototype and the
-blockers are structural to ccx's assembly and solver paths.  Sizing that work
-is the next decision, and it should be taken against the incumbent — the
-unstabilised U5+U6 nodal B-bar at K/G = 500, whose known defect is a 2-3 point
-over-softening that grows with refinement.
+On the campaign's `LMESH_m0p0240` soft phase (117 437 tets, 36 323 nodes,
+184 572 edges; element valence per node mean 12.9, max 74):
+
+| operator | nodes/edge mean | p99 | max | DOF at max |
+|---|---|---|---|---|
+| U7 deviatoric, eq. (1) | 6.3 | 10 | 14 | 42 |
+| U8 volumetric, `c = 1` | 33.7 | 78 | 173 | **519** |
+| U8 volumetric, `c = 2` | 93.6 | 259 | 494 | **1482** |
+
+Consequences, and they are hard limits rather than judgement calls:
+
+* **`c = 1` is deliverable as an element.** 173 nodes is inside
+  `*USER ELEMENT`'s 255-node limit. The element-matrix family has to be
+  widened from 150 to 520 DOF — which is exactly what patch 0006 did once
+  already (60 -> 150) and documents as safe to raise again.
+* **`c = 2` cannot be an element.** `userelements.f:83` rejects `NODES > 255`
+  and `mastruct.c` reads the node count from a single character of the label.
+  It would need a direct global assembly pass (extend `mastruct` with the
+  extra couplings, then fill them outside the element loop).
+* **`*EQUATION` + `SPRING1` is not an option**, and this is settled rather
+  than untried: the U6 header records that the campaign built exactly that,
+  verified every piece in isolation, and still got a confined-compression
+  reaction **1.55x** the closed-form answer once patches overlapped.
+
+Since `c = 1` measures within noise of `c = 2` and `c = 3` on our cells
+(section 7, and n = 16: `fluc` 0.34 vs 0.36 vs 0.34 at K/G 500), `c = 1` is the
+production point and the element route is enough.
+
+### Files
+
+| file | role | state |
+|---|---|---|
+| `u7edge.f` | edge ring, `V_h` and the smoothed gradients of eq. (1) | written |
+| `e_c3d_u7.f` | `U7`, deviatoric `V_h Bt^T D_dev Bt` | written |
+| `u8vol.f` | the eq. (6)-(8) chain as a row walk; returns `sbar`, `tbar`, `K V_h` | written, algorithm verified |
+| `e_c3d_u8.f` | `U8`, volumetric `K V_h tbar^T sbar`, raises `nasym` | written |
+| `resultsmech_u7/u8.f` | internal-force recovery | to do |
+| `fbares.py` | generator: `U7` rings and `U8` stencils per material | to do |
+| patch `0009` | wire `U7`/`U8` into `mafillsm.f`, `resultsmech.f`, the build | to do |
+| patch `0010` | `'U'` dispatch in `mafillsmas.f`; widen 150 -> 520 DOF | to do |
+
+`verify_u8_chain.py` mirrors `u8vol.f`'s walk in Python and checks it against
+the prototype operator `S = E A^c`: agreement to 1e-15 for `c = 1, 2`, on
+jittered and unjittered meshes, with unit row sums preserved. The element-side
+algorithm is therefore verified before it compiles, not after it produces a
+suspicious number.
+
+Two details the generator must respect, both of which are silent failures
+otherwise:
+
+* `konl(1)` and `konl(2)` are the two edge nodes, in both `U7` and `U8`.
+* The `U8` connectivity must be the *same* `E A^c` support the element walks.
+  `u8vol` stops with a message naming the element if it meets a node the
+  connectivity does not carry.
+
+The base tets stay in the model as `U5` with a new `CCX_U5_ZERO=1` switch that
+makes them contribute nothing: `U7` and `U8` supply the whole stiffness, and
+both read the tets for geometry through the `'U5'` node->element map.
+
+### `V_n` is per material
+
+Eq. (6)'s nodal volume must be summed over the smoothing material only. Caching
+it once over all elements at a node and then skipping foreign elements in the
+walk divides by an inflated `V_n`, breaks the unit row sum of `Q`, and stops
+the chain preserving a constant `J` — a patch-test failure that appears only at
+the brine/ice interface. `u8vol` recomputes it per material where it is used.
