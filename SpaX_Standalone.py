@@ -2229,20 +2229,24 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         # and the disk. On the ramp campaign the ODBs are the binding constraint
         # rather than the CPU.
         #
-        # DO NOT USE THIS WITH extract_first_order. It is off by default and
-        # should stay off for any deck whose E_x/E_z come from that route, which
-        # is every first-order campaign in this repository.
+        # SAFE WITH extract_first_order SINCE THE EXTRACTOR WAS FIXED. It was
+        # not always: the extractor used to fit sigma against epsilon by polyfit
+        # over the 10-40% window of peak strain, so one increment left a single
+        # point at 100% of peak, the window was empty, and E_eff came back
+        # exactly 0.0 from an ODB that was perfectly healthy -- two frames, all
+        # fields, frameValue 1.0. A whole campaign was extracted as zeros that
+        # way. extract_first_order now carries a single-point branch that takes
+        # sigma/eps directly, so one increment is read correctly.
         #
-        # The comment above is right that the response is proportional and wrong
-        # about what reads it. extract_first_order walks the frame series and
-        # fits sigma against epsilon by polyfit over the 10-40% window of peak
-        # strain; one increment leaves a single point at 100% of peak, the
-        # window is empty, and E_eff comes back exactly 0.0. The ODB is
-        # perfectly healthy -- two frames, all fields, frameValue 1.0 -- which
-        # is what makes the failure hard to see. A whole campaign of solves was
-        # extracted as zeros this way. (last_frame_only=True at
-        # SpaX_PostProcess.py:1381 belongs to extract_principals, a different
-        # route: the full-tensor and bending paths.)
+        # Prefer it for any linear, nlgeom=OFF first-order campaign. The default
+        # of ten increments buys nothing on a proportional response and costs
+        # real money: N4_LCOL_p134 at 9.3M equations spent 74 minutes on Roihu
+        # and was cancelled part-way, because ten increments of a linear solve
+        # is ten factorisations of the same stiffness matrix.
+        #
+        # (last_frame_only=True at SpaX_PostProcess.py:1381 belongs to
+        # extract_principals, a different route: the full-tensor and bending
+        # paths.)
         #
         # It remains available for a pipeline that genuinely reads one frame,
         # and it still refuses to engage when nlgeom is ON, where the
