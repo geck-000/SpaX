@@ -729,3 +729,448 @@ end.
   not.
 * `R = 2.1568` (+8.4 % from converged) from that run was reported as a large
   improvement before its equilibrium gap was checked. It is not trustworthy.
+
+# STATUS 2026-08-23: the element is sound. Cross-code breadth is what is thin.
+
+Two more delivery bugs found and fixed (`../patches_ccx/0008-*.patch`), then
+the element re-tested from the bottom up. Every test with a definite right
+answer now passes, including the two that killed the previous elements.
+
+## The two bugs
+
+1. **The 150-DOF capacity was still a guess, and still too small.** Rings of
+   4..40 had been seen, so 50 nodes looked ample. A sphere-packing cell
+   contains a node carried by **248 tets** -> a **127-node ring**, 381 DOF. The
+   guard from 0006 caught it cleanly. The limit is now 765 = 3x255, which is
+   not another guess: ccx stores a user element's node count in the single
+   `lakon(8:8)` byte and `userelements.f` rejects `NODES > 255`, so this is the
+   largest patch ccx can express at all.
+
+2. **`e_c3d_u6` zeroed a fixed 60x60 block of a larger array.** The stiffness
+   loop assigns the whole `3*nope` square so `s` survived, but the element
+   never writes `ff`, and `mafillsm` reads `ffval = ffu(jj)` UNCONDITIONALLY,
+   before it tests `rhsi`. For any patch over 20 nodes, `ff(61..3*nope)` was
+   the previous element's leftovers. Layered rings reach 40 and sphere rings
+   127, so every U6 number taken before this was re-run.
+
+## Acceptance ladder, re-run against the fixed binary
+
+| test | result | what it rules out |
+|---|---|---|
+| patch test, distorted mesh, general strain **with shear**, nu = 0.4999 | **exact**, all 6 components, all 162 ip | inconsistency |
+| confined compression vs `M = K + 4G/3`, N = 1,2,4,8 | **1.0000** every level | the previous delivery gave 1.0000 / 1.5485 / **3.0515** here |
+| **zero-energy modes**, structured and 0.5/0.8-jittered | **exactly 6**, every mesh | spurious mechanisms |
+| U5 alone, same meshes | **exactly 7** | confirms the deviatoric split is exact: rigid body + uniform dilatation, and U6 restores that one mode and no more |
+| softest genuine mode vs C3D4 | 0.976-0.978 structured, 0.54 jittered | over-softness (see below) |
+| refinement vs C3D10, 4 meshes, frozen geometry | **monotone from above, no crossing** | the CAPPED failure |
+
+**On over-softness, which was the live worry.** U6 agrees with C3D4 on the
+softest genuine mode to **2.4 %** on structured meshes. Jittering the mesh
+stiffens *C3D4's* by **82 %** while U6 moves 5 %. A physical mode does not
+stiffen because nodes moved, so U6 departs from C3D4 only where C3D4 is
+provably wrong. This is the measurement that separates "converges faster" from
+"too soft", and the eigenvalue count is what makes it a measurement rather than
+an inference.
+
+## Refinement: the test that killed CAPPED
+
+Frozen deterministic geometry (slabs and bridges only -- the sphere population
+is NOT reproducible across a re-mesh, see the trap below), slab thickness
+0.0125 matched to the campaign cell, C3D10 as the trusted reference.
+
+| L_mesh | slab/mesh | C3D4 | U5+U6 brine | U5+U6 both |
+|---|---|---|---|---|
+| 0.024 | 0.52 | +2.97 % | +2.76 % | **+2.04 %** |
+| 0.012 | 1.04 | +1.66 % | +1.10 % | **+0.70 %** |
+| 0.008 | 1.56 | +1.13 % | +0.59 % | **+0.34 %** |
+| 0.006 | 2.08 | +0.85 % | +0.38 % | **+0.22 %** |
+
+Four refinements spanning the whole range of the Abaqus reference sequence.
+Every arm approaches C3D10 from ABOVE and none crosses; U6's error halves each
+refinement. CAPPED was already 14.5 % *below* by its second mesh. C3D10 itself
+is settled -- last three meshes within 0.04 %.
+
+## Two traps in the comparison methodology, both of which bit
+
+**1. The drained twin is the mesh-equivalence CONTROL, not just a denominator.**
+Both codes use plain C3D4 for the drained cell, so any disagreement there is
+mesh, not element. It passes at 0.0240 (-0.07 %) and FAILS at 0.0120
+(+3.58 %, against a 1.5 % seed spread): at the same nominal `L_mesh` the
+CalculiX mesh is effectively coarser. Abaqus's drained value is flat from
+0.0120 on (~2.33) while CalculiX's is still descending (2.517 -> 2.424). So the
+0.0120 R comparison is not like-for-like in either direction, and the U6 vs
+C3D4H disagreement there is unresolved, not resolved. **Gate every R row on the
+drained check.**
+
+**2. R's denominator must be plain C3D4 for every arm.** Abaqus's R is
+`E_und(C3D4H) / E_drn(C3D4)` -- it substitutes the hybrid element in the
+UNDRAINED cell only, so the element under test must be substituted only there
+too. This is not a formality: patching both phases softens the ice ~4 %, and in
+the drained cell the load runs through thin ice bridges, so `E_drn` moves 4.3 %
+straight into R. Dividing by each arm's own drained value made the SAME element
+read +3.49 % at b020 and +0.62 % at b040 purely from which denominator existed
+yet -- a reporting artefact that looked exactly like a physical flip.
+
+**Corollary: do not use the both-phase arm on drained cells.** It moves E_drn
+to -5.30 % against Abaqus at b040, outside the 2.24 % floor, where plain C3D4
+sits at -1.03 % inside it. Whether that softening is an improvement (linear
+tets genuinely are stiff in thin ligaments) or an overshoot needs C3D10 on a
+drained cell. Untested.
+
+## The frozen-packing trap in `converge_u4.sh`
+
+`SPAX_SAVE_PACKING` does not survive a re-mesh. At `L_mesh` 0.010/0.008/0.006
+the order-2 (C3D10) run drew a DIFFERENT sphere population from the order-1
+runs -- porosity 0.0178 against 0.0119, flipping which arm got which -- so
+C3D10 read 4.7e9 against 6.1e9 and the "convergence" was two different cells.
+The slabs and bridges ARE deterministic, so `converge_u6.sh` drops the sphere
+population entirely. **Check `porosity`/`phi_soft_total` agree across arms
+before reading any modulus.**
+
+## What is still thin
+
+* **Cross-code breadth.** Only `L_mesh` 0.0240/0.0330 has verified mesh
+  equivalence, so that is where the Abaqus comparison lives. 42 bracket stems
+  with und/drn pairs and 3 seeds each sit there unused -- that is the
+  validation, not more refinement of one cell.
+* **Which patch coverage.** `u6all` wins at all four refinement meshes; on the
+  bracket cells the two are within 0.5 % of each other and both well inside the
+  seed floor. Not decided.
+* **`m0p0080` and finer with U6 is not reachable in 32 GB.** The patch couples
+  every node of a 1-ring to every other, so nz/eq goes 21.5 -> 49.2 on the same
+  mesh; `m0p0120` peaked at 13.5 GB and `m0p0080` projects to ~68 GB.
+
+# THE SPURIOUS MODE: mechanism found, fix partial. Do not run the cluster yet.
+
+BRKB (5 layered und/drn conditions, Abaqus R from 2.9 to 19.4, all at L_mesh
+0.0240 where the drained mesh-equivalence gate PASSES) put U5+U6 inside the
+Abaqus seed floor at b020/b040/b080/b150 where plain C3D4 was outside it. At
+**b280 it failed: R 8.97 % below Abaqus, four times the 2.07 % floor.**
+Reproduced on a second packing (-12.35 % vs -12.57 %), so it is systematic.
+
+## What it is
+
+The U5 tet is deviatoric-only, and for brine G = K/5000, so ALL volumetric
+restraint comes from the nodal patch. A brine node ON THE ICE INTERFACE is also
+held by the neighbouring C3D4, which keeps its own volumetric term. A brine
+node in the INTERIOR has no such anchor, and the patch operator b^a has a null
+space: a displacement pattern with theta_a = 0 at every node of an interior
+cluster costs only G-level energy and grows by ~K/G.
+
+Measured on b280 (`tmp/leak/`, from the solved displacement field):
+
+* volumetric energy deficit `1 - E_nodal/E_elem` = **97.9 %** (39.6 % with the
+  spheres deleted); 90 % of it in 5.7 % of the elements
+* **max |u| = 9.4e-02 against an applied 5.0e-03** -- 19x. The C3D4 control on
+  the SAME mesh has max |u| = 4.8e-03 and NOT ONE node over the applied value;
+  U6 has 2467
+* the mode's support is **100 % brine-interior nodes, 0 % interface, 0 % ice,
+  0 % triple points**
+* those 2467 nodes form 22 clusters, and every large one is a SHEET (singular
+  values 0.045/0.032/0.006, bbox 0.022 x 0.248 x 0.200) -- the mid-surfaces of
+  the brine slabs, thin in x
+* a hot node's own patch is 68 % hot (12 % baseline); 849 patches are >80 % hot
+
+Sheets normal to x explains the direction: E_x fell 12.6 %, **E_z only 0.2 %**.
+And equilibrium_gap stayed at 3.9e-07 throughout, because the mode is very
+nearly free -- **the gap cannot see this failure.**
+
+## Five hypotheses that were wrong, and why that matters
+
+Every geometric metric was FLAT across a series whose error grew 8x, so none of
+them is the discriminator. Recorded so they are not re-tried:
+
+| hypothesis | measured | verdict |
+|---|---|---|
+| patch ring too large | 11.3 -> 11.4 | flat |
+| interface / one-sided patches | 79.2 % -> 71.9 % | wrong direction |
+| brine cut into small pockets | -17 % | too small |
+| slivers / tet quality | no slivers, b280 the best | no |
+| local thickness (BFS, `softthickness.py`) | best cell is the THINNEST | anti-correlates |
+
+The last one is the instructive failure: thin brine is FINE, because a thin band
+has every node on an interface and therefore anchored. Thick brine is the
+hazard. `--min-body` in `nodalbbar.py` was written on the "small inclusions get
+polluted patches" story and moved the answer by **0.01 %** -- the story was
+clean and wrong. Deleting the spheres from the cell fixed it (-0.95 %), but
+deleting only the voids (-1.34 %) or only the inclusions (-2.11 %) did not: the
+populations are superadditive because together they fatten the brine enough for
+interior sheets to exist.
+
+## Refinement makes it WORSE
+
+| L_mesh | elements across the brine slab | dE_und | R vs Abaqus |
+|---|---|---|---|
+| 0.024 | 0.66 | -12.57 % | -8.97 % |
+| 0.016 | 1.00 | -10.13 % | -4.24 % |
+| 0.012 | 1.33 | **-21.60 %** | **-15.79 %** |
+
+So there is no resolution criterion to hide behind: refining adds interior
+nodes and gives the mode more room. This also explains the LMESH 0.0120 result
+(R 15 % low) that had been put down to mesh inequivalence -- same effect.
+
+## The fix, and where it stands
+
+`CCX_U5_STAB` returns a fraction of K to the ELEMENT (`e_c3d_u5.f`) and takes
+the same fraction out of the patch (`u6patch.f`), so the two halves still sum
+to K, the mean-dilatation identity is untouched and the patch test stays exact
+for any value. The element charges `stab*K*div(u)^2`, which is exactly what the
+patch average cannot see, so it penalises the null modes directly.
+`resultsmech_u5.f` carries the same term -- adding it to the stiffness alone
+took equilibrium_gap from 2e-07 to 1.6e-01.
+
+GLOBAL stabilisation trades one case against another -- the CAPPED failure
+again:
+
+| case | floor | C3D4 | stab 0 | stab 0.05 | stab 0.10 |
+|---|---|---|---|---|---|
+| b020 | 7.99 % | +0.72 | -0.75 | -0.18 | +0.01 |
+| b150 | 1.54 % | +3.62 | **-0.43** | +1.67 LOCK | +2.17 LOCK |
+| b280 | 2.07 % | +4.11 | **-8.97** | **-0.88** | +0.71 |
+
+LOCALISED stabilisation (element type **U7** = interior tets, stabilised; U5 =
+anchored, not) removes the trade at b150 but does not fully close b280:
+
+| U7 rule | tets marked | b150 | b280 |
+|---|---|---|---|
+| `all` (4/4 nodes interior) | 21 % | inside at every stab | only -2.29 % at stab 1.0 |
+| `any` (>=1 node interior) | 85-98 % | re-locks +1.64 % | -0.88 % |
+
+`all` is too narrow -- a tet with three interior nodes carries the mode and is
+left unstabilised. `any` is so broad it is the global case again. **The rule
+must be graded: stabilise each tet in proportion to how many of its nodes are
+interior.** That is the open work. Note also that equilibrium_gap grows with
+stab on MIXED patches (1e-03 at stab 1.0), so the U5/U7 bookkeeping inside a
+shared patch needs checking as part of it.
+
+Plumbing for U7 is done: `e_c3d_u.f` and `resultsmech_u.f` dispatch '7',
+`e_c3d_u5.f`/`resultsmech_u5.f` stabilise only '7', `u6patch.f` scales only U7
+contributions and includes U7 in its map, `mastruct.c`/`mastructcs.c` accept
+'7' in their user-element whitelists (4 sites -- omitting them makes ccx treat
+the element as a substructure and abort in `mastructread`), and `nodalbbar.py`
+emits U7 with `SPAX_U7_RULE=all|any`. `CCX_U5_STAB=0` reproduces the
+unstabilised element bit-for-bit.
+
+## GRADED stabilisation: this is the fix
+
+`SPAX_U7_RULE=graded` (now the default) emits **U7A..U7D** for tets with 1..4
+nodes interior to the soft phase; ccx scales `CCX_U5_STAB` by n/4. Tets with no
+interior node stay plain U5 and unstabilised. The grade rides in `lakon(3:3)`
+as a LETTER, because ccx's built-in dispatch keys on digits in the label.
+
+At `CCX_U5_STAB=0.07`, the whole BRKB family is inside the Abaqus seed floor:
+
+| case | R_abq | floor | C3D4 | U6 raw | **U6 graded** |
+|---|---|---|---|---|---|
+| b020 | 19.3558 | 7.99 % | +0.72 % | -0.75 % | **-0.28 %** |
+| b040 | 12.9543 | 2.95 % | +2.67 % | +0.94 % | **+1.59 %** |
+| b080 | 7.5979 | 2.32 % | +1.81 % | +0.08 % | **+0.68 %** |
+| b150 | 6.2903 | 1.54 % | +3.62 % | -0.43 % | **+1.43 %** |
+| b280 | 2.9150 | 2.07 % | +4.11 % | **-8.97 %** | **-1.41 %** |
+
+C3D4 outside on 2 of 5, raw U6 outside on 1 of 5, graded U6 outside on none.
+
+And it survives refinement, which is the test raw U6 failed outright:
+
+| L_mesh | el/slab | R raw | vs abq | R graded | vs abq |
+|---|---|---|---|---|---|
+| 0.024 | 0.66 | 2.6534 | -8.97 % | 2.8738 | -1.41 % |
+| 0.016 | 1.00 | 2.7913 | -4.24 % | 2.9850 | +2.40 % |
+| 0.012 | 1.33 | 2.4546 | **-15.79 %** | 2.9172 | **+0.08 %** |
+
+### What is still not settled
+
+* **0.07 is a tuned constant, and b150 has 0.11 points of margin** (+1.43 % on a
+  1.54 % floor). Unlike CAPPED this is aimed at a measured mechanism and the
+  response is monotone rather than a crossing -- but it is still a constant
+  fitted to five cells. It needs the other tight-floor families (nbridges,
+  density) before it can be called general.
+* **equilibrium_gap rises from 2e-07 to ~1e-04** once stab is on. It falls with
+  refinement (2e-4 / 1e-4 / 5e-5) and does not move E_x at the percent level,
+  but it means the U5/U7 bookkeeping inside a SHARED patch is not exact: a
+  patch spanning tets of different grades gives up a blended fraction of K
+  while each element charges its own. That should be made exact.
+* The 0.016 point is +2.40 %, just outside; the sequence -1.41 / +2.40 / +0.08
+  is not monotone. Each refinement level re-meshes with a different sphere
+  packing, so a few percent of that is packing noise, but it has not been
+  separated.
+* The acceptance ladder has NOT been re-run against the graded element: patch
+  test, zero-energy modes, and the C3D10 convergence sweep were all verified on
+  the unstabilised element. `CCX_U5_STAB=0` reproduces it bit-for-bit, so the
+  old results still stand for stab=0, but they say nothing about stab>0.
+
+## 2026-08-24 — the linear tet is exhausted: MINI falsified, and why no scalar can work
+
+Three measurements taken together close off every conforming-linear-tet route
+that has been tried, including the one this file has been recommending.
+
+### 1. `CCX_U5_STAB` is the wrong operator, not a mis-scaled one
+
+Local-projection / Dohrmann–Bochev theory does not leave the stabilisation
+coefficient free: the pressure-deficit space should carry stiffness of order
+`2G`, i.e. `CCX_U5_STAB ~ 2G/K`. For brine that is `4e-4`, three orders of
+magnitude below the fitted `0.07`. A new rule `SPAX_U7_RULE=uniform` (every
+retyped tet graded D, no topological targeting) was added so the coefficient
+could be probed without the targeting rule confounding it.
+
+On BRKB_b280 undrained, applied displacement 5.0e-03:
+
+| `CCX_U5_STAB` | max abs u | vs applied | nodes over |
+|---|---|---|---|
+| 0 | 9.44e-02 | 18.9x | 2467 |
+| **4e-4** (theory) | 9.09e-02 | **18.2x** | 2420 |
+| 4e-3 | 7.28e-02 | 14.6x | 2142 |
+| 4e-2 | 2.97e-02 | 5.9x | 1235 |
+| 0.07 | 2.06e-02 | 4.1x | 930 |
+| 1.0 | 5.24e-03 | 1.0x | 2 |
+
+The theory-scaled value dents a 19x mode by 4%. The mode only dies at
+`stab = 1.0`, which *is* C3D4 (elements carry all of K, patches carry none).
+So the trade between locking and the spurious mode is monotone in the scalar
+and there is no interior point that removes both. That kills the calibrated,
+graded, and self-determining variants at once -- they differ only in *where*
+the scalar is applied, never in the fact that it is one.
+
+### 2. MINI (`U4`) is catastrophic, not marginal
+
+`U4` has been in the tree since the beginning and was set aside on a layered
+cell. Re-measured on the bracket cells, undrained arm only, denominator plain
+C3D4 as always:
+
+| | R | vs Abaqus C3D4H |
+|---|---|---|
+| **BRKB_b150** (R_abq 6.2903, floor 1.54%) | | |
+| C3D4 | 6.5181 | +3.62% |
+| U5+U6 raw | 6.2631 | -0.43% |
+| **U4 MINI** | **1.8906** | **-69.9%** |
+| **BRKB_b280** (R_abq 2.9150, floor 2.07%) | | |
+| C3D4 | 3.0348 | +4.11% |
+| U5+U6 raw | 2.6534 | -8.97% |
+| **U4 MINI** | **1.2743** | **-56.3%** |
+
+`R -> 1` means the undrained cell reads the same as the drained one: the
+brine's 2.2 GPa bulk modulus is gone entirely. The cause is the one `u4mat.f`
+already documents -- the P1 pressure cannot see the bubble's dilatation, so the
+bubble opens a compliance channel worth K/G = 5000.
+
+### 3. `STIFFB` shows the bubble cannot be both stabiliser and honest
+
+`CCX_U4_STAB=STIFFB` gives the bubble its own volumetric energy, closing that
+channel. It also drops the condensed stabilisation `S = B_b A_bb^-1 B_b^T` from
+order `h^2/G` to order `V/K` -- the same scaling as the physical compressibility
+term it sits next to, which is no stabilisation at all. Measured on b280:
+
+| U4 variant | max abs u | vs applied | nodes over |
+|---|---|---|---|
+| MINI | 2.05e-02 | 4.10x | 2160 |
+| CAPPED | 5.73e-02 | 11.46x | 4870 |
+| STIFFB | 5.57e-02 | 11.14x | 4651 |
+
+STIFFB lands back with the unstabilised element. The bubble is simultaneously
+the stabiliser and the leak, exactly as the U5 header says killed U4 the first
+time; giving it volumetric energy trades one for the other with no gain.
+
+### What this means
+
+Every formulation tried is P1 displacement with a pressure the mesh cannot
+support: element-wise P0 (C3D4, locking), nodal P1 (U5+U6, spurious mode), or
+P1 with a stabilisation (`CCX_U5_STAB`, MINI) that interpolates between them.
+The inf-sup requirement is that the stabilisation scale as `h^2/G`; the physics
+requires the constraint compliance to be `V/K`. At `K/G = 5000` on a mesh with
+0.66-1.33 elements per brine slab those two demands are a factor of thousands
+apart, and nothing chosen inside the P1 family can satisfy both.
+
+**The fix must leave P1.** Quadratic displacement is inf-sup stable with *no*
+stabilisation and therefore no parameter and no leak -- either Taylor-Hood
+P2/P1 or P2 with reduced volumetric integration (P2/P0). Order 2 costs about
+7.4x the DOFs on the BRKB cells (211k -> 1.68M with the periodic equations).
+On the frozen-packing convergence cell stock C3D10 is already mesh-converged to
+0.33% over a 2.5x refinement while C3D4 sits 1.5-3% high, which is the first
+evidence that the stock quadratic tet needs no custom element at all.
+
+## 2026-08-24, later — that conclusion was wrong: the element works at nu = 0.499
+
+The section above ends "the fix must leave P1".  **That is superseded.**  It was
+written before the element had ever been put through a locking test or an
+eigenvalue census, and both of those changed the answer.  What was actually
+wrong was not the element but the *stabilisation* and the *operating point*.
+
+### The stabilisation was the locking, not the cure
+
+`elements_ccx/tests/locking_sweep_u6.sh` — cantilever, shear modulus held
+fixed, tip deflection over Euler-Bernoulli.  Flat in nu = no locking.
+
+| nu | C3D4 | U5+U6 s=0 | U5+U6 s=0.07 | U5+U6 s=1.0 |
+|---|---|---|---|---|
+| 0.30 | 0.6754 | 0.7419 | 0.7366 | 0.6754 |
+| 0.45 | 0.5261 | 0.7238 | 0.7033 | 0.5261 |
+| 0.49 | 0.2630 | 0.7000 | 0.6098 | 0.2630 |
+| 0.499 | 0.0560 | **0.6799** | 0.3002 | 0.0560 |
+| 0.4999 | 0.0205 | **0.6580** | **0.0685** | 0.0205 |
+| 0.49999 | 0.0166 | **0.5947** | 0.0221 | 0.0166 |
+
+Unstabilised U5+U6 is genuinely locking-free.  `CCX_U5_STAB=0.07` -- carried for
+weeks as "the fix" because it was 5/5 inside the Abaqus floor on BRKB -- reads
+0.0685 at the brine's own Poisson ratio, against C3D4's 0.0205.  It re-creates
+almost exactly the pathology the element exists to remove.  Obvious in
+hindsight: 0.07*K at K/G = 5000 is 350*G, not a small perturbation.  It had
+simply never been measured, because the only tests ever run on the graded
+element were RVE ratios, and R cannot separate locking from over-softening.
+
+### The eigenvalue census says the same thing
+
+`elements_ccx/tests/stability_modes.py`, two-phase clamped cube (a homogeneous
+one cannot show the instability -- every node patch reaches the clamped
+boundary, so none is unanchored).  lambda_1/G is the softest mode over the
+shear scale; it grows with K under locking and stays flat when there is none.
+
+| K/G | C3D4 | U5+U6 s=0 | U5+U6 s=0.07 |
+|---|---|---|---|
+| 50 | 0.943 | 0.296 | 0.380 |
+| 500 | 6.10 | 0.377 | 1.027 |
+| 5000 | **47.78** | **0.545** | 6.489 |
+
+C3D4's softest mode costs 47.8x the shear scale at the brine ratio -- locking,
+quantified.  U5+U6 s=0 is flat over a hundredfold change in K/G.
+
+### The operating point: K/G = 500, nu = 0.499
+
+The element is locking-free but NOT inf-sup stable, and its spurious mode grows
+as K/G because the soft phase escapes a K-level restraint at a G-level cost.
+Prototype sphere cell, max fluctuation over the applied displacement:
+5.69x at K/G = 5000, **1.05x at 500**, against C3D4's 0.20x.  At K/G = 500 the
+census finds NO mode with volumetric content above 0.3.
+
+That ratio is a modelling choice, not data -- brine is a liquid, G = 0, and
+4.4e5 is already a regularisation.  Cost of nu 0.4999 -> 0.499, measured with
+C3D4 on both (same element, so the shift is pure physics): **+0.17%** on b150,
+**+0.21%** on b280, against seed floors of 1.5-2.1%.  nu = 0.49 costs +1.73% /
++1.90%, about a full floor, which is why the envelope stops at 0.499.
+
+`SPAX_BRINE_KG=500` (SpaX_Standalone.py) raises G at fixed K; `nodalbbar.py`
+refuses a deck outside the envelope unless `SPAX_BBAR_KGMAX` overrides it.
+
+### Acceptance suite
+
+`elements_ccx/tests/acceptance_u6.sh`, at nu = 0.499:
+
+| test | U5+U6 s=0 | C3D4 |
+|---|---|---|
+| T1 patch, 6 components, 1296 ip, distorted | 0.0e+00 | 0.0e+00 |
+| T2 confined, exact C1111 = K + 4G/3 | 0.0e+00 | 0.0e+00 |
+| T3 zero-energy modes | 6 | 6 |
+| T4 cantilever tip/EB | 0.6799 | 0.0560 |
+| T5 census lambda_1/G, spurious count | 0.377, 0 | 6.10, 0 |
+
+**C3D4 is the harness's control, and it earned its place.**  The suite's first
+two runs reported four failures including C3D4 failing its own patch test --
+both times the harness, not the element.  First, `mesh_box` jitters boundary
+nodes (it must, to keep periodic image pairs matching), so the `x <= tol`
+boundary detection found nothing and the block was unrestrained.  Second, a
+free 0.3/h jitter of the Freudenthal split makes slivers -- at n=6, a tet of
+volume 5.0e-05 against a mean of 7.7e-04 -- and since B ~ 1/h, at K/G = 500 the
+solver's round-off is amplified into a stress error of order the stress itself
+(C3D4 read -2.17e+05 where the answer is +2.64e+05).  Both would have been
+written up as element defects without the control.  `make_block.py` now jitters
+interior nodes only and backs the amplitude off until the worst tet is at least
+`SPAX_BLOCK_QMIN` (0.15) of the mean volume.

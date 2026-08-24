@@ -64,7 +64,7 @@ export SPAX_MESH_TIMEOUT=14400 SPAX_MAX_RETRIES=12 SPAX_SEED=20260821
 export CCX_ITER_TOL=${CCX_ITER_TOL:-1e-5}
 # The layered campaigns ran on linear elements (5196ff1, the face-constraint
 # limit), and C3D4 is the element under test.
-export SPAX_MESH_ORDER=${SPAX_MESH_ORDER:-1}
+export SPAX_MESH_ORDER=1
 
 mkdir -p "$ROOT"
 
@@ -72,29 +72,23 @@ mkdir -p "$ROOT"
 # campaign's, not a hand-written approximation of it.
 extract_row () {   # $1 = case stem, $2 = seed, $3 = out csv
     $PY - "$DECK" "$1" "$2" "$3" <<'PYEOF'
-import csv, os, sys
+import csv, sys
 deck, stem, seed, out = sys.argv[1:5]
-want = '%s_und_%s' % (stem, seed)
+import os
+want = os.environ.get('RUNID_FMT', '%s_und_%s') % (stem, seed)
 rows = list(csv.DictReader(open(deck)))
 hit = [r for r in rows if r['run_id'] == want]
 if not hit:
     raise SystemExit('no row %s in %s' % (want, deck))
 r = dict(hit[0])
 r['run_id'] = 'LAY'
-# LMESH overrides the campaign's own element size.  Only for probing an
-# element's behaviour at a resolution the machine can actually solve -- the
-# Abaqus reference is at the campaign's L_mesh, so R is no longer comparable
-# to it once this is set.
-_lm = os.environ.get('LMESH', '').strip()
-if _lm:
-    r['L_mesh'] = _lm
 w = csv.DictWriter(open(out, 'w', newline=''), fieldnames=list(rows[0].keys()))
 w.writeheader()
 w.writerow(r)
-print('  deck row %s -> L=%s L_mesh=%s n_slabs=%s slab_vof=%s '
-      'bridge_fraction=%s K=%s'
-      % (want, r['L'], r['L_mesh'], r['n_slabs'], r['slab_vof'],
-         r.get('bridge_fraction', '-'), r['K_inclusion']))
+print('  deck row %s -> ' % want + ' '.join(
+    '%s=%s' % (k, r[k]) for k in
+    ('L', 'L_mesh', 'n_slabs', 'slab_vof', 'bridge_fraction', 'K_inclusion')
+    if k in r))
 PYEOF
 }
 
@@ -148,7 +142,10 @@ PYEOF
     d="$ROOT/${stem}_drn"; rm -rf "$d"; mkdir -p "$d"; cp "$gen"/Job-LAY-ut*.inp "$d/"
     for f in "$d"/Job-LAY-ut*.inp; do drain_deck "$f"; done
 
-    for st in und drn; do
+    # STATES: which drainage states to solve.  The sphere campaigns are
+    # UNDRAINED ONLY -- Abaqus stored no drained sphere twin, so a drained
+    # run here has nothing to be compared against and only costs time.
+    for st in ${STATES:-und drn}; do
         w="$ROOT/${stem}_$st"
         echo "  -- $st"
         python3 SpaX_CalculiX.py convert "$w" > /dev/null
@@ -160,43 +157,33 @@ PYEOF
         # retyped to the deviatoric tet plus its nodal B-bar patches.  Same
         # mesh, same equations, same drainage state -- the ONLY difference
         # is the element, which is what R is being asked to isolate.
-        # U6_ARMS: which patch coverages to run.
-        #   u6     -- patches over the SOFT PHASE ONLY (how the campaign has
-        #             been run so far)
-        #   u6all  -- patches over BOTH phases.  nodalbbar's own comment warns
-        #             that soft-phase-only leaves interface nodes with
-        #             ONE-SIDED patches, and in a slab a few elements thick
-        #             most soft-phase nodes ARE interface nodes.  On the
-        #             frozen-geometry convergence cell u6all beat u6 at every
-        #             one of five meshes, so it is carried here as its own arm
-        #             rather than assumed.
-        for arm in ${U6_ARMS:-u6 u6all}; do
-            [ "${WITH_U6:-1}" = 1 ] || break
-            case "$arm" in
-                u6)    ES="--elset Sphere_Only" ;;
-                u6all) ES="--elset Sphere_Only --elset Matrix_Only" ;;
-                *) echo "  unknown U6 arm $arm"; continue ;;
-            esac
-            wu="${w}_${arm}"; rm -rf "$wu"; mkdir -p "$wu"
+        if [ "${WITH_U6:-1}" = 1 ]; then
+            wu="${w}_u6"; rm -rf "$wu"; mkdir -p "$wu"
             ok=1
             for f in "$w"/*-ccx.inp; do
                 SPAX_BBAR_SOLVER="${BBAR_SOLVER:-PARDISO}" "$PY" \
-                    elements_ccx/nodalbbar.py "$f" "$wu/$(basename "$f")" $ES \
-                    >> "$ROOT/${stem}_${st}.${arm}gen.log" 2>&1 || ok=0
+                    elements_ccx/nodalbbar.py "$f" "$wu/$(basename "$f")" \
+                    >> "$ROOT/${stem}_${st}.u6gen.log" 2>&1 || ok=0
             done
             if [ "$ok" = 1 ]; then
-                echo "  -- $st ($arm)"
+                echo "  -- $st (U5+U6)"
                 python3 SpaX_CalculiX.py solve "$wu" --cpus "$CPUS" --jobs "${JOBS:-2}" \
                     | sed 's/^/     /'
                 python3 SpaX_PostProcess.py "$ROOT/$stem.$st.csv" "$wu" \
-                    "$ROOT/${stem}_${st}_${arm}.out.csv" \
-                    > "$ROOT/${stem}_${st}_${arm}.post.log" 2>&1
+                    "$ROOT/${stem}_${st}_u6.out.csv" \
+                    > "$ROOT/${stem}_${st}_u6.post.log" 2>&1
             else
-                echo "  -- $st ($arm) deck generation FAILED"
+                echo "  -- $st (U5+U6) deck generation FAILED (see u6gen.log)"
             fi
-        done
+        fi
     done
 done
 
 echo
-$PY calculix/report_abaqus_ratio.py "$ROOT" "$REF" "$SEEDS" $CASES
+if [ -n "${REF:-}" ] && [ "${WITH_REPORT:-1}" = 1 ]; then
+    $PY calculix/report_abaqus_ratio.py "$ROOT" "$REF" "$SEEDS" $CASES
+else
+    echo "No Abaqus drained twin for this campaign -- cross-code R is not"
+    echo "defined.  The per-cell C3D4 and U5+U6 results are in $ROOT:"
+    ls "$ROOT"/*_und*.out.csv "$ROOT"/*_drn*.out.csv 2>/dev/null | sed "s|^|  |"
+fi
