@@ -28,6 +28,7 @@ Smoothing never crosses a material interface: a face whose two tets have
 different materials is treated as a boundary face, and node patches are keyed
 by (node, material), exactly as nodalbbar.py does it.
 """
+import os
 import sys
 import numpy as np
 import scipy.sparse as sp
@@ -308,7 +309,7 @@ def assemble(scheme, nodes, tets, mat, g, vol, faces, patch, props,
     if scheme.startswith('fbar'):
         cyc = int(scheme.split('_')[-1]) if scheme.split('_')[-1].isdigit() else 1
         for m in sorted(set(int(x) for x in mat)):
-            sel, idx, ekeys, edges, Vh, Edev, Svol = fbar_es_operators(
+            sel, idx, ekeys, edges, Vh, Edev, Svol, _R = fbar_es_operators(
                 nodes, tets, mat, g, vol, cyc, m)
             K, G = props[m]
             for h, k in enumerate(ekeys):
@@ -340,9 +341,25 @@ def assemble(scheme, nodes, tets, mat, g, vol, faces, patch, props,
                             vd.append(w)
             Ddiv = sp.coo_matrix((vd, (rd, cd)),
                                  shape=(len(sel), ndof)).tocsr()
-            Gv = (Svol @ Ddiv).tocsr()
+            # F-bar is Petrov-Galerkin, and that is the whole point.  Eq. (17)
+            # of the paper: the stress comes from the modified gradient Fbar
+            # (eq. 11, volumetric part smoothed c times) but it is paired with
+            # the stretching of the UNMODIFIED edge gradient Ftilde (eq. 1).
+            # So the volumetric operator is Btilde^T D Bbar, not Bbar^T D Bbar.
+            #
+            # Symmetrising it is not a harmless convenience: rank(E A^c) is at
+            # most the node count, so Bbar^T D Bbar drops the volumetric
+            # constraint count from ~7n (edges) to ~n (nodes) and the element
+            # falls straight into NS-FEM over-softness.  Measured: fluctuation
+            # 0.49 at c=0 -> 17.53 at c=1 (K/G 5000), monotone and saturating.
+            # Keeping the edge test space holds the constraint count up.
+            #
+            # At c = 0, Svol is E and the two forms coincide, which is why
+            # fbar_0 was the only row that looked sane.
+            Gtrial = (Svol @ Ddiv).tocsr()
+            Gtest = (Edev @ Ddiv).tocsr()
             W = sp.diags(K * Vh)
-            Kv = (Gv.T @ W @ Gv).tocoo()
+            Kv = (Gtest.T @ W @ Gtrial).tocoo()
             A.r.append(Kv.row); A.c.append(Kv.col); A.v.append(Kv.data)
 
     # ---- node-smoothed parts ------------------------------------------
@@ -429,7 +446,11 @@ def run(scheme, n, slab, props, eps=1e-3, stab=0.0, bubble=False,
     q[keep] = spl.spsolve(Kr[keep][:, keep].tocsc(), fr[keep])
     u = T @ q + a
 
-    energy = 0.5 * u @ (K @ u)
+    # 0.5 a.Ku, not 0.5 u.Ku: the two agree exactly whenever K is
+    # symmetric (T^T K u = 0 kills the q part), and only the first is
+    # right for the non-symmetric F-bar operator, where `a` is the
+    # macroscopic test field and K u the internal force.
+    energy = 0.5 * a @ (K @ u)
     c1111 = 2.0 * energy / (eps ** 2)                # unit volume
     # u is the TOTAL displacement (the jump `a` makes it so), defined up to a
     # constant.  The fluctuation is what is left after the macroscopic affine
@@ -451,19 +472,54 @@ def run(scheme, n, slab, props, eps=1e-3, stab=0.0, bubble=False,
     # or larger.  Reported as mean and max jump over brine-brine faces,
     # normalised by the mean |p| in the brine.
     soft = np.flatnonzero(mat == 1)
-    pe = np.zeros(len(tets))
-    for e in soft:
-        ue = un[dofs_of(tets[e])]
-        pe[e] = props[1][0] * (M @ (bmat(g[e]) @ ue))
-    pbar = np.abs(pe[soft]).mean()
-    jumps = []
-    for f, els in faces.items():
-        if len(els) == 2 and mat[els[0]] == 1 and mat[els[1]] == 1:
-            jumps.append(abs(pe[els[0]] - pe[els[1]]))
-    jumps = np.array(jumps) if jumps else np.zeros(1)
-    osc = jumps.mean() / pbar if pbar else float('nan')
-    oscmax = jumps.max() / pbar if pbar else float('nan')
-    return c1111, fl, osc, oscmax, len(nodes), len(tets)
+    theta = np.zeros(len(tets))
+    for e in range(len(tets)):
+        theta[e] = M @ (bmat(g[e]) @ un[dofs_of(tets[e])])
+    Kb = props[1][0]
+
+    # TWO pressure fields, and the distinction is not cosmetic.
+    #
+    # praw = K div(u) per element is what a C3D4 would report from the same
+    # displacement field.  It is scheme-independent, which makes it a fair
+    # cross-scheme number, but it is NOT the pressure a smoothed scheme
+    # computes -- and for any scheme that smooths the volumetric strain it is
+    # biased against it by construction: smoothing the stress while leaving u
+    # free necessarily roughens the raw element divergence.  Reporting only
+    # praw made F-barES-FEM-T4 look like it got worse with c, which is the
+    # reverse of the paper's Fig. 6.
+    #
+    # psch is each scheme's OWN pressure, mapped to elements so the same
+    # face-jump metric applies: K*theta per element for C3D4, K*theta_a
+    # averaged back from the nodes for NS-FEM, K*(E A^c theta) averaged back
+    # from the edges for F-barES-FEM-T4.  This is the field the paper plots.
+    praw = Kb * theta
+    psch = praw.copy()
+    if scheme.startswith('fbar'):
+        cyc = int(scheme.split('_')[-1]) if scheme.split('_')[-1].isdigit() else 1
+        sel, idx, ekeys, edges, Vh, Ee, Sv, Rr = fbar_es_operators(
+            nodes, tets, mat, g, vol, cyc, 1)
+        psch[sel] = Kb * (Rr @ (Sv @ theta[sel]))
+    elif scheme in ('ns_vol', 'ns_full', 'fs_ns'):
+        acc = {}
+        for (a, mm), els in patch.items():
+            if mm != 1:
+                continue
+            Va = sum(vol[e] for e in els) / 4.0
+            acc[a] = sum(vol[e] / 4.0 * theta[e] for e in els) / Va
+        for e in soft:
+            psch[e] = Kb * np.mean([acc[int(a)] for a in tets[e]])
+
+    def _osc(pf):
+        pbar = np.abs(pf[soft]).mean()
+        j = [abs(pf[els[0]] - pf[els[1]]) for f, els in faces.items()
+             if len(els) == 2 and mat[els[0]] == 1 and mat[els[1]] == 1]
+        j = np.array(j) if j else np.zeros(1)
+        return ((j.mean() / pbar, j.max() / pbar) if pbar
+                else (float('nan'), float('nan')))
+
+    osc, oscmax = _osc(praw)
+    oscs, _ = _osc(psch)
+    return c1111, fl, osc, oscmax, len(nodes), len(tets), oscs
 
 
 def runR(scheme, n, slab, Kb, Gb, ice, bubble=False, stab=0.0,
@@ -474,13 +530,13 @@ def runR(scheme, n, slab, Kb, Gb, ice, bubble=False, stab=0.0,
     MINI failed on the real cells (R 6.29 -> 1.89)."""
     und = {0: ice, 1: (Kb, Gb)}
     drn = {0: ice, 1: (Kb / 1000.0, Gb)}
-    cu, fl, osc, oscm, _, _ = run(scheme, n, slab, und, stab=stab,
-                                  bubble=bubble, jitter=jitter)
+    cu, fl, osc, oscm, _, _, oscs = run(scheme, n, slab, und, stab=stab,
+                                        bubble=bubble, jitter=jitter)
     # THE DENOMINATOR IS ALWAYS PLAIN C3D4, exactly as the campaign builds R:
     # Abaqus substitutes the hybrid element in the undrained cell only, so the
     # drained twin must stay the element both codes share.
-    cd, _, _, _, _, _ = run('c3d4', n, slab, drn, jitter=jitter)
-    return cu / cd, fl, osc, oscm
+    cd = run('c3d4', n, slab, drn, jitter=jitter)[0]
+    return cu / cd, fl, osc, oscm, oscs
 
 
 def main():
@@ -502,7 +558,7 @@ def main():
         for bub in (False, True):
             if bub and sc not in ('fs_full', 'fs_ns'):
                 continue
-            c, fl, _o, _om, _, _ = run(sc, 4, (2.0, 3.0), {0: ice, 1: ice},
+            c, fl, _o, _om, _, _, _ = run(sc, 4, (2.0, 3.0), {0: ice, 1: ice},
                                        bubble=bub)
             print('   %-9s%-8s C1111=%.6e  rel err=%9.2e'
                   % (sc, ' +bubble' if bub else '', c, abs(c / exact - 1)))
@@ -557,8 +613,23 @@ if __name__ == '__main__':
 #
 # c = 0 recovers plain selective ES-FEM (edge deviatoric, edge volumetric).
 # Smoothing never crosses a material interface, as everywhere else here.
-def fbar_es_operators(nodes, tets, mat, g, vol, cycles, m):
-    """Return (edge list, V_h, Bdev rows, dbar rows) for material m."""
+def fbar_es_operators(nodes, tets, mat, g, vol, cycles, m, jinput=None):
+    """Return (sel, idx, ekeys, edges, V_h, E, S, R) for material m.
+
+    E is the elem->edge ES-FEM operator of eq. (1)/(8); S is the full
+    volumetric chain of eqs. (6)-(8); R is the edge->elem average used
+    both to recover the scheme's own element pressure and, under the
+    'edge' reading of eq. (6), to seed the cyclic smoothing.
+
+    jinput selects the reading of the tilde on the input to eq. (6):
+      'elem' -- the raw element Jacobian det(eF).  S = E A^c.
+      'edge' -- an element restriction of the already edge-smoothed
+                J of eq. (5), which is what Fig. 1's ordering ('use
+                ES-FEM once ... then use NS-FEM c times') suggests.
+                S = E A^c R E.
+    Defaults to SPAX_FBAR_JIN, itself defaulting to 'elem'.
+    """
+    jinput = jinput or os.environ.get('SPAX_FBAR_JIN', 'elem')
     import scipy.sparse as _sp
     sel = np.flatnonzero(mat == m)
     idx = {e: i for i, e in enumerate(sel)}
@@ -597,8 +668,25 @@ def fbar_es_operators(nodes, tets, mat, g, vol, cycles, m):
             re.append(h); ce.append(idx[e]); ve.append(vol[e] / 6.0 / Vh[h])
     E = _sp.coo_matrix((ve, (re, ce)), shape=(len(ekeys), ne)).tocsr()
 
+    # edge -> element, the plain average over an element's 6 edges
+    rr, cr, vr = [], [], []
+    ehash = {k: h for h, k in enumerate(ekeys)}
+    for e in sel:
+        t = [int(x) for x in tets[e]]
+        for i in range(4):
+            for j in range(i + 1, 4):
+                rr.append(idx[e]); cr.append(ehash[(min(t[i], t[j]),
+                                                    max(t[i], t[j]))])
+                vr.append(1.0 / 6.0)
+    R = _sp.coo_matrix((vr, (rr, cr)), shape=(ne, len(ekeys))).tocsr()
+
+    # The volumetric chain of eqs. (6)-(8), as one operator on the element
+    # divergence field.  'elem': seed with the raw element J, cycle, then
+    # edge-smooth -> S = E A^c.  'edge': seed instead with the element
+    # restriction of the edge-smoothed J -> S = E A^c R E.
     A = (P @ Q).tocsr()
-    S = E
+    Ac = _sp.identity(ne, format='csr')
     for _ in range(cycles):
-        S = (S @ A).tocsr()
-    return sel, idx, ekeys, edges, Vh, E, S
+        Ac = (Ac @ A).tocsr()
+    S = (E @ Ac @ R @ E).tocsr() if jinput == 'edge' else (E @ Ac).tocsr()
+    return sel, idx, ekeys, edges, Vh, E, S, R
