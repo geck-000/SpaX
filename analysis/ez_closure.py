@@ -102,12 +102,41 @@ PHI_C = PHI_LAYER       # retained name: the threshold the closure branches at
 # to 19x once the brine spans the cell, which is the whole point of that
 # section. Applied above PHI_DRAIN only.
 DRAIN_FACTOR = 1.04
-# Exponent and ramp are now read from the layercol cells rather than fitted to
-# field profiles. Those cells sit at a_0 = 0.75 mm, exactly A0_REF_MM, so their
-# exponent is n with no spacing correction -- a direct measurement of it. The
-# four brine fractions imply n = 0.66, 0.93, 1.04, 0.97; the lowest sits inside
-# the ramp and the upper three average 0.98. The band is their spread.
+# THE EXPONENT IS NOT A CONSTANT. It falls linearly with the bridge fraction:
+#
+#     n(b) = 1.091 - 1.337 b        R2 = 0.87, rms 0.029
+#
+# fitted to twelve four-bridge cells over b = 0.180 to 0.388. b predicts n far
+# better than phi does (R2 0.87 against 0.65 on the same cells), which is what
+# the mechanism asks for: the exponent belongs to the bridge geometry, not to
+# how much brine the slice happens to hold.
+#
+# The cells sit at a_0 = 0.75 mm, exactly A0_REF_MM, so this is n with no
+# spacing correction -- a direct measurement.
+#
+# WHAT THIS REPLACES, and why. The old constant N_MID = 0.98 came from four
+# TWO-bridge cells, three of which agreed at 0.93-1.04 while the fourth read
+# 0.66 and was taken as a partial weight. It was not. At b ~ 0.31 two bridges
+# and their periodic images make and break a connected ice path across the
+# plane, and that fourth cell is the only one of the four above the threshold.
+# Dividing the same ice area into four removes the coincidence: eleven cells
+# spanning b = 0.225-0.388 hold n to a range of 0.079 where the two-bridge step
+# is 0.256. Evaluated back at N = 2 the new form gives 0.984 at phi = 0.10 --
+# indistinguishable from the 0.98 fitted there -- and drifts up above it, so
+# the old constant was accurate exactly where it was calibrated and nowhere
+# else.
+N_OF_B_INTERCEPT, N_OF_B_SLOPE = 1.091, -1.337
+N_FIT_RMS = 0.029
+N_FIT_B_RANGE = (0.180, 0.388)   # measured; below this the form is extrapolated
+
+# Kept for callers that still pass a scalar exponent explicitly. These are the
+# TWO-bridge constants and are no longer the default for anything.
 N_MID, N_LO, N_HI = 0.98, 0.93, 1.04
+
+
+def n_of_b(b, offset=0.0):
+    """Bridge exponent at four bridges to a plane, Eq. n(b)."""
+    return N_OF_B_INTERCEPT + N_OF_B_SLOPE * np.asarray(b, float) + offset
 
 # The ramp saturates at PHI_SAT, not at phi_0. The same cells put the bridge
 # factor essentially fully active by phi = 0.12 and flat thereafter, so
@@ -191,8 +220,10 @@ A0_MM, A0_REF_MM, SPACING_EXP = 0.75, 0.75, 0.69
 # DEFAULT IS N_CELLS, so nothing changes unless a caller asks for it. Passing
 # n_bridges scales the LAYERED BRANCH ONLY -- the pocket branch has no bridges
 # and must not move.
-N_CELLS = 2
-N_IMAGED = (6, 32)
+# The calibration is now at FOUR bridges, not two: n(b) above is fitted to
+# four-bridge cells. Two was never a choice, it was what the old cells
+# contained, and it carried a percolation artefact.
+N_CELLS = 4
 BRIDGE_COUNT_EXP = 0.497
 E_FLOOR = 0.05          # GPa, nominal skeletal residual; see caveat above
 
@@ -203,8 +234,8 @@ def brine_volume(T, S):
     return np.asarray(S, dtype=float) * (-49.185 / T + 0.532) / 1000.0
 
 
-def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR,
-             n_bridges=N_CELLS):
+def E_of_phi(phi, n=None, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR,
+             n_bridges=N_CELLS, weight='step', n_offset=0.0):
     """Transverse Young's modulus, GPa, for drained columnar sea ice.
 
     The spacing enters through the EXPONENT, not as a prefactor. A prefactor
@@ -247,8 +278,25 @@ def E_of_phi(phi, n=N_MID, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR,
     # band of moduli with no corresponding brine fraction. The weight keeps the
     # closure continuous and invertible at the cost of a milder basal knockdown.
     b = np.clip(1.0 - np.sqrt(np.clip(phi, 0.0, phi_0) / phi_0), 0.0, 1.0)
-    n_eff = n * (A0_REF_MM / a0_mm) ** SPACING_EXP
-    w = np.clip((phi - PHI_C) / (PHI_SAT - PHI_C), 0.0, 1.0)
+
+    # n is a function of b unless a caller overrides it with a scalar.
+    n_base = n_of_b(b, offset=n_offset) if n is None else n
+    n_eff = n_base * (A0_REF_MM / a0_mm) ** SPACING_EXP
+
+    # THE RAMP IS RETRACTED. phi_sat = 0.104 was obtained by reading one cell's
+    # low exponent as the bridge weight not yet being fully on and inverting;
+    # that cell is the one whose two bridges percolate, and at four bridges it
+    # shows no deficit to invert. Four-bridge cells run from phi = 0.076 to
+    # 0.093, straight through phi_c, with no feature there. Of the two forms
+    # the paper compares only the step retains support, so it is the default;
+    # weight='ramp' reproduces the old behaviour for comparison and is not
+    # supported by any measurement.
+    if weight == 'ramp':
+        w = np.clip((phi - PHI_C) / (PHI_SAT - PHI_C), 0.0, 1.0)
+    elif weight == 'step':
+        w = np.where(np.asarray(phi, float) > PHI_C, 1.0, 0.0)
+    else:
+        raise ValueError("weight must be 'step' or 'ramp', got %r" % (weight,))
     E = E_pocket * b ** (n_eff * w)
 
     # Bridge count. The factor is raised to the same weight w that switches the
@@ -318,10 +366,18 @@ def E_column(z, T_surf, T_base, S, **kw):
 
 
 def E_band(phi, **kw):
-    """Modulus with the exponent band: (low, mid, high)."""
+    """Modulus with the exponent band: (low, mid, high).
+
+    The band is now the scatter of the n(b) fit, +/- 2 rms, rather than the
+    spread of three constants read off four two-bridge cells. A HIGHER exponent
+    gives a SOFTER cell, so the low-modulus edge takes the positive offset.
+    """
     kw.pop('n', None)
-    return (E_of_phi(phi, n=N_HI, **kw), E_of_phi(phi, n=N_MID, **kw),
-            E_of_phi(phi, n=N_LO, **kw))
+    kw.pop('n_offset', None)
+    d = 2.0 * N_FIT_RMS
+    return (E_of_phi(phi, n_offset=+d, **kw),
+            E_of_phi(phi, n_offset=0.0, **kw),
+            E_of_phi(phi, n_offset=-d, **kw))
 
 
 def flexural(E, z):
