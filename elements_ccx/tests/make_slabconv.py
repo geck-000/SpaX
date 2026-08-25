@@ -229,11 +229,16 @@ def main():
         tail += ['*SOLID SECTION,ELSET=Matrix_Only,MATERIAL=Mat_Matrix',
                  '*MATERIAL,NAME=Mat_Matrix', '*ELASTIC',
                  '%.12e, %.12e' % (E_ICE, NU_ICE)]
-    tail += ['*BOUNDARY',
-             'X0, %d, %d, 0.0' % (ax + 1, ax + 1),
-             'X1, %d, %d, %.12e' % (ax + 1, ax + 1, EPS),
-             'YFACE, %d, %d, 0.0' % (o1 + 1, o1 + 1),
-             'ZFACE, %d, %d, 0.0' % (o2 + 1, o2 + 1)]
+    # The driven X1 magnitude is non-zero, so *BOUNDARY must sit AFTER *STEP:
+    # Abaqus rejects any prescribed magnitude other than zero in the model
+    # definition ("PRESCRIBED *BOUNDARY MAGNITUDES MUST BE ZERO IN THE MODEL
+    # DEFINITION").  CalculiX tolerates either placement, so emitting the block
+    # in the step keeps both decks correct.
+    bc = ['*BOUNDARY',
+          'X0, %d, %d, 0.0' % (ax + 1, ax + 1),
+          'X1, %d, %d, %.12e' % (ax + 1, ax + 1, EPS),
+          'YFACE, %d, %d, 0.0' % (o1 + 1, o1 + 1),
+          'ZFACE, %d, %d, 0.0' % (o2 + 1, o2 + 1)]
 
     for tag, kinc, step in (('abq', 'C3D4H', '*STATIC'),
                             ('ccx', 'C3D4', '*STATIC, SOLVER=PARDISO')):
@@ -242,8 +247,8 @@ def main():
         if hard:
             L += elblock('C3D4', hard, 'Matrix_Only')
         L += tail
-        L += ['*STEP', step,
-              '*NODE PRINT,NSET=X1', 'U,RF',
+        L += ['*STEP', step] + bc
+        L += ['*NODE PRINT,NSET=X1', 'U,RF',
               '*NODE PRINT,NSET=X0', 'U,RF',
               '*END STEP']
         open('%s_%s.inp' % (stem, tag), 'w').write('\n'.join(L) + '\n')

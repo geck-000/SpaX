@@ -670,11 +670,12 @@ That choice is not cosmetic and cost three attempts to find:
 | 30 | 6 | 9.2762e+08 | 1.0971e+09 | 9.9705e+08 | 1.1827 | 1.0749 | +10.03% |
 | 40 | 8 | 9.1347e+08 | 1.0686e+09 | 9.8273e+08 | 1.1698 | 1.0758 | +8.74% |
 | 50 | 10 | 8.9982e+08 | 1.0205e+09 | 9.6840e+08 | 1.1341 | 1.0762 | +5.38% |
-| 60 | 12 | 8.9317e+08 | 1.0039e+09 | | 1.1240 | | |
+| 60 | 12 | 8.9317e+08 | 1.0039e+09 | 9.6170e+08 | 1.1240 | 1.0767 | +4.40% |
 
 **F-barES-FEM-T4 is converged from two elements through the slab.** R reads
-1.0850, 1.0741, 1.0749, 1.0758, 1.0762 -- flat to within 1% across a six-fold
-refinement, with a 0.2% wiggle at the coarse end and monotone from `n = 20` on.
+1.0850, 1.0741, 1.0749, 1.0758, 1.0762, 1.0767 -- flat to within 1% across a
+six-fold refinement, with a 0.2% wiggle at the coarse end and monotone from
+`n = 20` on.
 
 **Plain C3D4 is not converged at twelve.** R falls 1.3957 -> 1.1240 and is
 still falling, heading down toward the F-bar value, as it must: both elements
@@ -696,4 +697,38 @@ K/G = 500 rather than 5000.
 boundary conditions, only the element keyword differs. So C3D4H can be run on
 exactly these meshes rather than being a reference from another campaign with
 another packing, which is the weakness of every comparison in section 9.
-`hpc/submit_slabconv_abaqus.sh` runs the sweep on CSC Roihu (`abaqus/2026`).
+`hpc/submit_slabconv_abaqus.sh` runs the sweep on CSC Roihu (`abaqus/2026`),
+and `hpc/postprocess_slabconv.sh` (chained after the solve array) reads the
+reactions back out of the `.odb` with `elements_ccx/tests/slabconv_extract.py`
+-- the ODB route the other campaigns use, not the `*NODE PRINT` block.
+
+The drained twins agree to 0.003% at every `n` -- both codes, both elements --
+because nothing locks at `nu = 0.41`.  The undrained arm is the discriminator,
+and `c = 0` (plain selective ES-FEM-T4) is included because `c` is an integer
+count of cycles, so the question "does `c = 1` overshoot?" has to be answered
+with the neighbouring setting:
+
+| n | el/slab | C1111 und C3D4H | und F-bar `c=1` | R C3D4H | R F-bar `c=1` | R F-bar `c=0` | R C3D4 |
+|---|---|---|---|---|---|---|---|
+| 10 | 2 | 1.4802e+09 | 1.2560e+09 | 1.2787 | 1.0850 | 1.2335 | 1.3957 |
+| 20 | 4 | 1.0466e+09 | 1.0338e+09 | 1.0875 | 1.0741 | 1.1235 | 1.2700 |
+| 30 | 6 | 1.0031e+09 | 9.9705e+08 | 1.0815 | 1.0749 | 1.0985 | 1.1827 |
+| 40 | 8 | 9.8715e+08 | 9.8273e+08 | 1.0807 | 1.0758 | 1.0978 | 1.1698 |
+| 50 | 10 | 9.7128e+08 | 9.6840e+08 | 1.0795 | 1.0762 | 1.0897 | 1.1341 |
+| 60 | 12 | 9.6396e+08 | 9.6170e+08 | 1.0793 | 1.0767 | 1.0882 | 1.1240 |
+
+**F-barES-FEM-T4 `c=1` and Abaqus C3D4H share a limit.**  C1111 und agrees to
+0.23% at `n = 60`, and a Richardson extrapolation (`R = R_inf + C h^2`,
+`h = 1/n`, least squares over `n = 40, 50, 60`) puts the two limits at
+**1.0773 and 1.0780 -- 0.06% apart**.  C3D4 is still 4% stiff at `n = 60`, and
+its fit residual (3.9e-3) is 30x the others' because locking is not a clean
+`h^2` error -- it is not in the asymptotic regime any of these meshes reaches.
+
+**One smoothing cycle removes the last locking, and no more.**  `c = 0` still
+reads 0.83% stiff at `n = 60` (R 1.0882, limit 1.0795); one cycle takes it to
+0.23% (R 1.0767, limit 1.0773), and the reference C3D4H sits at 1.0793 /
+1.0780 between them.  So `c = 1` lands inside the reference's own convergence
+scatter, `c = 0` is still short, and there is no half-step available.
+
+`analysis/slabconv_report.py` reproduces this table, the Richardson fits, and
+the `C1111`-vs-`h` figure (`out_slabconv/<case>/slabconv_convergence.png`).
