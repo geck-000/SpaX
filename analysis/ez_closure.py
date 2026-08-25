@@ -63,6 +63,10 @@ damage this elastic closure does not model.
 """
 import numpy as np
 
+# numpy 2.x removed np.trapz in favour of np.trapezoid; keep the old name.
+if not hasattr(np, 'trapz'):
+    np.trapz = np.trapezoid
+
 E_ICE = 9.37
 
 # Pringle et al. measure percolation of the pore space in three directions, and
@@ -481,8 +485,10 @@ def flexural(E, z):
 
 def main():
     print('E(phi) WITH THE BAND')
+    print('  n(b) = %.3f - %.3f b at N=4, band = +/- 2 rms (%.3f)'
+          % (N_OF_B_INTERCEPT, -N_OF_B_SLOPE, 2.0 * N_FIT_RMS))
     print('%8s %10s %10s %10s %10s'
-          % ('phi', 'n=%.2f' % N_HI, 'n=%.2f' % N_MID, 'n=%.2f' % N_LO, 'band'))
+          % ('phi', 'lo', 'mid', 'hi', 'band'))
     for phi in (0.02, 0.05, 0.08, 0.12, 0.16, 0.19, 0.22):
         lo, mid, hi = (float(v) for v in E_band(phi))
         print('%8.3f %10.3f %10.3f %10.3f %9.0f%%'
@@ -490,9 +496,10 @@ def main():
 
     print('\nWORKED EXAMPLE: 1 m first-year column, -20 C surface, S = 6 ppt')
     z = np.linspace(0, 1, 200)
-    for tag, n in (('n = %.2f' % N_HI, N_HI), ('n = %.2f' % N_MID, N_MID),
-                   ('n = %.2f' % N_LO, N_LO)):
-        E = E_column(z, -20.0, -1.8, 6.0, n=n)
+    for tag, off in (('n(b)+2rms', +2.0 * N_FIT_RMS),
+                     ('n(b)', 0.0),
+                     ('n(b)-2rms', -2.0 * N_FIT_RMS)):
+        E = E_column(z, -20.0, -1.8, 6.0, n_offset=off)
         print('  %-10s E_top %5.2f  E_base %5.2f  alpha %.3f  E_flex %5.2f GPa'
               % (tag, E[0], E[-1], E[-1] / E[0], flexural(E, z)))
 
@@ -500,19 +507,24 @@ def main():
     zz = np.linspace(1e-3, 1.0, 400)
     zc = zz * 32.0
     phi_g = (0.29315 * zc ** 2 - 5.124 * zc + 85.977) / 1000.0
-    lo, mid, hi = (flexural(E_of_phi(phi_g, n=n), zz)
-                   for n in (N_HI, N_MID, N_LO))
+    lo, mid, hi = (flexural(E_of_phi(phi_g, n_offset=off), zz)
+                   for off in (+2.0 * N_FIT_RMS, 0.0, -2.0 * N_FIT_RMS))
     print('  Gogolaze beam   %.2f-%.2f GPa (mid %.2f) vs measured 0.79-1.42'
           % (lo, hi, mid))
 
     phi_m = (np.log(7.23 / (4.4 * (1 - 0.62 * zz ** 0.6))) / 4.2) ** 2
-    for n, tag in ((N_HI, 'n=%.2f' % N_HI), (N_MID, 'n=%.2f' % N_MID),
-                   (0.375, 'n=0.375')):
-        E = E_of_phi(phi_m, n=n)
+    for off, tag in ((+2.0 * N_FIT_RMS, 'n(b)+2rms'),
+                     (0.0, 'n(b)'),
+                     (-2.0 * N_FIT_RMS, 'n(b)-2rms')):
+        E = E_of_phi(phi_m, n_offset=off)
         print('  Marchenko %s  alpha %.3f vs his 0.384' % (tag, E[-1] / E[0]))
 
     print('\n  Report the band, not the midpoint alone. At the porosities that')
     print('  matter it is a factor of two, and phi_0 would widen it further.')
+    print('\n  n(b) is specific to four bridges: the count changes its shape,')
+    print('  not its level. It reproduces its twelve calibration cells to rms')
+    print('  %.3f and is not offered as the bridge-branch law of sea ice.'
+          % N_FIT_RMS)
 
 
 if __name__ == '__main__':
