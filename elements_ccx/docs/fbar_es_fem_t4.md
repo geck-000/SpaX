@@ -430,6 +430,19 @@ Locking makes the undrained cell too stiff and so inflates R.
 | | F-barES `c=0` | 2.4933 | | | +4.82% | locking |
 | | F-barES `c=1` | — | | | — | cannot be built |
 
+**Which K/G these numbers are at, and it is not the target one.** The
+campaign's undrained decks carry `*ELASTIC 1320000, 0.4999` for the brine, so
+every row of the table above is at **K/G = 5000**, with the drained twin at
+`nu = 0.406` (K/G = 5). That is the campaign's own definition of undrained --
+brine's real bulk modulus, 2.2 GPa against G = 4.4e5 -- and it cannot be moved
+without losing the comparison, because the stored Abaqus reference was run at
+it. So this table sits one to two orders of magnitude above the element's
+validated envelope (K/G = 500, `nu = 0.499`) and above the paper's own
+(`nu = 0.49 at most`, section 5). The section 8 acceptance ladder IS at
+K/G = 500 and is exact there. Read this table as a controlled
+element-substitution comparison at an extreme point, not as evidence about
+the operating point.
+
 **What it says.** The cyclic smoothing does exactly what the paper says it
 does, and on `m0p0240` it steps straight over the target: `c = 0` — plain
 selective ES-FEM-T4 — still locks at +0.78%, one cycle moves R by −1.81
