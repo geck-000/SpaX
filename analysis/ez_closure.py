@@ -136,16 +136,25 @@ N_FIT_B_RANGE = (0.180, 0.388)   # measured; below this the form is extrapolated
 # lattice and six random, and the split TRACKS b, so it looked like a systematic
 # bias steepening the slope.
 #
-# It is not. Eight cells at fixed b, N and mesh, differing only in arrangement:
+# It is not. Eight cells at fixed b, N and mesh, differing only in the bridge
+# placement seed:
 #
-#     b = 0.3144   lattice 0.6158   random 0.6107 +/- 0.0129   offset +0.0052
-#     b = 0.2584   lattice 0.7509   random 0.7618 +/- 0.0110   offset -0.0109
+#     b = 0.3144   n = 0.6119 +/- 0.0114   (spread 0.0316 over 4 placements)
+#     b = 0.2584   n = 0.7590 +/- 0.0106   (spread 0.0270 over 4 placements)
 #
-# The offsets have OPPOSITE SIGNS and both sit inside the random-to-random
-# scatter, so arrangement is noise and not bias. n(b) needs no correction. What
-# it does need is this number quoted: arrangement alone contributes about 0.012
-# to n, roughly 40% of the fit rms and 4% of the 0.278 the fit spans.
-N_ARRANGEMENT_SD = 0.012
+# so arrangement is NOISE and not bias: n(b) needs no correction, and this is
+# the number to quote -- about 0.011 in n, roughly 38% of the fit rms and 4% of
+# the 0.278 the fit spans.
+#
+# These cells CANNOT be sorted into regular and irregular. Bridges are placed
+# per LAYER, not per cell, and at these bridge fractions 24 of the 32
+# layer-placements jammed and fell back to the lattice, so every cell is a
+# mixture and mostly lattice. An earlier version of this comment quoted a
+# regular-minus-irregular offset; that comparison was between labels taken from
+# a single-layer query and did not describe the cells. The scatter above is a
+# straight measurement over independent placements and does not depend on the
+# classification.
+N_ARRANGEMENT_SD = 0.011
 
 # Kept for callers that still pass a scalar exponent explicitly. These are the
 # TWO-bridge constants and are no longer the default for anything.
