@@ -46,6 +46,25 @@ LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 # '20' -> 20), so a type named U214 is claimed by the nope=4 rule before the
 # *USER ELEMENT lookup and ccx reads 4 nodes instead of 14.  nodalbbar.py hit
 # exactly this and it showed up on only 3 of ~36000 elements.
+# THE REAL CEILING ON c IS mastruct, NOT MEMORY AND NOT THE 255-NODE LIMIT.
+#
+# mastruct.c pushes one entry per off-diagonal (dof,dof) pair of the upper
+# triangle of EVERY element onto `mast1`, with NO deduplication -- insert.c
+# is a linked-list append, and the compression happens afterwards.  A U3
+# element is dense over its whole stencil, so the count is
+#
+#     sum over edges of  d(d+1)/2,   d = 3 * (stencil nodes)
+#
+# QUADRATIC in the stencil.  It costs 8 bytes each (mast1 and next, one ITG
+# apiece) and the index is a 32-bit ITG in a stock build, so past 2^31 the
+# 1.1x growth in insert.c overflows and ccx dies in u_realloc with a
+# NEGATIVE allocation size.
+#
+# Measured on the layered campaign cells at c = 1:
+#     LMESH_m0p0240   1.12e9 insertions,  9.0 GB, builds (30.1M nnz, 154 s)
+#     LMESH_m0p0120   5.16e9 insertions, 41.3 GB, dies in u_realloc
+INS_LIMIT = 2 ** 31
+
 NAMES = [a + b for a in LETTERS for b in LETTERS]
 
 
@@ -229,6 +248,37 @@ def main():
         ss = np.array([len(s) for s in supp])
         stats[es] = (len(ids), len(loc), len(keys), rs, ss)
 
+    # --- the mastruct insertion wall ------------------------------------
+    #
+    # mastruct.c builds the matrix structure by pushing ONE entry per
+    # (dof, dof) pair of every element onto `mast1` and compressing
+    # afterwards, and its counter is a 32-bit ITG in a stock build.  A U3
+    # element is dense over its whole stencil, so the deck costs
+    #
+    #     sum over edges of (3 n_h)^2 + (3 r_h)^2
+    #
+    # insertions, which is QUADRATIC in the stencil and is the real ceiling
+    # on c -- reached long before memory is.  Measured: LMESH_m0p0240 at
+    # c = 1 needs 1.9e9 and builds (30.1M nonzeros, 154 s); LMESH_m0p0120 at
+    # c = 1 needs 9.1e9 and dies in u_realloc with a NEGATIVE size, because
+    # the doubling of mast1 overflowed past 2^31.
+    def _ins(sz):
+        d = 3 * sz.astype('int64')
+        return int((d * (d + 1) // 2).sum())
+
+    ins = sum(_ins(s[3]) + _ins(s[4]) for s in stats.values())
+    if ins >= INS_LIMIT:
+        raise SystemExit(
+            'fbares: this deck would make mastruct.c push %.2e (dof,dof) '
+            'entries onto mast1, past the %.2e a 32-bit ITG can index -- ccx '
+            'dies in u_realloc with a NEGATIVE allocation size while growing '
+            'the list. Measured: LMESH_m0p0240 at c=1 needs 1.12e9 (9.0 GB) '
+            'and builds; LMESH_m0p0120 at c=1 needs 5.16e9 and does not. '
+            'Use --cycles %d, '
+            'or coarsen the mesh -- the count is quadratic in the stencil, so '
+            'one fewer smoothing cycle is worth about an order of magnitude.'
+            % (ins, float(INS_LIMIT), max(a.cycles - 1, 0)))
+
     # --- the 255-node wall ----------------------------------------------
     worst = max((s[4].max(), es) for es, s in stats.items())
     if worst[0] > 255:
@@ -369,7 +419,9 @@ def main():
               '(%d DOF)' % (ss.mean(), np.percentile(ss, 99), ss.max(),
                             3 * (ss.max() + 0)))
     ndof = 3 * max(s[4].max() for s in stats.values())
-    print('  %d element types; widest element %d DOF' % (len(groups), ndof))
+    print('  %d element types; widest element %d DOF; %.2e (dof,dof) '
+          'insertions into mastruct = %.1f GB (limit %.2e)'
+          % (len(groups), ndof, ins, ins * 8.0 / 2.0 ** 30, float(INS_LIMIT)))
     if ndof > 765:
         print('  NOTE: the e_c3d_u* family and mafillsm.f hold 765 DOF '
               '(255 nodes, the lakon(8:8) encoding limit).  %d DOF cannot '

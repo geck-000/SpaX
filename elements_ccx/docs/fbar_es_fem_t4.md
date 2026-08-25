@@ -405,3 +405,71 @@ it once over all elements at a node and then skipping foreign elements in the
 walk divides by an inflated `V_n`, breaks the unit row sum of `Q`, and stops
 the chain preserving a constant `J` — a patch-test failure that appears only at
 the brine/ice interface. `u3vol` recomputes it per material where it is used.
+
+## 9. Against Abaqus C3D4H on the layered cells
+
+The measurement the whole exercise is for. `calculix/layered_abaqus_ratio.sh`
+compares
+
+    R = E_x(undrained) / E_x(drained)
+
+against the stored Abaqus campaign, where the undrained cell was meshed with
+C3D4H and the drained one with plain C3D4. The denominator is always plain
+C3D4 in both codes, so only the undrained element differs, and Abaqus's own
+seed-to-seed spread in R sets the noise floor the difference has to beat.
+Locking makes the undrained cell too stiff and so inflates R.
+
+| cell | element | R_ccx | R_abq | floor | excess | verdict |
+|---|---|---|---|---|---|---|
+| LMESH_m0p0240 | C3D4 | 2.5074 | 2.4701 | 0.61% | **+1.51%** | locking |
+| | U5+U6 brine | 2.4572 | | | −0.52% | inside |
+| | F-barES `c=0` | 2.4893 | | | +0.78% | locking |
+| | F-barES `c=1` | 2.4448 | | | −1.03% | below ref |
+| LMESH_m0p0120 | C3D4 | 2.5736 | 2.3786 | 0.75% | **+8.20%** | locking |
+| | U5+U6 brine | 2.1718 | | | −8.70% | below ref |
+| | F-barES `c=0` | 2.4933 | | | +4.82% | locking |
+| | F-barES `c=1` | — | | | — | cannot be built |
+
+**What it says.** The cyclic smoothing does exactly what the paper says it
+does, and on `m0p0240` it steps straight over the target: `c = 0` — plain
+selective ES-FEM-T4 — still locks at +0.78%, one cycle moves R by −1.81
+points to −1.03%, and the ±0.61% Abaqus floor falls in the gap between them.
+`c` is an integer count of smoothings, so there is no setting in between. On
+this cell U5+U6 lands inside the floor and F-barES-FEM-T4 does not.
+
+On the finer `m0p0120` cell, where C3D4 locks by +8.20% and U5+U6 overshoots
+by −8.70%, `c = 0` halves the locking to +4.82% and is the closest any
+CalculiX arm has come — but it still locks, and `c = 1`, the arm that would
+close it, cannot be built at all (below).
+
+**`c = 1` at `m0p0120` is out of reach, and the reason is `mastruct`, not
+memory and not the 255-node limit.** `insert.c` appends one entry per
+off-diagonal upper-triangle `(dof, dof)` pair of every element to `mast1`
+with no deduplication, at 8 bytes each (`mast1` and `next`), and grows the
+list by 1.1x with a 32-bit ITG index. A U3 element is dense over its whole
+stencil, so the count is `sum_h d_h(d_h+1)/2` with `d_h = 3 n_h` — quadratic
+in the stencil:
+
+| cell | `c` | insertions | structure memory | outcome |
+|---|---|---|---|---|
+| LMESH_m0p0240 | 0 | 7.23e7 | 0.5 GB | 6.76M nnz, 40 s |
+| LMESH_m0p0240 | 1 | 1.12e9 | 8.3 GB | 30.05M nnz, 154 s |
+| LMESH_m0p0120 | 0 | 2.74e8 | 2.0 GB | 24.94M nnz, 471 s |
+| LMESH_m0p0120 | 1 | 5.16e9 | 38.4 GB | `*ERROR in u_realloc: size(bytes)=-8589934592` |
+
+Past `2^31` the 1.1x growth overflows and ccx asks for a negative allocation.
+`fbares.py` now computes the count and refuses the deck with that number in
+the message, rather than letting a two-hour generation end in a `u_realloc`
+crash. Raising it needs a `long long` ITG build *and* more RAM than this
+machine has, or the direct global assembly route of section 8.
+
+**How E_x is read.** An F-bar deck carries no element stress, so `sigma_bar`
+comes from the reference-point reaction alone
+(`SPAX_CCX_SIGMA_FROM_RF=1` in `SpaX_CalculiX.py`) — the other of the two
+independent measurements the campaign normally cross-checks against each
+other, and the one Abaqus's macroscopic modulus is defined by. The
+`equilibrium_gap` column is therefore empty for these arms by construction.
+What stands in for it: on `m0p0240` the transverse reference points came back
+with reactions of 2.7e-07 against 1.5e+07 at the driven one — traction-free
+to 1.7e-14 — and the fixed centre carried 1.7e-08, so the periodic constraint
+set and the element are consistent to round-off.

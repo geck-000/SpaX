@@ -926,10 +926,28 @@ def extract_first_order(dat_path, s_comp, eng_strain, L):
             "{} holds no result blocks (the step did not converge, or the deck "
             "carried no *EL PRINT request)".format(dat_path))
 
+    # SPAX: sigma_bar from the reference-point reaction alone.
+    #
+    # An F-barES-FEM-T4 deck carries NO element stress: the base tets are U5Z
+    # and null, and U2/U3 are smoothing domains with no shape function of
+    # their own, so fbares.py drops *EL PRINT rather than let it report a
+    # column of zeros as the answer.  The volume-average route is therefore
+    # unavailable and sigma_bar is read from the reaction at the driven
+    # reference point -- the OTHER of the two independent measurements this
+    # function normally cross-checks against each other, exact by work
+    # conjugacy, and the one Abaqus's own macroscopic modulus is defined by.
+    #
+    # What is lost is the cross-check itself, so equilibrium_gap is left
+    # UNSET rather than reported as zero, and the geometry columns that come
+    # from the element volume block are NaN rather than a plausible-looking
+    # 1.0.  Both say 'not measured' in the CSV instead of lying quietly.
+    # The mesh is shared with the plain-C3D4 arm, whose row carries them.
+    rf_only = os.environ.get('SPAX_CCX_SIGMA_FROM_RF', '').strip() == '1'
+
     stress_strain_data = []
     for frame in frames:
         s_lab, s_dat = _set_arrays(frame, 'stress')
-        if len(s_lab) == 0:
+        if len(s_lab) == 0 and not rf_only:
             continue
         vol_map = _volume_map(frame)
         w = spp._aligned(vol_map, s_lab.tolist())
@@ -962,14 +980,21 @@ def extract_first_order(dat_path, s_comp, eng_strain, L):
         rp_u = _rp_value(frame, 'disp', rp_name, rp_dof)
         eps_macro = (rp_u / L) if rp_u is not None else (frame['time'] * eng_strain)
 
+        sigma_rf = (_rp_value(frame, 'force', rp_name, rp_dof) or 0.0) / (L * L)
+        if rf_only and not sigma_rf:
+            raise RuntimeError(
+                "{}: SPAX_CCX_SIGMA_FROM_RF=1 but no reaction was printed at "
+                "reference point {} -- there is then no route to sigma_bar at "
+                "all".format(dat_path, rp_name))
+
         stress_strain_data.append({
-            'sigma': total_stress_vol / V_RVE,
+            'sigma': sigma_rf if rf_only else total_stress_vol / V_RVE,
             'eps': eps_macro,
             'eps_axial_solid': (axial / total_vol) if total_vol > 0 and not is_shear else 0.0,
             'eps_trans1': (trans1 / total_vol) if total_vol > 0 and not is_shear else 0.0,
             'eps_trans2': (trans2 / total_vol) if total_vol > 0 and not is_shear else 0.0,
-            'v_solid': total_vol,
-            'v_incl': total_incl_vol,
+            'v_solid': float('nan') if rf_only else total_vol,
+            'v_incl': float('nan') if rf_only else total_incl_vol,
             # Not used by the fit. The reaction at the driven reference point is
             # the macroscopic stress resultant, so RF/L^2 measures the same
             # sigma_bar the volume average produces, by a completely different
@@ -977,11 +1002,13 @@ def extract_first_order(dat_path, s_comp, eng_strain, L):
             # single constraint force. They agree to solver tolerance when the
             # periodic equations are right, and diverge when they are not --
             # which is the failure this translation is most exposed to.
-            'sigma_rf': (_rp_value(frame, 'force', rp_name, rp_dof) or 0.0) / (L * L),
+            'sigma_rf': sigma_rf,
         })
 
     results = spp._reduce_first_order(stress_strain_data, V_RVE, is_shear)
-    gap = _equilibrium_gap(stress_strain_data)
+    # In rf_only mode the two measurements are the same number, so the gap
+    # would be an identically-zero self-comparison.  Do not report one.
+    gap = None if rf_only else _equilibrium_gap(stress_strain_data)
     if gap is not None:
         results['equilibrium_gap'] = gap
         if gap > _EQUILIBRIUM_TOL:

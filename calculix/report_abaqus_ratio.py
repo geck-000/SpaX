@@ -79,8 +79,14 @@ def main(argv):
         # Two arms on the SAME mesh and the same equations: the stock
         # displacement tet, and the deviatoric tet plus its nodal B-bar
         # patches.  Only the element differs, which is what R isolates.
+        # _fbar<c>: F-barES-FEM-T4 at c cyclic smoothings (elements_ccx/
+        # fbares.py, patches 0009/0010).  Its E_x comes from the reference-
+        # point reaction alone -- an F-bar deck carries no element stress --
+        # so its `max gap` column is empty by construction, not by omission.
         for arm, tag in (('', 'C3D4'), ('_u6', 'U5+U6 brine'),
-                         ('_u6all', 'U5+U6 both')):
+                         ('_u6all', 'U5+U6 both'),
+                         ('_fbar0', 'F-barES c=0'), ('_fbar1', 'F-barES c=1'),
+                         ('_fbar2', 'F-barES c=2')):
             fu = os.path.join(root, '%s_und%s.out.csv' % (stem, arm))
             # THE DENOMINATOR IS ALWAYS PLAIN C3D4, for every arm.
             #
@@ -110,8 +116,9 @@ def main(argv):
             exc = 100.0 * (rc - mean) / mean
             verdict = ('LOCKING' if exc > full else
                        'inside' if abs(exc) <= full else 'below ref')
-            print('%-18s %-12s %9.4f %9.4f %8.2f%% %+8.2f%% %11s %10.1e'
-                  % (stem, tag, rc, mean, full, exc, verdict, gap))
+            print('%-18s %-12s %9.4f %9.4f %8.2f%% %+8.2f%% %11s %10s'
+                  % (stem, tag, rc, mean, full, exc, verdict,
+                     '-' if gap != gap else '%.1e' % gap))
         if ra:
             print('%-18s %-12s %9s %9s %8s   (s.d. %.2f%%, n=%d)'
                   % ('', '', '', '', '', sd_pct, len(ra)))
