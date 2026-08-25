@@ -465,17 +465,72 @@ against that instead:
 
 At `0.0240` mesh error swamps everything -- every arm sits within 23-26% and
 the ordering means little. At `0.0120` they separate, and F-barES-FEM-T4 at
-`c = 1` is the only arm that lands inside the spread of Abaqus's own converged
-runs (1.8651-2.1113), on a mesh 1.5-2x coarser than the one Abaqus needed.
-On that reading it is not "below ref" at all: it is ahead of the reference,
-which at that mesh is still 20% high.
+`c = 1` is the only arm that lands in the same region as Abaqus's two finest
+meshes, on a mesh 1.5-2x coarser.
 
-**Two caveats, both real.** The fine-mesh Abaqus seeds scatter by 12.4%
-(2.1113 against 1.8651 at `0.0080`), so 1.989 is a soft target rather than a
-sharp one. And the campaign re-packed for every seed and every drainage state,
-so none of this is cell for cell -- it is a comparison of ratios across
-equivalent packings, which is what `layered_abaqus_ratio.sh` was built to do
-and why the seed spread is quoted as the floor at all.
+### 1.989 IS NOT A CONVERGED VALUE, and this table must not be read as if it were
+
+An earlier version of this section called 1.989 "converged" and scored the
+arms against it. That was wrong. **The stored Abaqus sequence is not a
+convergence study and cannot be made into one.**
+
+*Every one of its 16 rows is a separate packing.* Not just seed to seed: the
+undrained and drained cells of the SAME seed at the SAME mesh have different
+porosity (`m0p0060_und_s1` 0.011083 against `m0p0060_drn_s1` 0.009905). So
+each R is a ratio of two different random cells, and refining the mesh
+re-packs as well as re-meshes.
+
+*Neither seed shows asymptotic behaviour.* Per seed, R over
+`0.0240, 0.0120, 0.0080, 0.0060`:
+
+| seed | R | increments | verdict |
+|---|---|---|---|
+| s1 | 2.4626, 2.3875, 2.1113, 1.9650 | −0.075, −0.276, −0.146 | monotone, but increments **grow then shrink** |
+| s2 | 2.4776, 2.3697, 1.8651, 2.0145 | −0.108, −0.505, **+0.150** | **not monotone** |
+
+A converging sequence has increments that shrink as h shrinks. s1's largest
+change is in the MIDDLE of the refinement; s2 reverses direction. Tracing it
+to `E_x`: s2's undrained cell reads 4.313e9 at `0.0080` against 5.586e9 at
+`0.0120` and 4.620e9 at `0.0060` -- one point out of line with both
+neighbours, in a quantity whose drained twin is stable to 2% across the whole
+sweep.
+
+So what 1.989 actually is: the mean of the two finest mesh levels, whose two
+seeds disagree by 12.4% at `0.0080`. What the data supports is only that **R
+falls by about 20% between `0.0240` and `0.0060` and the two finest levels
+both land near 2.0 rather than continuing to fall.** That is suggestive of an
+asymptote somewhere near 2; it does not establish one, and no arm should be
+scored to a tenth of a percent against it.
+
+### What CAN be checked, and is
+
+Our own points do not have the packing problem. `params/rve_layermesh.csv`
+rows `LMESH_m0p0240_und_s1` and `LMESH_m0p0120_und_s1` differ **only** in
+`run_id` and `L_mesh`; with `SPAX_SEED` fixed the packing is identical and
+only h changes, and the drained twin is the same mesh with one elastic card
+rewritten. So a CalculiX mesh sweep carries no packing noise at all, and it
+is the one thing here that can answer whether R varies smoothly.
+
+Over the two points available, the arms already separate by DIRECTION:
+
+| arm | R(0.0240) | R(0.0120) | direction |
+|---|---|---|---|
+| CalculiX C3D4 | 2.5074 | 2.5736 | **up** +2.6% |
+| F-barES `c=0` | 2.4893 | 2.4933 | flat +0.2% |
+| U5+U6 brine | 2.4572 | 2.1718 | down −11.6% |
+| F-barES `c=1` | 2.4448 | 2.0551 | down −15.9% |
+
+The two arms that unlock are the two that move toward the region Abaqus's fine
+meshes occupy; C3D4 moves away from it and `c = 0` does not move at all. Two
+points cannot show convergence either, which is why
+`elements_ccx/tests/meshconv.sh` fills in intermediate `L_mesh` values on the
+same geometry.
+
+**The finer end is out of reach for `c = 1`.** `0.0080` is 3.4x the elements of
+`0.0120`, which puts the mastruct insertion count back over 2^31 even with the
+ring x support reduction of patch `0011`. So our element cannot be taken to the
+mesh where Abaqus's sequence flattens; the sweep can only establish whether the
+trend is smooth over the range that is reachable.
 
 **Which K/G these numbers are at, and it is not the target one.** The
 campaign's undrained decks carry `*ELASTIC 1320000, 0.4999` for the brine, so
