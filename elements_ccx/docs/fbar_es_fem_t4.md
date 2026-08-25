@@ -428,7 +428,54 @@ Locking makes the undrained cell too stiff and so inflates R.
 | LMESH_m0p0120 | C3D4 | 2.5736 | 2.3786 | 0.75% | **+8.20%** | locking |
 | | U5+U6 brine | 2.1718 | | | −8.70% | below ref |
 | | F-barES `c=0` | 2.4933 | | | +4.82% | locking |
-| | F-barES `c=1` | — | | | — | cannot be built |
+| | F-barES `c=1` | 2.0551 | | | −13.60% | below ref |
+
+`c=1` on the finer cell needs patch `0011` (ring x support) to build at all and
+patch `0012` (out-of-core PARDISO) to factor: 600 662 equations, 68.6M
+nonzeros, 2143 s.
+
+### The same-mesh reference is not converged, and that changes the reading
+
+The stored campaign carries two FINER Abaqus meshes, and R falls hard with
+refinement:
+
+| L_mesh | Abaqus C3D4H R, per seed | mean |
+|---|---|---|
+| 0.0240 | 2.4626, 2.4776 | 2.4701 |
+| 0.0120 | 2.3875, 2.3697 | 2.3786 |
+| 0.0080 | 2.1113, 1.8651 | 1.9882 |
+| 0.0060 | 1.9650, 2.0145 | 1.9897 |
+
+So **the C3D4H value each arm is being scored against is itself 24% (0.0240)
+and 20% (0.0120) above Abaqus's own fine-mesh answer of ~1.989.** Scored
+against that instead:
+
+| L_mesh | arm | R | vs converged 1.9890 |
+|---|---|---|---|
+| 0.0240 | CalculiX C3D4 | 2.5074 | +26.1% |
+| | F-barES `c=0` | 2.4893 | +25.2% |
+| | Abaqus C3D4H | 2.4701 | +24.2% |
+| | U5+U6 brine | 2.4572 | +23.5% |
+| | F-barES `c=1` | 2.4448 | +22.9% |
+| 0.0120 | CalculiX C3D4 | 2.5736 | +29.4% |
+| | F-barES `c=0` | 2.4933 | +25.4% |
+| | Abaqus C3D4H | 2.3786 | +19.6% |
+| | U5+U6 brine | 2.1718 | +9.2% |
+| | **F-barES `c=1`** | **2.0551** | **+3.3%, INSIDE the fine-mesh scatter** |
+
+At `0.0240` mesh error swamps everything -- every arm sits within 23-26% and
+the ordering means little. At `0.0120` they separate, and F-barES-FEM-T4 at
+`c = 1` is the only arm that lands inside the spread of Abaqus's own converged
+runs (1.8651-2.1113), on a mesh 1.5-2x coarser than the one Abaqus needed.
+On that reading it is not "below ref" at all: it is ahead of the reference,
+which at that mesh is still 20% high.
+
+**Two caveats, both real.** The fine-mesh Abaqus seeds scatter by 12.4%
+(2.1113 against 1.8651 at `0.0080`), so 1.989 is a soft target rather than a
+sharp one. And the campaign re-packed for every seed and every drainage state,
+so none of this is cell for cell -- it is a comparison of ratios across
+equivalent packings, which is what `layered_abaqus_ratio.sh` was built to do
+and why the seed spread is quoted as the floor at all.
 
 **Which K/G these numbers are at, and it is not the target one.** The
 campaign's undrained decks carry `*ELASTIC 1320000, 0.4999` for the brine, so
