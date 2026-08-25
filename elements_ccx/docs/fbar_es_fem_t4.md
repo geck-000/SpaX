@@ -532,7 +532,55 @@ ring x support reduction of patch `0011`. So our element cannot be taken to the
 mesh where Abaqus's sequence flattens; the sweep can only establish whether the
 trend is smooth over the range that is reachable.
 
-### It does converge, and smoothly
+### It does NOT converge over the meshes we can reach, and here is why
+
+**Retracting the paragraph this section used to contain.** With three points
+(`0.0240, 0.0180, 0.0120`) F-barES `c = 1` looked monotone with shrinking
+increments and fitted `R = R_inf + C h^p` at `p = 1.54`, `R_inf = 1.851`. That
+fit was EXACT -- three points, three unknowns, residual 4e-16 -- so it had no
+redundancy and could not test the power law it asserted. A fourth point at
+`h = 0.0360` destroys it:
+
+| h = L_mesh | F-barES `c=1` | CalculiX C3D4 |
+|---|---|---|
+| 0.0360 | 2.4100 | 2.4712 |
+| 0.0240 | 2.4448 | 2.5074 |
+| 0.0180 | 2.2322 | 2.5407 |
+| 0.0120 | 2.0551 | 2.5736 |
+| steps | **+0.035**, −0.213, −0.177 | +0.036, +0.033, +0.033 |
+| fit over all four | p = 0.00, `R_inf` = −1234, residual 1.1e−01 | p = 0.12, `R_inf` = 3.32 |
+
+F-barES `c = 1` **turns over** between `0.0360` and `0.0240`, and no power law
+fits the four points at all. C3D4 stays monotone but its four-point fit
+degenerates too (`p = 0.12`, no meaningful limit) -- it is essentially linear
+in h, which is not asymptotic behaviour either.
+
+**The reason is that the mesh never resolves the microstructure.** The cell is
+`L = 0.5` with `n_slabs = 4` and `slab_vof = 0.1`, so a brine slab is about
+`0.5 x 0.1 / 4 = 0.0125` thick. Elements through one slab:
+
+| h | 0.0360 | 0.0240 | 0.0180 | 0.0120 | 0.0060 (Abaqus's finest) |
+|---|---|---|---|---|---|
+| elements per slab | 0.35 | 0.52 | 0.69 | **1.04** | 2.08 |
+
+Every mesh in this study is at or below ONE element through the soft layer that
+carries the entire undrained effect. You cannot be in an asymptotic regime
+there, and that -- not the elements -- is what makes both our sequence and
+Abaqus's look the way they do. A converged R would want maybe 4-8 elements
+across the slab, `h ~ 0.002-0.003`, which is 64-216x the elements of `0.0120`:
+out of reach for `c = 1` by a wide margin, and probably for anything.
+
+**What survives, and it is not nothing.** Over the three finest meshes the
+DIRECTIONS are unambiguous and opposite: F-barES `c = 1` falls (2.4448 ->
+2.0551), C3D4 rises (2.5074 -> 2.5736), and Abaqus C3D4H falls too (2.4701 ->
+2.3786 -> ~1.99). The F-bar element moves the way the hybrid element moves and
+plain C3D4 moves away from both, getting worse with refinement -- which is what
+volumetric locking looks like on this cell and is the thing the element is
+there to remove. That is a statement about direction, on a controlled
+comparison at fixed mesh. It is not a converged modulus and must not be quoted
+as one.
+
+### The three-point view that this replaces
 
 `tests/meshconv.sh 0.0180` added the intermediate point. Both twins solved
 directly (PARDISO), both with a traction-free transverse reaction of ~1e-14:
