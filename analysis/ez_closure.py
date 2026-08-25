@@ -129,6 +129,37 @@ N_OF_B_INTERCEPT, N_OF_B_SLOPE = 1.091, -1.337
 N_FIT_RMS = 0.029
 N_FIT_B_RANGE = (0.180, 0.388)   # measured; below this the form is extrapolated
 
+# n(b) IS SPECIFIC TO FOUR BRIDGES. It is not a material law that happens to be
+# evaluated at N = 4; the count changes its shape.
+#
+# Measured at slab 0.075 for BOTH counts, so porosity is matched and only the
+# count differs:
+#
+#       b        n(N=4)   n(N=6)   offset
+#     0.3876     0.5590   0.5437   0.0154
+#     0.3367     0.6104   0.5754   0.0350
+#     0.3144     0.6237   0.5948   0.0289
+#     0.2929     0.7481   0.5937   0.1545   (three draws per count)
+#
+# The offset runs from 0.015 to 0.155 -- twelve to thirty times the placement
+# noise of 0.004-0.011 -- and grows as b falls, slope -1.16 per unit b. The
+# N = 6 branch is nearly flat (0.544, 0.575, 0.595, 0.594) while the N = 4
+# branch climbs steeply at low b, so no constant shift transports one to the
+# other.
+#
+# A SECOND dependence is exposed by the same cells. At b = 0.3876 the matched
+# cell gives n = 0.559 where SUBC_p075 of the twelve-cell set gives 0.610 at
+# the same b; they differ only in slab fraction, 0.075 against 0.056. So n
+# depends on porosity as well as b, beyond what dividing by E_pocket removes,
+# and n(b) was never a pure function of b.
+#
+# WHAT THIS MEANS FOR USE. The closure remains valid where it was calibrated --
+# four bridges, the slab fractions of the twelve cells -- and reproduces those
+# cells to an rms of 0.029. It must not be read as the bridge-branch law of sea
+# ice. Reporting it as one would repeat, at larger scale, the error that
+# produced phi_sat: a fit whose support was narrower than its use.
+N_IS_COUNT_SPECIFIC = True
+
 # HOW MUCH OF THAT SCATTER IS THE BRIDGE ARRANGEMENT. Bridge positions are drawn
 # by rejection sampling, and where that jams the generator falls back to a
 # regular lattice -- which happens more often as b rises, because the disks plus
