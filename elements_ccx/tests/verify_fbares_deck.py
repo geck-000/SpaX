@@ -155,7 +155,8 @@ def main():
 
     # every U2 / U3 element, against an independent walk
     nd2 = nd3 = 0
-    bad2, bad3 = [], []
+    bad2, bad3, badr = [], [], []
+    LET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
     import random
     rnd = random.Random(11)
     for t, table in els.items():
@@ -187,10 +188,30 @@ def main():
                 nd3 += 1
                 if have != want:
                     bad3.append((eid, sorted(want - have), sorted(have - want)))
+                # RING FIRST, AND THE LABEL AGREES WITH IT.
+                #
+                # mastruct.c and mafillsmas.f drop the identically-zero
+                # (support - ring) x (support - ring) block by treating the
+                # first nring nodes as the edge ring, with nring read from
+                # lakon(3:3).  If the deck's ORDER or its LABEL disagreed with
+                # the ring u3vol actually walks, real tbar rows would be
+                # dropped -- and no patch test can see that, because a uniform
+                # field gives the missing rows nothing to carry.  e_c3d_u3
+                # checks the same thing at runtime; this checks it in the deck,
+                # where the offending element can be named before a two-hour
+                # solve.
+                nr = LET.find(t[2]) + 1
+                ringset = set()
+                for e in walk(tets, mats, imat, (na, nb), 0):
+                    ringset.update(tets[e])
+                if nr < 1 or nr != len(ringset) or set(conn[:nr]) != ringset:
+                    badr.append((eid, t, nr, len(ringset)))
     chk('U2 connectivity == the ring u2edge.f walks (%d elements)' % nd2,
         not bad2, str(bad2[:2]))
     chk('U3 connectivity == the E A^c support u3vol.f walks (%d elements)'
         % nd3, not bad3, str(bad3[:2]))
+    chk('U3 ring is first in the connectivity and matches lakon(3:3)',
+        not badr, str(badr[:2]))
 
     # the edge nodes must be konl(1), konl(2) and must share a tet
     at = defaultdict(list)

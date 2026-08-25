@@ -20,6 +20,21 @@ build the matrix structure, so the node SET must be in the deck and must match
 what u3vol walks exactly.  u3vol stops and names the element if it meets a
 node the connectivity does not carry, so a mismatch is loud.
 
+RING x SUPPORT: THE U3 ELEMENT MATRIX IS NOT DENSE OVER ITS STENCIL.
+
+K_vol = (K V_h) tbar^T sbar is rank one, and its two factors have DIFFERENT
+supports.  tbar is the UNSMOOTHED edge divergence of eq. (1) -- u3vol builds
+it only from the tets that contain the edge -- so its support is exactly the
+U2 ring, ~6.3 nodes.  Only sbar carries the wide E A^c support, ~33.7 nodes at
+c = 1.  So s(ii,jj) can be nonzero only for i in the RING and j in the
+SUPPORT: the (support - ring) x (support - ring) block is identically zero.
+
+That block is most of the element, and mastruct.c was allocating structure for
+all of it.  The connectivity is therefore written RING FIRST, the ring size is
+carried in the type label, and mastruct.c / mafillsmas.f skip the outer block.
+Measured at c = 1: insertions fall 3.3x and LMESH_m0p0120 becomes buildable.
+Nothing about the assembled matrix changes -- the entries dropped are zero.
+
 STENCIL WIDTH IS THE BINDING CONSTRAINT.  Measured on LMESH_m0p0240's soft
 phase (117437 tets, 36323 nodes, 184572 edges):
 
@@ -50,19 +65,17 @@ LETTERS = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ'
 #
 # mastruct.c pushes one entry per off-diagonal (dof,dof) pair of the upper
 # triangle of EVERY element onto `mast1`, with NO deduplication -- insert.c
-# is a linked-list append, and the compression happens afterwards.  A U3
-# element is dense over its whole stencil, so the count is
+# is a linked-list append, and the compression happens afterwards.  It costs
+# 8 bytes each (mast1 and next, one ITG apiece) and the index is a 32-bit ITG
+# in a stock build, so past 2^31 the 1.1x growth in insert.c overflows and
+# ccx dies in u_realloc with a NEGATIVE allocation size.
 #
-#     sum over edges of  d(d+1)/2,   d = 3 * (stencil nodes)
+# With the ring x support reduction above the count is
 #
-# QUADRATIC in the stencil.  It costs 8 bytes each (mast1 and next, one ITG
-# apiece) and the index is a 32-bit ITG in a stock build, so past 2^31 the
-# 1.1x growth in insert.c overflows and ccx dies in u_realloc with a
-# NEGATIVE allocation size.
+#     sum over edges of  T(3 n_h) - T(3 (n_h - r_h)) + T(3 r_h),  T(d)=d(d+1)/2
 #
-# Measured on the layered campaign cells at c = 1:
-#     LMESH_m0p0240   1.12e9 insertions,  9.0 GB, builds (30.1M nnz, 154 s)
-#     LMESH_m0p0120   5.16e9 insertions, 41.3 GB, dies in u_realloc
+# still QUADRATIC in the stencil, so this stays the real ceiling on c --
+# reached before memory is, and before the 255-node limit.
 INS_LIMIT = 2 ** 31
 
 NAMES = [a + b for a in LETTERS for b in LETTERS]
@@ -252,29 +265,34 @@ def main():
     #
     # mastruct.c builds the matrix structure by pushing ONE entry per
     # (dof, dof) pair of every element onto `mast1` and compressing
-    # afterwards, and its counter is a 32-bit ITG in a stock build.  A U3
-    # element is dense over its whole stencil, so the deck costs
+    # afterwards, and its counter is a 32-bit ITG in a stock build.
     #
-    #     sum over edges of (3 n_h)^2 + (3 r_h)^2
+    # A U3 element is NOT dense over its whole stencil, and exploiting that
+    # is what makes c = 1 reachable on a production cell -- see RING x
+    # SUPPORT at the top of this file.  Only the first nring rows of the
+    # element matrix can be nonzero, so the deck costs
     #
-    # insertions, which is QUADRATIC in the stencil and is the real ceiling
-    # on c -- reached long before memory is.  Measured: LMESH_m0p0240 at
-    # c = 1 needs 1.9e9 and builds (30.1M nonzeros, 154 s); LMESH_m0p0120 at
-    # c = 1 needs 9.1e9 and dies in u_realloc with a NEGATIVE size, because
-    # the doubling of mast1 overflowed past 2^31.
-    def _ins(sz):
-        d = 3 * sz.astype('int64')
-        return int((d * (d + 1) // 2).sum())
+    #     sum over edges of  T(3 n_h) - T(3 (n_h - r_h))    (U3)
+    #                      + T(3 r_h)                       (U2)
+    #
+    # with T(d) = d(d+1)/2, instead of T(3 n_h) + T(3 r_h) for the dense
+    # block.  Still quadratic in the stencil, and still the real ceiling on
+    # c, but a factor ~3.3 lower at c = 1.
+    def _t(d):
+        return d * (d + 1) // 2
 
-    ins = sum(_ins(s[3]) + _ins(s[4]) for s in stats.values())
+    ins = 0
+    for st in stats.values():
+        rr = 3 * st[3].astype('int64')          # U2 ring dofs
+        ds = 3 * st[4].astype('int64')          # U3 support dofs
+        do = ds - rr                            # U3 dofs OUTSIDE the ring
+        ins += int(_t(rr).sum() + (_t(ds) - _t(do)).sum())
     if ins >= INS_LIMIT:
         raise SystemExit(
             'fbares: this deck would make mastruct.c push %.2e (dof,dof) '
             'entries onto mast1, past the %.2e a 32-bit ITG can index -- ccx '
             'dies in u_realloc with a NEGATIVE allocation size while growing '
-            'the list. Measured: LMESH_m0p0240 at c=1 needs 1.12e9 (9.0 GB) '
-            'and builds; LMESH_m0p0120 at c=1 needs 5.16e9 and does not. '
-            'Use --cycles %d, '
+            'the list. Use --cycles %d, '
             'or coarsen the mesh -- the count is quadratic in the stencil, so '
             'one fewer smoothing cycle is worth about an order of magnitude.'
             % (ins, float(INS_LIMIT), max(a.cycles - 1, 0)))
@@ -291,29 +309,72 @@ def main():
             'docs/fbar_es_fem_t4.md section 8).'
             % (a.cycles, worst[0], worst[1]))
 
-    # --- type names: one *USER ELEMENT per (kind, elset, node count) -----
+    # --- connectivity, ORDERED: ring first ------------------------------
+    #
+    # nl ALREADY contains both edge nodes -- it is the node set of the tets at
+    # the edge (U2) or of the E A^c support (U3), and both contain the edge
+    # itself.  Declaring len(nl)+2 made ccx read two fields past the end of
+    # every card and swallow the next element's id, which showed up as
+    # duplicate ids and a connectivity carrying its own successor.
+    #
+    # For U3 the ORDER now matters as well as the set: the first nring nodes
+    # must be exactly the edge ring, because that is what mastruct.c and
+    # mafillsmas.f use to skip the identically-zero outer block.  Getting it
+    # wrong is not silent -- e_c3d_u3 checks that tbar vanishes past nring and
+    # stops with the element number if it does not.
     groups = {}
-    for kind, table in (('U2', u2), ('U3', u3)):
-        for es in sets:
-            for na, nb, nl in table[es]:
-                # nl ALREADY contains both edge nodes -- it is the node set of
-                # the tets at the edge (U2) or of the E A^c support (U3), and
-                # both contain the edge itself.  Declaring len(nl)+2 made ccx
-                # read two fields past the end of every card and swallow the
-                # next element's id, which showed up as duplicate ids and a
-                # connectivity carrying its own successor.
-                groups.setdefault((kind, es, len(nl)), []).append(
-                    (na, nb, nl))
-    for kind in ('U2', 'U3'):
-        g = [k for k in groups if k[0] == kind]
-        if len(g) > len(NAMES):
-            raise SystemExit('fbares: %d %s (elset, size) groups, more than '
-                             'the %d type names available'
-                             % (len(g), kind, len(NAMES)))
+    for es in sets:
+        for na, nb, nl in u2[es]:
+            rest = sorted(int(x) for x in nl if x != na and x != nb)
+            groups.setdefault(('U2', es, len(nl), len(nl)), []).append(
+                [na, nb] + rest)
+        for (ra, rb, rl), (sa, sb, sl) in zip(u2[es], u3[es]):
+            assert (ra, rb) == (sa, sb), 'u2/u3 edge lists out of step'
+            ring = set(int(x) for x in rl)
+            supp = set(int(x) for x in sl)
+            if not ring <= supp:
+                raise SystemExit(
+                    'fbares: the edge ring of %d-%d is not contained in its '
+                    'E A^c support -- the ring-first ordering the element '
+                    'relies on is not well defined' % (ra, rb))
+            inner = [ra, rb] + sorted(ring - {ra, rb})
+            outer = sorted(supp - ring)
+            groups.setdefault(('U3', es, len(supp), len(inner)), []).append(
+                inner + outer)
+
+    # --- type names -----------------------------------------------------
+    #
+    # U2:  U2<xy>              xy just disambiguates (kind, elset, size).
+    # U3:  U3<r><xy>           r ENCODES nring: LETTERS[nring-1], read back by
+    #                          mastruct.c as lakon(3:3) and by e_c3d_u3 and
+    #                          mafillsmas.f the same way.  elements.f keys the
+    #                          *USER ELEMENT lookup on label(2:5), so 'U' plus
+    #                          four characters is all ccx can carry and three
+    #                          suffix letters is the most that fits.
     suffix = {}
-    for kind in ('U2', 'U3'):
-        for i, k in enumerate(sorted(x for x in groups if x[0] == kind)):
-            suffix[k] = NAMES[i]
+    for k in sorted(x for x in groups if x[0] == 'U2'):
+        i = len(suffix)
+        if i >= len(NAMES):
+            raise SystemExit('fbares: more U2 (elset, size) groups than the '
+                             '%d type names available' % len(NAMES))
+        suffix[k] = NAMES[i]
+    per = defaultdict(int)
+    for k in sorted(x for x in groups if x[0] == 'U3'):
+        nr = k[3]
+        if not 1 <= nr <= len(LETTERS):
+            raise SystemExit(
+                'fbares: an edge ring spans %d nodes, and the ring size is '
+                'carried in ONE label character (lakon(3:3), A..Z = 1..%d) so '
+                'that mastruct.c can skip the zero outer block. Beyond that '
+                'the reduction cannot be expressed; remesh, or drop the '
+                'reduction and accept the dense structure.'
+                % (nr, len(LETTERS)))
+        j = per[nr]
+        per[nr] += 1
+        if j >= len(NAMES):
+            raise SystemExit('fbares: more than %d U3 (elset, size) groups at '
+                             'ring size %d' % (len(NAMES), nr))
+        suffix[k] = LETTERS[nr - 1] + NAMES[j]
 
     # --- emit -------------------------------------------------------------
     out, u5decl, done_step = [], False, False
@@ -380,24 +441,24 @@ def main():
                                'INTEGRATIONPOINTS=1,MAXDOF=3'
                                % (k[0], suffix[k], k[2]))
                 for k in sorted(groups):
-                    kind, es, sz = k
+                    kind, es, sz, nr = k
                     tag = 'FBD' if kind == 'U2' else 'FBV'
                     out.append('*ELEMENT,TYPE=%s%s,ELSET=%s_%s'
                                % (kind, suffix[k], tag, es))
-                    for na, nb, nl in groups[k]:
+                    for conn in groups[k]:
                         eid += 1
                         # konl(1), konl(2) ARE THE EDGE NODES, in both U2 and
                         # U3; u2edge/u3vol identify the edge from them and
-                        # find the tets themselves.
-                        rest = [int(x) for x in nl if x != na and x != nb]
-                        out.extend(card(eid, [na, nb] + sorted(rest)))
+                        # find the tets themselves.  For U3, konl(1..nring)
+                        # is the edge ring -- see above.
+                        out.extend(card(eid, conn))
                 # Their OWN elset + *SOLID SECTION, never the phase's: an
                 # element in the phase elset joins its *EL PRINT set, and
                 # printoutelem.f would try to integrate a smoothing domain
                 # that has no material volume of its own -- and it would
                 # corrupt the volume-averaged stress the homogenisation reads.
                 for k in sorted(groups):
-                    kind, es, sz = k
+                    kind, es, sz, nr = k
                     tag = 'FBD' if kind == 'U2' else 'FBV'
                     out.append('*SOLID SECTION,ELSET=%s_%s,MATERIAL=%s'
                                % (tag, es, mat_of[es]))

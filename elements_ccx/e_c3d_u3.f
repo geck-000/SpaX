@@ -47,16 +47,25 @@
       character*8 lakonl,lakon(*)
       integer mi(*)
       integer kon(*),ipkon(*),ielmat(mi(3),*),ncmat_,ntmat_,
-     &     nelcon(2,*),nelem,ne,stiffness,i,j,c,d,ii,jj,nope,indexe,
-     &     imat,konl(255),ncyc,nasym
+     &     nelcon(2,*),nelem,ne,stiffness,i,j,c,d,ii,jj,nope,nring,
+     &     indexe,imat,konl(255),ncyc,nasym
       real*8 co(3,*),s(765,765),sm(765,765),ff(765),
      &     elcon(0:ncmat_,ntmat_,*),
-     &     vh,xkv,sbar(3,255),tbar(3,255)
+     &     vh,xkv,sbar(3,255),tbar(3,255),tmax
 !
       character*16 cval
       integer ilen
 !
       nope=ichar(lakonl(8:8))
+!
+!     The edge ring size travels in lakon(3:3) as LETTERS[nring-1], so that
+!     mastruct.c and mafillsmas.f can skip the identically-zero outer block of
+!     K_vol = tbar^T sbar -- tbar is the UNSMOOTHED edge divergence and is
+!     nonzero only on the ring.  The generator (fbares.py) writes the ring
+!     first in the connectivity, so rows 1..nring are the ring.
+!
+      nring=ichar(lakonl(3:3))-ichar('A')+1
+      if(nring.lt.1.or.nring.gt.nope) nring=nope
 !
       if(nope.gt.255) then
         write(*,*) '*ERROR in e_c3d_u3: edge element ',nelem
@@ -108,10 +117,45 @@
      &     nelem,ielmat,elcon,nelcon,mi,ncmat_,ntmat_,imat,ncyc)
       if(vh.le.0.d0) return
 !
-!     K_vol = xkv * tbar^T sbar.  Row index carries the TEST space, column the
-!     TRIAL space; swapping them is the transpose and is wrong.
+!     THE RING ORDERING IS NOT TAKEN ON TRUST.
 !
-      do i=1,nope
+!     The row loop below stops at nring, so if the generator did not put the
+!     edge ring first in the connectivity -- or if lakon(3:3) disagrees with
+!     what it wrote -- real tbar rows would be dropped SILENTLY and the
+!     volumetric operator would be quietly wrong, in a way no patch test can
+!     see (a uniform field has nothing for the missing rows to carry).
+!
+!     u3vol builds tbar only from the tets that contain the edge, so it MUST
+!     vanish past nring.  Checking that here costs one pass over the stencil
+!     and turns the whole class of ordering bugs into a named element number.
+!
+      tmax=0.d0
+      do i=1,nring
+        do c=1,3
+          tmax=max(tmax,dabs(tbar(c,i)))
+        enddo
+      enddo
+      do i=nring+1,nope
+        do c=1,3
+          if(dabs(tbar(c,i)).gt.1.d-12*tmax) then
+            write(*,*) '*ERROR in e_c3d_u3: element',nelem
+            write(*,*) '       lakon(3:3) says the ring is the'
+            write(*,*) '       first',nring,' nodes, but tbar is'
+            write(*,*) '       nonzero at position',i,' node',konl(i)
+            write(*,*) '       Deck and element disagree on the ring:'
+            write(*,*) '       regenerate with a matching fbares.py'
+            write(*,*) '       (ring first, nring in the label).'
+            call exit(201)
+          endif
+        enddo
+      enddo
+!
+!     K_vol = xkv * tbar^T sbar.  Row index carries the TEST space, column the
+!     TRIAL space; swapping them is the transpose and is wrong.  The row loop
+!     runs only over the ring (tbar vanishes past nring); the column loop spans
+!     the whole support, which sbar carries.
+!
+      do i=1,nring
         do c=1,3
           ii=3*(i-1)+c
           do j=1,nope
