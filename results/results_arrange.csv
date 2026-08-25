@@ -1,0 +1,9 @@
+run_id,bridge_fraction,n_bridges,phi_inclusion,E_x_GPa,n_exponent,arrangement,solved_on
+AR_b3144_lat101,0.3144,4,0.09565,3.7208,0.6158,lattice,roihu
+AR_b3144_ran115,0.3144,4,0.09634,3.7395,0.6104,random,roihu
+AR_b3144_ran136,0.3144,4,0.09542,3.8133,0.5950,random,roihu
+AR_b3144_ran143,0.3144,4,0.09595,3.6726,0.6266,random,roihu
+AR_b2584_lat318,0.2584,4,0.09614,2.7440,0.7509,lattice,roihu
+AR_b2584_ran101,0.2584,4,0.09532,2.6604,0.7749,random,roihu
+AR_b2584_ran108,0.2584,4,0.09403,2.7664,0.7479,random,roihu
+AR_b2584_ran115,0.2584,4,0.09525,2.7062,0.7624,random,roihu

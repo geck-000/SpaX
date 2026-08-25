@@ -2367,8 +2367,18 @@ def build_slabs(params, L):
     # unchanged, and set explicitly where it is being tested.
     corr = float(params.get('bridge_correlation', 0.0) or 0.0)
 
+    # The bridge seed was hardcoded, so "seed replicates" varied only the
+    # pocket packing and left the bridge positions identical. That is not a
+    # replicate of the thing that matters most: at fixed N and b, one
+    # arrangement can read 20% softer than another. Exposed so a sweep can
+    # average over arrangements instead of measuring one of them.
+    bseed = int(float(params.get('bridge_seed', 7919) or 7919))
     per_layer, b_real = _gp.place_bridges_layers(
-        L, b, n_bridges, n_slabs, correlation=corr, seed=7919)
+        L, b, n_bridges, n_slabs, correlation=corr, seed=bseed)
+    try:
+        arrangement = _gp.bridge_arrangement(L, b, n_bridges, seed=bseed)
+    except Exception:
+        arrangement = 'unknown'
 
     slabs = []
     for k in range(n_slabs):
@@ -2378,6 +2388,7 @@ def build_slabs(params, L):
           "b={:.4f} over {} bridge(s), correlation {:.2f}".format(
               n_slabs, 'xyz'[axis], t, 100.0 * n_slabs * t / L, b_real,
               n_bridges, corr))
+    print("    [Bridges] seed {}, arrangement {}".format(bseed, arrangement))
     return slabs
 
 

@@ -129,6 +129,24 @@ N_OF_B_INTERCEPT, N_OF_B_SLOPE = 1.091, -1.337
 N_FIT_RMS = 0.029
 N_FIT_B_RANGE = (0.180, 0.388)   # measured; below this the form is extrapolated
 
+# HOW MUCH OF THAT SCATTER IS THE BRIDGE ARRANGEMENT. Bridge positions are drawn
+# by rejection sampling, and where that jams the generator falls back to a
+# regular lattice -- which happens more often as b rises, because the disks plus
+# their clearance margins crowd the plane. The twelve cells behind n(b) split six
+# lattice and six random, and the split TRACKS b, so it looked like a systematic
+# bias steepening the slope.
+#
+# It is not. Eight cells at fixed b, N and mesh, differing only in arrangement:
+#
+#     b = 0.3144   lattice 0.6158   random 0.6107 +/- 0.0129   offset +0.0052
+#     b = 0.2584   lattice 0.7509   random 0.7618 +/- 0.0110   offset -0.0109
+#
+# The offsets have OPPOSITE SIGNS and both sit inside the random-to-random
+# scatter, so arrangement is noise and not bias. n(b) needs no correction. What
+# it does need is this number quoted: arrangement alone contributes about 0.012
+# to n, roughly 40% of the fit rms and 4% of the 0.278 the fit spans.
+N_ARRANGEMENT_SD = 0.012
+
 # Kept for callers that still pass a scalar exponent explicitly. These are the
 # TWO-bridge constants and are no longer the default for anything.
 N_MID, N_LO, N_HI = 0.98, 0.93, 1.04
@@ -220,6 +238,22 @@ A0_MM, A0_REF_MM, SPACING_EXP = 0.75, 0.75, 0.69
 # DEFAULT IS N_CELLS, so nothing changes unless a caller asks for it. Passing
 # n_bridges scales the LAYERED BRANCH ONLY -- the pocket branch has no bridges
 # and must not move.
+#
+# BRIDGE_COUNT_EXP IS NOT A MEASURED LAW. kappa = 0.497 was fitted to a sweep at
+# N = 2, 4, 8, 16 -- every count EVEN -- which returns a smooth saturating curve.
+# Filling in the odd counts at b = 0.3144 breaks it:
+#
+#     N=3  2.4895     N=4  3.6629     N=5  3.2106     N=6  3.8249   GPa
+#
+# Odd counts come out 22-25% softer than even ones, at two bridge fractions.
+# That is thirty times the arrangement noise measured above, so it is not
+# placement scatter, and no single power describes it: the local exponent runs
+# +1.342 (3->4), -0.591 (4->5), +0.960 (5->6).
+#
+# The factor is therefore RETAINED ONLY AS A ONE-TO-ONE IDENTITY at the
+# calibration count. Passing n_bridges != N_CELLS raises a warning, because the
+# closure cannot presently transport a bridge count and pretending otherwise is
+# how phi_sat happened.
 # The calibration is now at FOUR bridges, not two: n(b) above is fitted to
 # four-bridge cells. Two was never a choice, it was what the old cells
 # contained, and it carried a percolation artefact.
@@ -305,6 +339,12 @@ def E_of_phi(phi, n=None, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR,
     # bridges to count, and applying the factor there would charge a geometry
     # that is absent, exactly the error the weight was introduced to avoid.
     if n_bridges != N_CELLS:
+        import warnings
+        warnings.warn(
+            "E_of_phi: n_bridges=%s but the bridge-count law is not measured. "
+            "kappa=%.3f came from an all-even sweep (N=2,4,8,16); odd counts "
+            "are 22-25%% softer and no single power fits. Treat the result as "
+            "indicative only." % (n_bridges, BRIDGE_COUNT_EXP), RuntimeWarning)
         E = E * (float(n_bridges) / N_CELLS) ** (BRIDGE_COUNT_EXP * w)
 
     # There is deliberately NO separate strut regime above PHI_CROSS.

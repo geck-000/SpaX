@@ -613,6 +613,17 @@ def place_bridges(L, bridge_fraction, n_bridges, margin_mult=1.25, seed=None,
         # Falling back to a lattice rather than to fewer bridges: the area
         # fraction is the physical quantity being controlled and must not
         # silently come out low because the random placement jammed.
+        #
+        # SAY SO. A lattice is a different microstructure from a jammed random
+        # packing, not a near-miss of one: it gives the load a straight path
+        # where the random arrangement makes it hop sideways. Whether this
+        # branch fires depends on N and b, so a bridge-count sweep that does
+        # not report it silently compares regular arrangements against
+        # irregular ones and attributes the difference to the count.
+        print("    [Bridges] WARNING: random placement jammed after %d tries "
+              "at N=%d, b=%.4f -- FALLING BACK TO A LATTICE. This is a "
+              "different arrangement, not a perturbed one." %
+              (tries, n_bridges, bridge_fraction))
         k = int(math.ceil(math.sqrt(n_bridges)))
         step = L / k
         out = []
@@ -620,7 +631,27 @@ def place_bridges(L, bridge_fraction, n_bridges, margin_mult=1.25, seed=None,
             for j in range(k):
                 if len(out) < n_bridges:
                     out.append(((i + 0.5) * step, (j + 0.5) * step, r))
+        return out, (sum(math.pi * br ** 2 for (_, _, br) in out) / (L * L),
+                     'lattice')[0]
     return out, sum(math.pi * br ** 2 for (_, _, br) in out) / (L * L)
+
+
+def bridge_arrangement(L, bridge_fraction, n_bridges, seed=None):
+    """'lattice' or 'random' for the arrangement place_bridges would return.
+
+    Exposed so a sweep can record which branch it got instead of discovering
+    later that half its cells were laid out differently from the other half.
+    """
+    out, _ = place_bridges(L, bridge_fraction, n_bridges, seed=seed)
+    if not out:
+        return 'empty'
+    k = int(math.ceil(math.sqrt(n_bridges)))
+    step = L / k
+    on_grid = all(
+        any(abs(u - (i + 0.5) * step) < 1e-12 for i in range(k)) and
+        any(abs(v - (j + 0.5) * step) < 1e-12 for j in range(k))
+        for (u, v, _) in out)
+    return 'lattice' if on_grid else 'random'
 
 
 def place_bridges_layers(L, bridge_fraction, n_bridges, n_layers,
