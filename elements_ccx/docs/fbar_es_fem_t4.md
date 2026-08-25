@@ -637,3 +637,63 @@ What stands in for it: on `m0p0240` the transverse reference points came back
 with reactions of 2.7e-07 against 1.5e+07 at the driven one — traction-free
 to 1.7e-14 — and the fixed centre carried 1.7e-08, so the periodic constraint
 set and the element are consistent to round-off.
+
+
+## 10. Mesh convergence on a cell that actually resolves the slab
+
+Section 9 could not answer whether R converges, because no mesh in that study
+put more than one element through the brine layer. `tests/make_slabconv.py`
+makes the slab thick instead of the mesh fine: a brine slab at
+`x in [0.4, 0.6]` pierced by square ice bridges, so `0.2 n` elements span it,
+and every phase boundary is a multiple of 0.1 so a mesh with `n % 10 == 0`
+resolves the geometry EXACTLY at every n. The soft fraction is 16.8% at every
+n; nothing but h changes between points.
+
+Loading is uniaxial STRESS across the slab -- rollers on the low faces only.
+That choice is not cosmetic and cost three attempts to find:
+
+* confined compression ACROSS the slab puts the layer in uniaxial STRAIN,
+  where `div u` is uniform inside it and incompressibility never binds. C3D4
+  and F-barES agreed to 0.1-0.2% at every bridge pattern and every K/G, while
+  R itself ranged over 1.17 to 7.16.
+* loading ALONG the slab is ice-dominated: R only 1.03 to 1.26.
+* uniaxial stress lets the cell contract laterally, the ice (`nu = 0.33`) and
+  the brine (`nu -> 0.5`) disagree about by how much, and the brine is forced
+  to deform at nearly constant volume. That is the constraint that locks.
+
+### K/G = 500, the operating point
+
+| n | el/slab | C1111 drn | und C3D4 | und F-bar `c=1` | R C3D4 | R F-bar | C3D4 excess |
+|---|---|---|---|---|---|---|---|
+| 10 | 2 | 1.1577e+09 | 1.6158e+09 | 1.2560e+09 | 1.3957 | 1.0850 | **+28.64%** |
+| 20 | 4 | 9.6249e+08 | 1.2224e+09 | 1.0338e+09 | 1.2700 | 1.0741 | +18.24% |
+| 30 | 6 | 9.2762e+08 | 1.0971e+09 | 9.9705e+08 | 1.1827 | 1.0749 | +10.03% |
+| 40 | 8 | 9.1347e+08 | 1.0686e+09 | 9.8273e+08 | 1.1698 | 1.0758 | +8.74% |
+| 50 | 10 | 8.9982e+08 | 1.0205e+09 | 9.6840e+08 | 1.1341 | 1.0762 | +5.38% |
+| 60 | 12 | 8.9317e+08 | 1.0039e+09 | | 1.1240 | | |
+
+**F-barES-FEM-T4 is converged from two elements through the slab.** R reads
+1.0850, 1.0741, 1.0749, 1.0758, 1.0762 -- flat to within 1% across a six-fold
+refinement, with a 0.2% wiggle at the coarse end and monotone from `n = 20` on.
+
+**Plain C3D4 is not converged at twelve.** R falls 1.3957 -> 1.1240 and is
+still falling, heading down toward the F-bar value, as it must: both elements
+are consistent and share a limit.
+
+The last column is the locking, isolated -- how much stiffer C3D4 reads than
+the unlocked element on the SAME mesh. It falls 28.6, 18.2, 10.0, 8.7, 5.4 per
+cent: a discretisation error on its way out, which is exactly what volumetric
+locking is. F-barES-FEM-T4 reaches at `n = 10` an answer C3D4 has not reached
+at `n = 60`, a 216-fold difference in element count.
+
+This is the believability evidence section 9 could not supply, and it is at
+K/G = 500 rather than 5000.
+
+### Abaqus C3D4H is a fourth arm on the SAME mesh
+
+`make_slabconv.py` emits `m_abq.inp` (C3D4H in the inclusion) beside
+`m_ccx.inp` (C3D4) from one geometry -- same nodes, same elements, same
+boundary conditions, only the element keyword differs. So C3D4H can be run on
+exactly these meshes rather than being a reference from another campaign with
+another packing, which is the weakness of every comparison in section 9.
+`hpc/submit_slabconv_abaqus.sh` runs the sweep on CSC Roihu (`abaqus/2026`).
