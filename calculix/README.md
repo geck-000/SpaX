@@ -24,9 +24,19 @@ Verification runs, not part of the toolkit.
 | Script | Question it answers |
 |---|---|
 | `validate_ccx.sh` | Does CalculiX reproduce the stored Abaqus results? |
-| `compare_ccx.py` | Row-by-row relative difference between two results tables. |
+| `validate_gas.sh`, `validate_gas_order1.sh` | The same check on the real campaign deck, at order 2 and order 1 |
+| `packing_scatter.sh` | Is the residual bigger than packing noise? |
+| `mesh_convergence.sh` | Is the residual a mesh-density difference? |
+| `iterative_tolerance.sh` | Does tightening the CG tolerance recover the direct answer? |
+| `scaling_bench.sh`, `scaling_iterative.sh` | How far does this ccx build scale? |
 | `hybrid_locking_test.sh` | What does CalculiX's lack of hybrid elements cost? |
-| `hybrid_locking_extreme.sh` | …and at the softest brine the repo describes? |
+| `layered_order2_check.sh` | Is order 2 converged on the confined undrained layered cell? |
+| `compare_ccx.py` | Row-by-row relative difference between two results tables. |
+
+Every script resolves the SpaX tree through `SPAX_ROOT` (default
+`/home/giacomo/SpaX`), so this folder is identical whether it is run from the
+SpaX checkout or from the standalone F-barES-FEM-T4 element repo that vendors
+it.
 
 ## Validation: the homogeneous cube
 

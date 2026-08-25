@@ -17,7 +17,7 @@
 # Runs the shipped default solver -- no SPAX_CCX_SOLVER -- so this is also the
 # timing and memory record at campaign size.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 PY=${PY:-/home/giacomo/venvs/sci/bin/python}
 CCX=${CCX:-ccx_spax}

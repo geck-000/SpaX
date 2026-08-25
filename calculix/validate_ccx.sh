@@ -10,7 +10,7 @@
 # produced the reference table -- SPAX_MESH_ORDER=2 above all, since the
 # reference is a quadratic (C3D10) run.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 PY=${PY:-/home/giacomo/venvs/sci/bin/python}
 OUT=${OUT:-out_ccxval}

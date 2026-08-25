@@ -13,7 +13,7 @@
 # spread over seeds covers the gap, this comparison cannot resolve a solver
 # difference and should not be read as showing one.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 PY=${PY:-/home/giacomo/venvs/sci/bin/python}
 CCX=${CCX:-ccx_spax}

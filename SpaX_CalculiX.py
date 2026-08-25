@@ -928,7 +928,7 @@ def extract_first_order(dat_path, s_comp, eng_strain, L):
 
     # SPAX: sigma_bar from the reference-point reaction alone.
     #
-    # An F-barES-FEM-T4 deck carries NO element stress: the base tets are U5Z
+    # An F-barES-FEM-T4 deck carries NO element stress: the base tets are U4
     # and null, and U2/U3 are smoothing domains with no shape function of
     # their own, so fbares.py drops *EL PRINT rather than let it report a
     # column of zeros as the answer.  The volume-average route is therefore

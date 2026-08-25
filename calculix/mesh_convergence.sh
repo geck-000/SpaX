@@ -14,7 +14,7 @@
 # nothing varies but the discretisation. If E_eff climbs toward the stored
 # Abaqus value as L_mesh coarsens toward theirs, the gap is mesh, not solver.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 PY=${PY:-/home/giacomo/venvs/sci/bin/python}
 CCX=${CCX:-ccx_spax}

@@ -21,7 +21,7 @@
 #
 # So rerun the same deck at order 1 and compare like with like.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 export SPAX_MESH_ORDER=1
 ROOT=${ROOT:-out_gasccx_o1} exec bash calculix/validate_gas.sh

@@ -12,7 +12,7 @@
 # direct solve to compare against at these sizes, which is exactly why a check
 # that needs no reference solve is the one worth having.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 PY=${PY:-/home/giacomo/venvs/sci/bin/python}
 CCX=${CCX:-ccx_spax}

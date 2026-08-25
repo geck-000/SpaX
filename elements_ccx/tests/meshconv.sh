@@ -11,7 +11,7 @@
 # elastic card rewritten.  R therefore carries NO packing noise at all -- the
 # only thing that changes between points is h.
 set -eu
-cd /home/giacomo/SpaX/.claude/worktrees/CalculiX
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 LM=$1
 TAG=$(echo "$LM" | tr -d '.')
 ROOT=out_meshconv/$TAG

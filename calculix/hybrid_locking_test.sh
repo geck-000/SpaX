@@ -23,7 +23,7 @@
 # C3D10 is converged and the missing hybrid formulation costs nothing
 # measurable at this nu.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 PY=${PY:-/home/giacomo/venvs/sci/bin/python}
 ROOT=${ROOT:-out_lock}

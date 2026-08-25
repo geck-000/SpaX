@@ -19,7 +19,7 @@
 # Geometry is frozen with SPAX_SAVE_PACKING/SPAX_LOAD_PACKING so only L_mesh
 # changes; the slabs and bridges are deterministic from the deck.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 PY=${PY:-/home/giacomo/venvs/sci/bin/python}
 CCX=${CCX:-ccx_spax}

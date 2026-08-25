@@ -14,7 +14,7 @@
 # because it needs no reference solve, so it is the check that remains
 # available on a production cell too big to solve directly even once.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 CCX=${CCX:-ccx_spax}
 ROOT=${ROOT:-out_itertol}

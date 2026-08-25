@@ -18,7 +18,7 @@
 # campaign scales and because refining L_mesh alone barely moves the element
 # count on a cell whose mesh is dominated by inclusion surfaces.
 set -eu
-cd "$(dirname "$0")/.."
+cd "${SPAX_ROOT:-/home/giacomo/SpaX}"
 
 PY=${PY:-/home/giacomo/venvs/sci/bin/python}
 ROOT=${ROOT:-out_scale}
