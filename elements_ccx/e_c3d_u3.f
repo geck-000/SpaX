@@ -34,12 +34,12 @@
 !     CAPACITY.  Measured on LMESH_m0p0240 (soft phase, 184572 edges):
 !         c = 1   mean 33.7 nodes  p99  78  max 173  ( 519 DOF)
 !         c = 2   mean 93.6 nodes  p99 259  max 494  (1482 DOF)
-!     c = 1 needs the e_c3d_u* family and mafillsm.f widened from 150 to 520
-!     DOF (patch 0006 raised it 60 -> 150 for exactly this reason and says so).
+!     c = 1 fits: patch 0008 already carries the element matrix at 765 DOF,
+!     the encoding limit (255 nodes), so nothing further has to be widened.
 !     c = 2 CANNOT be an element at all: userelements.f:83 rejects NODES > 255
 !     and mastruct.c reads the count from one character of the label.
 !
-      subroutine e_c3d_u3(co,kon,lakonl,s,ff,nelem,elcon,nelcon,
+      subroutine e_c3d_u3(co,kon,lakonl,s,sm,ff,nelem,elcon,nelcon,
      &     ielmat,mi,ncmat_,ntmat_,ipkon,lakon,ne,stiffness,nasym)
 !
       implicit none
@@ -49,7 +49,8 @@
       integer kon(*),ipkon(*),ielmat(mi(3),*),ncmat_,ntmat_,
      &     nelcon(2,*),nelem,ne,stiffness,i,j,c,d,ii,jj,nope,indexe,
      &     imat,konl(255),ncyc,nasym
-      real*8 co(3,*),s(150,150),ff(150),elcon(0:ncmat_,ntmat_,*),
+      real*8 co(3,*),s(765,765),sm(765,765),ff(765),
+     &     elcon(0:ncmat_,ntmat_,*),
      &     vh,xkv,sbar(3,255),tbar(3,255)
 !
       character*16 cval
@@ -57,13 +58,13 @@
 !
       nope=ichar(lakonl(8:8))
 !
-      if(3*nope.gt.150) then
+      if(nope.gt.255) then
         write(*,*) '*ERROR in e_c3d_u3: edge element ',nelem
         write(*,*) '       spans ',nope,' nodes (',3*nope,' DOF).'
-        write(*,*) '       The element matrix holds 150 DOF (50 nodes).'
-        write(*,*) '       The c=1 volumetric stencil needs 520 DOF:'
-        write(*,*) '       raise nduser in mafillsm.f and the s/sm/ff'
-        write(*,*) '       dimensions in the e_c3d_u* family together.'
+        write(*,*) '       The limit is 255 nodes (765 DOF) -- the most'
+        write(*,*) '       that lakon(8:8) can encode.  The c=1 stencil'
+        write(*,*) '       reaches 173 nodes on LMESH_m0p0240 and fits;'
+        write(*,*) '       c=2 reaches 494 and cannot be an element.'
         call exit(201)
       endif
       indexe=ipkon(nelem)
@@ -71,10 +72,14 @@
         konl(i)=kon(indexe+i)
       enddo
 !
+!
+!     Zero the ACTUAL extent, and zero sm too -- see e_c3d_u2 / patch 0008.
+!
       do i=1,3*nope
         ff(i)=0.d0
         do j=1,3*nope
           s(i,j)=0.d0
+          sm(i,j)=0.d0
         enddo
       enddo
       if(stiffness.eq.0) return

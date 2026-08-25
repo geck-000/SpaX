@@ -8,7 +8,7 @@ elements_ccx/docs/fbar_es_fem_t4.md; this script is only the deck side.
     K = K_dev   per EDGE (U2): V_h Bt^T D_dev Bt          eq. (1), (4), (13)
       + K_vol   per EDGE (U3): (K V_h) tbar^T sbar        eq. (6)-(11), (17)
 
-The base tets stay in the deck retyped to U5 and are run with CCX_U5_ZERO=1,
+The base tets stay in the deck retyped to U5Z -- a NULL U5, suffix Z --
 contributing nothing: U2 and U3 carry the whole stiffness and both read the
 tets for geometry through the 'U5' node->element map.  That is a different
 arrangement from U5+U6, where U5 carries the deviatoric itself.
@@ -267,17 +267,47 @@ def main():
 
     # --- emit -------------------------------------------------------------
     out, u5decl, done_step = [], False, False
+    drop, sawnp = False, any(
+        iskw(l) and l.upper().replace(' ', '').startswith(('*NODEPRINT',
+                                                           '*NODEFILE'))
+        for l in lines)
     eid = maxel
     for ln in lines:
-        if iskw(ln):
+        if not iskw(ln):
+            # a data line of a dropped block goes with it
+            if drop:
+                continue
+        else:
             u = ln.upper().replace(' ', '')
+            # NO ELEMENT IN AN F-bar DECK CARRIES STRESS.  The base tets are
+            # U5Z and return a null matrix; U2 and U3 are smoothing domains
+            # with no shape function of their own and write nothing to stx.
+            # Left in, *EL PRINT would report a column of exact zeros as if
+            # it were the answer.  Read the result from displacements and
+            # reactions instead -- which is why a *NODE PRINT is added below
+            # if the deck has none.
+            drop = u.startswith('*ELPRINT') or u.startswith('*ELFILE')
+            if drop:
+                out.append('** SPAX fbares: dropped '
+                           + ln.split(',')[0].strip()
+                           + ' -- no element in an F-bar deck carries stress')
+                continue
+            if u.startswith('*ENDSTEP') and not sawnp:
+                sawnp = True
+                # *NODE FILE, not *NODE PRINT: printing needs an NSET and
+                # ccx does not define NALL itself (cgx does), so a
+                # *NODE PRINT,NSET=NALL is answered with 'node set NALL does
+                # not exist' and an EMPTY .dat.  *NODE FILE needs no set and
+                # writes the .frd the post-processing already reads.
+                out.append('*NODE FILE')
+                out.append('U,RF')
             if u.startswith('*ELEMENT') and any(
                     ('ELSET=' + e).upper() in u for e in sets):
                 if not u5decl:
-                    out.append('*USER ELEMENT,TYPE=U5,NODES=4,'
+                    out.append('*USER ELEMENT,TYPE=U5Z,NODES=4,'
                                'INTEGRATIONPOINTS=1,MAXDOF=3')
                     u5decl = True
-                out.append(ln.replace('C3D4', 'U5').replace('c3d4', 'U5'))
+                out.append(ln.replace('C3D4', 'U5Z').replace('c3d4', 'U5Z'))
                 continue
             if u.startswith('*STATIC'):
                 # The volumetric operator of eq. (17) is NOT symmetric, so the
@@ -340,12 +370,12 @@ def main():
                             3 * (ss.max() + 0)))
     ndof = 3 * max(s[4].max() for s in stats.values())
     print('  %d element types; widest element %d DOF' % (len(groups), ndof))
-    if ndof > 150:
-        print('  NOTE: the e_c3d_u* family and mafillsm.f hold 150 DOF. '
-              'Raise them to %d together, or ccx overruns s(150,150) '
-              'silently -- patch 0006 documents this.' % (((ndof + 59) // 60) * 60))
-    print('  run with CCX_U5_ZERO=1 CCX_FBAR_C=%d -- the base tets must '
-          'contribute nothing' % a.cycles)
+    if ndof > 765:
+        print('  NOTE: the e_c3d_u* family and mafillsm.f hold 765 DOF '
+              '(255 nodes, the lakon(8:8) encoding limit).  %d DOF cannot '
+              'be a ccx user element at all.' % ndof)
+    print('  run with CCX_FBAR_C=%d -- the same value the deck was '
+          'generated with' % a.cycles)
 
 
 if __name__ == '__main__':

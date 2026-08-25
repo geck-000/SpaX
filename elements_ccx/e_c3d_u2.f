@@ -14,11 +14,11 @@
 !     response is pure ES-FEM and this element is the whole of it.
 !
 !     Together with U3 (the volumetric half, eqs. 6-11) this replaces the base
-!     tets' stiffness entirely, so the base 'U5' tets must contribute NOTHING:
-!     run them with CCX_U5_ZERO=1, which makes e_c3d_u5 return a null matrix
-!     while keeping the tets in the model as the geometry U2 and U3 read.
-!     That is a different arrangement from U5+U6, where U5 carries the
-!     deviatoric itself.
+!     tets' stiffness entirely, so the base tets must contribute NOTHING: the
+!     generator retypes them to U5Z, a null U5 (e_c3d_u5 and resultsmech_u5
+!     both return on suffix Z), which keeps them in the model as the geometry
+!     U2 and U3 read.  That is a different arrangement from U5+U6, where U5
+!     carries the deviatoric itself.
 !
 !         *USER ELEMENT,TYPE=U2,NODES=<ring size>,INTEGRATIONPOINTS=1,MAXDOF=3
 !
@@ -30,7 +30,7 @@
 !     Keep U2 out of any *EL PRINT set: it has no material volume of its own,
 !     and printoutelem.f would pick a shape function from its node count.
 !
-      subroutine e_c3d_u2(co,kon,lakonl,s,ff,nelem,elcon,nelcon,
+      subroutine e_c3d_u2(co,kon,lakonl,s,sm,ff,nelem,elcon,nelcon,
      &     ielmat,mi,ncmat_,ntmat_,ipkon,lakon,ne,stiffness)
 !
       implicit none
@@ -40,20 +40,23 @@
       integer kon(*),ipkon(*),ielmat(mi(3),*),ncmat_,ntmat_,
      &     nelcon(2,*),nelem,ne,stiffness,i,j,c,d,ii,jj,nope,indexe,
      &     imat,konl(255),nfound
-      real*8 co(3,*),s(150,150),ff(150),elcon(0:ncmat_,ntmat_,*),
+      real*8 co(3,*),s(765,765),sm(765,765),ff(765),
+     &     elcon(0:ncmat_,ntmat_,*),
      &     e,un,um,vh,gt(3,255),fac
 !
       nope=ichar(lakonl(8:8))
 !
 !     Hard capacity guard, as in e_c3d_u6: nope follows mesh valence, and
 !     overrunning s used to corrupt the assembly silently rather than stop.
+!     255 nodes (765 DOF) is the encoding limit -- lakon(8:8) is one byte and
+!     userelements.f:83 already refuses more -- so a ring that trips this
+!     cannot be a ccx user element at all.
 !
-      if(3*nope.gt.150) then
+      if(nope.gt.255) then
         write(*,*) '*ERROR in e_c3d_u2: edge element ',nelem
         write(*,*) '       spans ',nope,' nodes (',3*nope,' DOF).'
-        write(*,*) '       The element matrix holds 150 DOF (50 nodes).'
-        write(*,*) '       Raise nduser in mafillsm.f and the s/sm/ff'
-        write(*,*) '       dimensions in the e_c3d_u* family together.'
+        write(*,*) '       The limit is 255 nodes (765 DOF) -- the most'
+        write(*,*) '       that lakon(8:8) can encode.'
         call exit(201)
       endif
       indexe=ipkon(nelem)
@@ -61,10 +64,16 @@
         konl(i)=kon(indexe+i)
       enddo
 !
+!
+!     Zero the ACTUAL extent, and zero sm too: the caller allocates s/sm/ff
+!     once and never re-zeroes them between elements, and U2 is static-only
+!     and never writes sm (patch 0008).
+!
       do i=1,3*nope
         ff(i)=0.d0
         do j=1,3*nope
           s(i,j)=0.d0
+          sm(i,j)=0.d0
         enddo
       enddo
       if(stiffness.eq.0) return

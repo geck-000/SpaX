@@ -114,6 +114,12 @@ def main():
               '*MATERIAL,NAME=Mat_Matrix', '*ELASTIC',
               '%.12e, %.12e' % (Ei, ni)]
 
+    # ccx does not define NALL -- cgx does.  Without this, every
+    # *NODE PRINT,NSET=NALL below is answered with 'node set NALL does not
+    # exist' and the .dat comes back with no displacements and no reactions
+    # at all, silently.
+    L += ['*NSET,NSET=NALL,GENERATE', '1, %d, 1' % len(nodes)]
+
     tol = 1e-9
     onb = np.flatnonzero(((nodes <= tol) | (nodes >= 1.0 - tol)).any(axis=1))
 
