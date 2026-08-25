@@ -532,6 +532,37 @@ ring x support reduction of patch `0011`. So our element cannot be taken to the
 mesh where Abaqus's sequence flattens; the sweep can only establish whether the
 trend is smooth over the range that is reachable.
 
+### It does converge, and smoothly
+
+`tests/meshconv.sh 0.0180` added the intermediate point. Both twins solved
+directly (PARDISO), both with a traction-free transverse reaction of ~1e-14:
+
+| h = L_mesh | F-barES `c=1` | CalculiX C3D4 |
+|---|---|---|
+| 0.0240 | 2.4448 | 2.5074 |
+| 0.0180 | 2.2322 | 2.5407 |
+| 0.0120 | 2.0551 | 2.5736 |
+| steps | −0.2126, −0.1771 | +0.0333, +0.0329 |
+| fitted `R = R_inf + C h^p` | p = 1.54, **R_inf = 1.851** | p = 1.04, R_inf = 2.637 |
+
+**F-barES-FEM-T4 at `c = 1` is monotone, its increments shrink, and it fits a
+single power law across the whole range.** It does not wander. Extrapolated to
+`h -> 0` it gives R = 1.85, against the 1.87-2.11 band Abaqus's two finest
+meshes span -- just at the lower edge of it.
+
+Plain C3D4 is monotone in the OTHER direction and extrapolates to 2.64. It is
+not converging toward the hybrid element's answer; it is walking away from it,
+and refining the mesh makes that worse rather than better. That is what
+volumetric locking looks like on this cell, and it is the thing F-barES-FEM-T4
+is being asked to remove.
+
+Two limits on this fit, both worth keeping in view. Three points and three
+unknowns is an EXACT fit, so it has no residual and cannot say the power law
+is right -- only that one exists through the points. And the `0.0120` point
+was computed out of core; see patch `0012` for why that is now flagged rather
+than assumed, though its transverse residual (3.85e-13, against 1.85e-02 for
+a failed out-of-core run) and its landing on the curve both say it is sound.
+
 **Which K/G these numbers are at, and it is not the target one.** The
 campaign's undrained decks carry `*ELASTIC 1320000, 0.4999` for the brine, so
 every row of the table above is at **K/G = 5000**, with the drained twin at

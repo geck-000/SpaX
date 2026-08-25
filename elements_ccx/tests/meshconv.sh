@@ -18,6 +18,10 @@ ROOT=out_meshconv/$TAG
 PY=/home/giacomo/venvs/sci/bin/python
 export SPAX_CCX=ccx_fbar OMP_NUM_THREADS=8
 export SPAX_MESH_TIMEOUT=14400 SPAX_MAX_RETRIES=12 SPAX_SEED=20260821
+# Without this the iterative solver converges loosely and the drained
+# control comes back with a transverse reaction of 3.7e-03 instead of
+# 2e-07 -- which looks like a broken deck.  Patch 0001 reads it.
+export CCX_ITER_TOL=${CCX_ITER_TOL:-1e-5}
 export SPAX_MESH_ORDER=1
 mkdir -p "$ROOT"
 
@@ -56,6 +60,9 @@ open(p, 'w').writelines(out)
 PYEOF
   fi
   python3 SpaX_CalculiX.py convert "$w" > /dev/null
+  # Direct solver for BOTH twins: R is a ratio of two moduli and an iterative
+  # tolerance lands straight in it.
+  sed -i 's/^\*STATIC.*/*STATIC, SOLVER=PARDISO/' "$w/Job-LAY-utx-ccx.inp"
 done
 
 # drained: plain C3D4, the denominator, exactly as report_abaqus_ratio expects
@@ -65,12 +72,18 @@ python3 SpaX_PostProcess.py "$ROOT/LAY.drn.csv" "$ROOT/drn" "$ROOT/drn.out.csv" 
   > "$ROOT/drn.post.log" 2>&1
 
 # undrained: F-barES-FEM-T4 c=1
-wu="$ROOT/und_fbar1"; rm -rf "$wu"; mkdir -p "$wu"; mkdir -p "$wu/ooc_temp"
+wu="$ROOT/und_fbar1"; rm -rf "$wu"; mkdir -p "$wu"
 $PY elements_ccx/fbares.py "$ROOT/und/Job-LAY-utx-ccx.inp" \
     "$wu/Job-LAY-utx-ccx.inp" --elset Sphere_Only --cycles 1 2>&1 | tail -3
-CCX_PARDISO_OOC=10000 MKL_PARDISO_OOC_PATH=./ooc_temp CCX_FBAR_C=1 \
-  SPAX_CCX_REAL=ccx_fbar SPAX_CCX_MEMMAX=22G OMP_NUM_THREADS=8 \
-  ccx_capped "$wu/Job-LAY-utx-ccx" > "$wu/solve.log" 2>&1 || true
+# IN CORE unless CCX_PARDISO_OOC is set deliberately.  And run from inside
+# $wu: MKL_PARDISO_OOC_PATH is relative to the WORKING DIRECTORY, and pointing
+# it at a directory that does not exist made PARDISO fail -- which stock ccx
+# ignored, returning E_und 3.83e+11 against 5.52e+09.  ccx now stops on a
+# PARDISO error instead, but the cwd still has to be right.
+( cd "$wu" && CCX_FBAR_C=1 ${CCX_PARDISO_OOC:+CCX_PARDISO_OOC=$CCX_PARDISO_OOC} \
+    ${CCX_PARDISO_OOC:+MKL_PARDISO_OOC_PATH=./ooc_temp} \
+    SPAX_CCX_REAL=ccx_fbar SPAX_CCX_MEMMAX=${FBAR_MEM:-24G} OMP_NUM_THREADS=8 \
+    ccx_capped Job-LAY-utx-ccx > solve.log 2>&1 ) || true
 SPAX_CCX_SIGMA_FROM_RF=1 python3 SpaX_PostProcess.py "$ROOT/LAY.und.csv" "$wu" \
   "$ROOT/und_fbar1.out.csv" > "$ROOT/und_fbar1.post.log" 2>&1 || true
 
