@@ -23,17 +23,20 @@ own `README` naming what each file is for; `docs/` holds the campaign notes.
 
 ```
 SpaX_Standalone.py  SpaX_GmshPeriodic.py  SpaX_PostProcess.py   <- the toolkit
+SpaX_CalculiX.py                                        <- optional: solve without Abaqus
 ────────────────────────────────────────────────────────────────────────────
-studies/ params/ hpc/ results/ analysis/ viz/ tensors/          <- the campaign
+studies/ params/ hpc/ results/ analysis/ viz/ tensors/ calculix/ <- the campaign
 ```
 
-The toolkit is **three Python files**:
+The toolkit is **three Python files**, plus an optional fourth that removes the
+Abaqus dependency entirely:
 
 | File | Run with | Role |
 |------|----------|------|
 | `SpaX_Standalone.py` | `python3` | packing + periodic meshing + Abaqus `.inp` generation |
 | `SpaX_GmshPeriodic.py` | (called by Standalone) | the periodic Gmsh mesher |
 | `SpaX_PostProcess.py` | `abaqus python` (extraction) / `python3` (analysis) | ODB extraction, effective properties, anisotropy, study analyzers |
+| `SpaX_CalculiX.py` | `python3` | translate the decks for CalculiX, solve with `ccx`, read `.dat` back. With this, the whole chain runs on `python3` and needs no licence — see `calculix/README.md` |
 
 Everything else in the repo supports the sea-ice study campaign and is grouped
 into folders, each with its own `README`:
@@ -48,6 +51,7 @@ into folders, each with its own `README`:
 | `viz/` | RVE visualization (`render_rve.py`, `odb_to_vtk.py`). |
 | `tensors/` | Per-slice 6×6 elasticity tensors, one CSV per RVE. Earlier campaigns at the top level; each manuscript ensemble in its own subdirectory (`column/`, `basetensor_seeds/`, `bt80/`). |
 | `docs/` | User guide (`USER_DOCS.md`) and the cluster runbook (`RUNBOOK.md`). |
+| `calculix/` | Verification of the CalculiX backend against the stored Abaqus results, and the measurement of what its missing hybrid elements cost. |
 
 ## Reproducing the published figures
 

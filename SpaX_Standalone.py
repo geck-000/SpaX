@@ -2549,6 +2549,45 @@ def _generate_one_row(task):
 
     # Compute inclusion material
     if Inclusion_Type == 'Liquid' and K_incl > 0 and G_incl > 0:
+        # SPAX_BRINE_KG caps the liquid's bulk-to-shear ratio, by RAISING G
+        # and leaving K untouched.
+        #
+        # WHY.  The brine's real ratio is K/G = 5000, and that number -- not
+        # any element bug -- is what makes this hard: a linear tet needs a
+        # volumetric constraint whose stiffness is K while its own stability
+        # can only be bought at the scale of G, and no formulation reconciles
+        # a factor of 5000 between them.  Measured on BRKB_b280: plain C3D4
+        # locks (+4.11% against Abaqus C3D4H), the nodal B-bar leaves a
+        # spurious mode at 19x the applied displacement, MINI loses the brine
+        # bulk modulus outright (R 2.9150 -> 1.2743), and the one-parameter
+        # family between them has no interior point that is right on more than
+        # one cell.
+        #
+        # But the ratio is a modelling choice, not data.  Brine is a liquid,
+        # G = 0 physically; 4.4e5 is already a regularisation.  The G sweep in
+        # params/rve_brine.csv, at fixed K, says the homogenised answer barely
+        # notices (results/results_brine.csv, E_x against the K/G = 5000 row):
+        #
+        #     K/G     50000     5000      500       50        5
+        #     iso    -0.18%     --      -0.08%   -0.01%   +1.36%
+        #     chan   -4.10%     --      +0.92%   +0.17%   +2.08%
+        #
+        # so K/G = 50 reproduces the physics to ~0.2% while putting nu at
+        # 0.4901 instead of 0.4999 -- a ratio at which the ordinary
+        # displacement tet does not lock at all.  Those cells are 5%
+        # inclusion; see elements_ccx/README.md for the check at the bracket
+        # cells' 15.7%.
+        #
+        # Unset, or 0, keeps the deck's own ratio.  The DRAINED twin is at
+        # K/G = 5 already and is written directly by the campaign scripts, so
+        # it is untouched either way.
+        _kg_cap = float(os.environ.get('SPAX_BRINE_KG', 0) or 0)
+        if _kg_cap > 0 and K_incl / G_incl > _kg_cap:
+            print("  SPAX_BRINE_KG={:g}: raising G {:.3e} -> {:.3e} "
+                  "(K/G {:.0f} -> {:.0f}, K unchanged)".format(
+                      _kg_cap, G_incl, K_incl / _kg_cap,
+                      K_incl / G_incl, _kg_cap))
+            G_incl = K_incl / _kg_cap
         E_incl = 9.0 * K_incl * G_incl / (3.0 * K_incl + G_incl)
         nu_incl = (3.0 * K_incl - 2.0 * G_incl) / (2.0 * (3.0 * K_incl + G_incl))
         print("  Liquid: K={:.3e}, G={:.3e} -> E={:.3e}, nu={:.6f}".format(

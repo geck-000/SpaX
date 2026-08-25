@@ -174,6 +174,107 @@ def _rp_disp(frame, rp_region, dof_idx):
         return None
 
 
+def _reduce_first_order(stress_strain_data, V_RVE, is_shear):
+    """Frame series -> E or G, nu, and the achieved phase fractions.
+
+    Split out of extract_first_order so that the CalculiX route
+    (SpaX_CalculiX.extract_first_order) can hand over the SAME per-frame
+    quantities and get the SAME number back. Everything that decides a modulus
+    lives here -- the 10-40% fit window, the single-increment secant, the
+    definition of nu as a ratio of solid-phase volume averages -- so the two
+    solvers cannot drift apart in the arithmetic, only in the stresses they
+    feed it, which is the thing a solver comparison is supposed to measure.
+
+    `stress_strain_data` is one dict per frame with keys sigma, eps,
+    eps_axial_solid, eps_trans1, eps_trans2, v_solid, v_incl.
+    """
+    results = {}
+    if stress_strain_data and V_RVE > 0:
+        # Small-strain volume change is negligible, but average over frames
+        # rather than trusting any single one.
+        v_solid = sum(d['v_solid'] for d in stress_strain_data) / float(len(stress_strain_data))
+        v_incl = sum(d['v_incl'] for d in stress_strain_data) / float(len(stress_strain_data))
+        results['V_solid'] = v_solid
+        # Non-meshed volume only. For these decks that is the gas, since brine
+        # is a meshed soft phase and therefore counts as solid here.
+        results['porosity'] = 1.0 - v_solid / V_RVE
+        # Achieved soft-phase (brine) fraction, and the two together -- the
+        # quantity to compare against the requested VoF when auditing whether
+        # the packer met its target.
+        results['phi_inclusion'] = v_incl / V_RVE
+        results['phi_soft_total'] = (v_incl / V_RVE) + (1.0 - v_solid / V_RVE)
+    if len(stress_strain_data) == 1:
+        # A single increment. The frame series the block below fits does not
+        # exist, so the secant through the one point is taken instead:
+        # E = sigma/eps. For a linear step -- nlgeom OFF, linear elastic phases,
+        # which is every first-order cell in this repository -- the secant IS
+        # the tangent, so this is exact rather than an approximation, and it
+        # agrees with the ten-increment fit to the digits the ODB carries.
+        #
+        # This branch exists because a one-increment deck used to fall straight
+        # through to `return results` with E_eff never assigned, reporting a
+        # perfectly healthy solve as exactly 0.0. If the response is NOT linear
+        # the caller must supply the frames: a secant over the whole load path
+        # is not a modulus, and nothing here can tell the difference from one
+        # point. Multi-increment behaviour below is untouched.
+        d0 = stress_strain_data[0]
+        if abs(d0['eps']) > 1e-30:
+            modulus = d0['sigma'] / d0['eps']
+            if is_shear:
+                results['G_eff'] = modulus
+            else:
+                results['E_eff'] = modulus
+                if abs(d0.get('eps_axial_solid', 0.0)) > 1e-30:
+                    nu1 = -d0['eps_trans1'] / d0['eps_axial_solid']
+                    nu2 = -d0['eps_trans2'] / d0['eps_axial_solid']
+                    results['nu_eff'] = (nu1 + nu2) / 2.0
+    elif len(stress_strain_data) >= 2:
+        eps_arr = np.array([d['eps'] for d in stress_strain_data])
+        sig_arr = np.array([d['sigma'] for d in stress_strain_data])
+        
+        # Linear regression over linear region (matching kernel's polyfit)
+        # Use points from 10% to 40% of max strain (same as kernel)
+        max_eps = max(abs(eps_arr))
+        if max_eps > 0:
+            linear_mask = (np.abs(eps_arr) >= 0.1 * max_eps) & (np.abs(eps_arr) <= 0.4 * max_eps)
+            if np.sum(linear_mask) >= 2:
+                coeffs = np.polyfit(eps_arr[linear_mask], sig_arr[linear_mask], 1)
+                modulus = coeffs[0]
+            else:
+                # Fallback: use all points
+                coeffs = np.polyfit(eps_arr, sig_arr, 1)
+                modulus = coeffs[0]
+        else:
+            modulus = 0
+        
+        if is_shear:
+            results['G_eff'] = modulus
+        else:
+            results['E_eff'] = modulus
+            
+            # Poisson's ratio from linear regression (matching kernel)
+            if np.sum(linear_mask) >= 2:
+                eps_lin = eps_arr[linear_mask]
+                axial_solid_lin = np.array([stress_strain_data[j]['eps_axial_solid'] 
+                                       for j in range(len(stress_strain_data)) if linear_mask[j]])
+                trans1_lin = np.array([stress_strain_data[j]['eps_trans1'] 
+                                       for j in range(len(stress_strain_data)) if linear_mask[j]])
+                trans2_lin = np.array([stress_strain_data[j]['eps_trans2'] 
+                                       for j in range(len(stress_strain_data)) if linear_mask[j]])
+                nu1 = -np.polyfit(axial_solid_lin, trans1_lin, 1)[0]
+                nu2 = -np.polyfit(axial_solid_lin, trans2_lin, 1)[0]
+                results['nu_eff'] = (nu1 + nu2) / 2.0
+            else:
+                # Fallback: last frame
+                if abs(eps_arr[-1]) > 1e-30:
+                    nu1 = -stress_strain_data[-1]['eps_trans1'] / stress_strain_data[-1]['eps_axial_solid']
+                    nu2 = -stress_strain_data[-1]['eps_trans2'] / stress_strain_data[-1]['eps_axial_solid']
+                    results['nu_eff'] = (nu1 + nu2) / 2.0
+    
+
+    return results
+
+
 def extract_first_order(odb_path, s_comp, eng_strain, L):
     """
     Extract E or G and nu from an ODB using direct odbAccess.
@@ -310,90 +411,7 @@ def extract_first_order(odb_path, s_comp, eng_strain, L):
 
     odb.close()
 
-    results = {}
-    if stress_strain_data and V_RVE > 0:
-        # Small-strain volume change is negligible, but average over frames
-        # rather than trusting any single one.
-        v_solid = sum(d['v_solid'] for d in stress_strain_data) / float(len(stress_strain_data))
-        v_incl = sum(d['v_incl'] for d in stress_strain_data) / float(len(stress_strain_data))
-        results['V_solid'] = v_solid
-        # Non-meshed volume only. For these decks that is the gas, since brine
-        # is a meshed soft phase and therefore counts as solid here.
-        results['porosity'] = 1.0 - v_solid / V_RVE
-        # Achieved soft-phase (brine) fraction, and the two together -- the
-        # quantity to compare against the requested VoF when auditing whether
-        # the packer met its target.
-        results['phi_inclusion'] = v_incl / V_RVE
-        results['phi_soft_total'] = (v_incl / V_RVE) + (1.0 - v_solid / V_RVE)
-    if len(stress_strain_data) == 1:
-        # A single increment. The frame series the block below fits does not
-        # exist, so the secant through the one point is taken instead:
-        # E = sigma/eps. For a linear step -- nlgeom OFF, linear elastic phases,
-        # which is every first-order cell in this repository -- the secant IS
-        # the tangent, so this is exact rather than an approximation, and it
-        # agrees with the ten-increment fit to the digits the ODB carries.
-        #
-        # This branch exists because a one-increment deck used to fall straight
-        # through to `return results` with E_eff never assigned, reporting a
-        # perfectly healthy solve as exactly 0.0. If the response is NOT linear
-        # the caller must supply the frames: a secant over the whole load path
-        # is not a modulus, and nothing here can tell the difference from one
-        # point. Multi-increment behaviour below is untouched.
-        d0 = stress_strain_data[0]
-        if abs(d0['eps']) > 1e-30:
-            modulus = d0['sigma'] / d0['eps']
-            if is_shear:
-                results['G_eff'] = modulus
-            else:
-                results['E_eff'] = modulus
-                if abs(d0.get('eps_axial_solid', 0.0)) > 1e-30:
-                    nu1 = -d0['eps_trans1'] / d0['eps_axial_solid']
-                    nu2 = -d0['eps_trans2'] / d0['eps_axial_solid']
-                    results['nu_eff'] = (nu1 + nu2) / 2.0
-    elif len(stress_strain_data) >= 2:
-        eps_arr = np.array([d['eps'] for d in stress_strain_data])
-        sig_arr = np.array([d['sigma'] for d in stress_strain_data])
-        
-        # Linear regression over linear region (matching kernel's polyfit)
-        # Use points from 10% to 40% of max strain (same as kernel)
-        max_eps = max(abs(eps_arr))
-        if max_eps > 0:
-            linear_mask = (np.abs(eps_arr) >= 0.1 * max_eps) & (np.abs(eps_arr) <= 0.4 * max_eps)
-            if np.sum(linear_mask) >= 2:
-                coeffs = np.polyfit(eps_arr[linear_mask], sig_arr[linear_mask], 1)
-                modulus = coeffs[0]
-            else:
-                # Fallback: use all points
-                coeffs = np.polyfit(eps_arr, sig_arr, 1)
-                modulus = coeffs[0]
-        else:
-            modulus = 0
-        
-        if is_shear:
-            results['G_eff'] = modulus
-        else:
-            results['E_eff'] = modulus
-            
-            # Poisson's ratio from linear regression (matching kernel)
-            if np.sum(linear_mask) >= 2:
-                eps_lin = eps_arr[linear_mask]
-                axial_solid_lin = np.array([stress_strain_data[j]['eps_axial_solid'] 
-                                       for j in range(len(stress_strain_data)) if linear_mask[j]])
-                trans1_lin = np.array([stress_strain_data[j]['eps_trans1'] 
-                                       for j in range(len(stress_strain_data)) if linear_mask[j]])
-                trans2_lin = np.array([stress_strain_data[j]['eps_trans2'] 
-                                       for j in range(len(stress_strain_data)) if linear_mask[j]])
-                nu1 = -np.polyfit(axial_solid_lin, trans1_lin, 1)[0]
-                nu2 = -np.polyfit(axial_solid_lin, trans2_lin, 1)[0]
-                results['nu_eff'] = (nu1 + nu2) / 2.0
-            else:
-                # Fallback: last frame
-                if abs(eps_arr[-1]) > 1e-30:
-                    nu1 = -stress_strain_data[-1]['eps_trans1'] / stress_strain_data[-1]['eps_axial_solid']
-                    nu2 = -stress_strain_data[-1]['eps_trans2'] / stress_strain_data[-1]['eps_axial_solid']
-                    results['nu_eff'] = (nu1 + nu2) / 2.0
-    
-    return results
+    return _reduce_first_order(stress_strain_data, V_RVE, is_shear)
 
 
 def extract_second_order(odb_path, L, Kappa, Bending_Plane):
@@ -498,17 +516,36 @@ def extract_second_order(odb_path, L, Kappa, Bending_Plane):
     rpk_u = _rp_disp(last_frame, _rp_region(odb, 'RP_K'), 0)
     kappa_actual = rpk_u if (rpk_u is not None and abs(rpk_u) > 1e-30) \
         else Kappa * last_frame.frameValue
+    odb.close()
+
+    return _reduce_second_order(sigma_vol, moment_vol, total_vol,
+                                kappa_actual, L, s_idx)
+
+
+def _reduce_second_order(sigma_vol, moment_vol, total_vol, kappa_actual,
+                         L, s_idx):
+    """Volume-weighted bending sums -> D_RVE, E_bending and the membrane terms.
+
+    Split out of extract_second_order for the same reason as
+    _reduce_first_order: the CalculiX route accumulates the identical sums from
+    a .dat and must not carry a second copy of the moment arithmetic.
+
+    sigma_vol   : sum(sigma_i * V_e), Voigt, over the cell
+    moment_vol  : sum(sigma_bend * (z_e - L/2) * V_e)
+    total_vol   : sum(V_e) over meshed elements (voids excluded)
+    kappa_actual: the curvature actually imposed, read from RP_K
+    s_idx       : Voigt index of the bending stress for this plane
+    """
+    V_RVE = L ** 3
     M_over_V = moment_vol / L
-    
+
     D_rve = abs(M_over_V / kappa_actual) if abs(kappa_actual) > 1e-30 else 0
     E_bending = 12.0 * D_rve / L**4
     sigma_bar = sigma_vol / V_RVE
     porosity = 1.0 - total_vol / V_RVE
     N_membrane = sigma_vol[s_idx] / L
     B_coupling = N_membrane / kappa_actual if abs(kappa_actual) > 1e-30 else 0
-    
-    odb.close()
-    
+
     return {
         'D_rve': D_rve,
         'E_bending': E_bending,
@@ -543,6 +580,27 @@ def compute_length_scale(D_rve, E_eff, G_eff, nu_eff, L):
         'E_bending_material': E_bending_material,
         'E_bending_plate': E_bending_plate,
     }
+
+
+def _case_source(odb_dir, run_id, short):
+    """Which solver's result to read for one RVE and one load case.
+
+    Returns ('abaqus', odb_path), ('calculix', dat_path), or (None, None).
+
+    An .odb wins when both are present, so converting and solving a directory
+    with the CalculiX backend cannot silently displace Abaqus results that are
+    already there. SPAX_SOLVER=calculix reverses the preference, which is what
+    reading both out of one directory for a head-to-head needs.
+    """
+    odb = os.path.join(odb_dir, 'Job-{}-{}.odb'.format(run_id, short))
+    dat = os.path.join(odb_dir, 'Job-{}-{}-ccx.dat'.format(run_id, short))
+    if os.environ.get('SPAX_SOLVER', '').strip().lower() in ('calculix', 'ccx'):
+        return ('calculix', dat) if os.path.isfile(dat) else (None, None)
+    if os.path.isfile(odb):
+        return 'abaqus', odb
+    if os.path.isfile(dat):
+        return 'calculix', dat
+    return None, None
 
 
 def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None):
@@ -612,11 +670,24 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
         SHR = [('ss12', 'S12', 'G_xy'), ('ss13', 'S13', 'G_xz'),
                ('ss23', 'S23', 'G_yz')]
 
+        solvers_used = set()
+        # Worst disagreement, over every load case, between the volume-averaged
+        # stress and the reference-point reaction -- two independent
+        # measurements of the same macroscopic stress. Only the CalculiX route
+        # reports it (the ODB route has always trusted its direct solver), and
+        # it is what tells an under-converged iterative solve apart from a
+        # converged one when the modulus alone looks perfectly reasonable.
+        eq_gaps = []
+
         def _fo(short, scomp):
-            p = os.path.join(odb_dir, 'Job-{}-{}.odb'.format(run_id, short))
-            if not os.path.isfile(p):
+            solver, p = _case_source(odb_dir, run_id, short)
+            if solver is None:
                 return None
+            solvers_used.add(solver)
             try:
+                if solver == 'calculix':
+                    import SpaX_CalculiX as ccx
+                    return ccx.extract_first_order(p, scomp, eng, L)
                 return extract_first_order(p, scomp, eng, L)
             except Exception as e:
                 print("    ERROR {}: {}".format(short, e))
@@ -632,6 +703,8 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
                 # the requested VoF. Recorded from the first uniaxial ODB that
                 # yields it (all load cases share the geometry), and only when
                 # the bending path has not already supplied it.
+                if 'equilibrium_gap' in r:
+                    eq_gaps.append(r['equilibrium_gap'])
                 if 'porosity' in r and row.get('porosity', '') in ('', None):
                     row['porosity'] = r['porosity']
                     row['V_solid'] = r.get('V_solid', '')
@@ -644,6 +717,8 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
             if r == 'ERROR':
                 row[Gk] = 'ERROR'
             elif r:
+                if 'equilibrium_gap' in r:
+                    eq_gaps.append(r['equilibrium_gap'])
                 row[Gk] = r.get('G_eff', r.get('E_eff', ''))
                 try:
                     print("    {} -> G={:.4e}".format(short, float(row[Gk])))
@@ -688,11 +763,17 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
                 if 'E_z_over_xy' in row else ""))
         
         # ---- Second-order: Bending ----
-        odb_ben = os.path.join(odb_dir, 'Job-{}-ben.odb'.format(run_id))
-        if Kappa > 0 and os.path.isfile(odb_ben):
+        ben_solver, odb_ben = _case_source(odb_dir, run_id, 'ben')
+        if Kappa > 0 and ben_solver is not None:
             print("  Extracting bending (D_RVE, E_bending)...")
+            solvers_used.add(ben_solver)
             try:
-                r3 = extract_second_order(odb_ben, L, Kappa, Bending_Plane)
+                if ben_solver == 'calculix':
+                    import SpaX_CalculiX as ccx
+                    r3 = ccx.extract_second_order(odb_ben, L, Kappa,
+                                                  Bending_Plane)
+                else:
+                    r3 = extract_second_order(odb_ben, L, Kappa, Bending_Plane)
                 row['D_rve'] = r3.get('D_rve', '')
                 row['E_bending'] = r3.get('E_bending', '')
                 row['porosity'] = r3.get('porosity', '')
@@ -704,7 +785,7 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
                 print("    ERROR (2nd order): {}".format(e))
                 row['D_rve'] = 'ERROR'
         elif Kappa > 0:
-            print("  [SKIP] {} not found".format(os.path.basename(odb_ben)))
+            print("  [SKIP] no bending result for {}".format(run_id))
             row['D_rve'] = 'MISSING'
         
         # ---- MCST Length Scale ----
@@ -730,6 +811,13 @@ def run(csv_path, odb_dir, output_csv='postprocess_results.csv', only_index=None
         elif Kappa > 0 and (E_eff <= 0 or G_eff <= 0):
             print("  [SKIP] MCST: missing E_eff or G_eff")
         
+        # Which solver these numbers came from. Cheap to carry and the only
+        # thing in results.csv that distinguishes an Abaqus row from a
+        # CalculiX one once the moduli are side by side.
+        row['solver'] = '+'.join(sorted(solvers_used)) if solvers_used else ''
+        if eq_gaps:
+            row['equilibrium_gap'] = max(eq_gaps)
+
         all_results.append(row)
     
     # Write consolidated CSV
