@@ -66,13 +66,15 @@ def kujala_implied_phi(z, n):
     He reports no composition, so nothing can be matched forwards. Inverting
     his moduli is the only way to use him, and it asks a fair question: is the
     phi(z) his beams imply a physically plausible one? The closure is monotone
-    over 0..phi_0, so every measured modulus has exactly one preimage.
+    over 0..phi_0 under the ramp, so every measured modulus has exactly one
+    preimage; the step is not invertible, which is the one place the ramp is
+    retained.
     """
     Et, Eb = K_TOP.mean(), K_BOT.mean()
     tgt = Et + (Eb - Et) * z
     out = []
     for t in tgt:
-        f = lambda q: float(ez.E_of_phi(q, n=n, floor=0.0)) - t
+        f = lambda q: float(ez.E_of_phi(q, n=n, weight='ramp', floor=0.0)) - t
         try:
             out.append(brentq(f, 1e-9, ez.PHI_0 - 1e-9))
         except ValueError:
@@ -82,10 +84,10 @@ def kujala_implied_phi(z, n):
 
 def panel_modulus(ax, z):
     """Both studies against one model profile."""
-    lo, mid, hi = (ez.E_of_phi(ref_phi(z), n=n, floor=0.0)
-                   for n in (ez.N_HI, ez.N_MID, ez.N_LO))
-    ax.fill_betweenx(z, lo, hi, color=fs.SKY, alpha=0.35, label='exponent band')
-    ax.plot(mid, z, color=fs.BLUE, lw=2.6, label=r'closure, $n=%.2f$' % ez.N_MID)
+    lo, mid, hi = ez.E_band(ref_phi(z), floor=0.0)
+    ax.fill_betweenx(z, lo, hi, color=fs.SKY, alpha=0.35,
+                     label=r'$n(b)$ band')
+    ax.plot(mid, z, color=fs.BLUE, lw=2.6, label=r'closure, $n(b)$')
 
     # Kujala: moduli at two depths only, four beams each, drawn as spread.
     for E, zz, lab in ((K_TOP, 0.015, 'Kujala, surface and base'),
@@ -116,7 +118,7 @@ def panel_brine(ax, z):
             label='our reference column')
     ax.plot(gogo_phi(z), z, color=fs.GREEN, lw=2.4, ls='-',
             label='Gogolaze, measured')
-    ax.plot(kujala_implied_phi(z, ez.N_MID), z, color=fs.ORANGE, lw=2.4,
+    ax.plot(kujala_implied_phi(z, None), z, color=fs.ORANGE, lw=2.4,
             ls=(0, (5, 2)), label='Kujala, implied by inversion')
     ax.axvspan(0.25, 0.55, color=fs.ORANGE, alpha=0.14, zorder=0)
     ax.text(0.40, 0.12, 'skeletal\nrange', fontsize=9.5, color=fs.ORANGE,

@@ -172,9 +172,9 @@ def main():
     axc.axvspan(ez.PHI_DRAIN - ez.PHI_DRAIN_SD, ez.PHI_DRAIN + ez.PHI_DRAIN_SD,
                 color=fs.VERM, alpha=0.20, zorder=0)
     axc.fill_between(phi, lo, hi, color=fs.SKY, alpha=0.40,
-                     label=r'closure, $n=%.2f$-$%.2f$' % (ez.N_LO, ez.N_HI))
+                     label=r'closure, $n(b)$, $\pm2\,\mathrm{rms}$')
     axc.plot(phi, np.maximum(mid, 0.04), color=fs.BLUE, lw=2.8,
-             label=r'closure, $n=%.2f$' % ez.N_MID)
+             label=r'closure, $n(b)$')
     axc.plot(phi, ez.E_ICE * (1 - 1.65 * phi), color=fs.ORANGE, lw=2.0,
              ls='--', label='pocket cells (measured)')
     axc.plot(phi, 9.5 * (1 - np.sqrt(phi)) ** 4, color=fs.BLACK, lw=1.6,

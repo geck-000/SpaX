@@ -26,7 +26,8 @@ import matplotlib.pyplot as plt
 
 import ez_closure as ez
 
-COL = r'C:/Users/stirpeg2/.claude/jobs/06dae8ab/tmp/column_new.csv'
+COL = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+                   'results', 'results_column_ensemble.csv')
 
 T = np.array([-19.1, -17.3, -15.4, -13.6, -11.8, -10.0, -8.2, -6.3, -4.5, -2.7])
 S = np.array([7.0, 5.5, 4.8, 4.5, 4.3, 4.3, 4.5, 5.0, 6.0, 8.0])
