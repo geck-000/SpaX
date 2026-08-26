@@ -48,3 +48,23 @@ when everything still lived in the repository root.
 
 > **Scatter convention.** The current manuscript declares and uses the *population* standard deviation
 > (`ddof=0`).
+
+## Stress-field dumps held outside the repository
+
+`scf_extract.py` keeps the full per-element stress array rather than discarding
+it once the percentiles are formed, because `weibull_sensitivity.py`,
+`weibull_mnorm.py` and `plot_scf_field.py` all re-read it. Those dumps are
+`.npz` and they are large.
+
+Thirty of them are tracked here under `weibull_dumps/` and `scf_fields/`,
+totalling about 100 MB. The twenty **layered** ones, `WBLL_*.npz`, are not: at
+1.1 GB they would have to live in the history permanently. They are archived
+outside the repository at
+
+    ~/SpaX/spax_scratch_archive/weibull_dumps/
+
+having been pulled off `/scratch` on 2026-08-19 and verified against the remote
+byte sizes and by loading each array. That copy is now the only one — the
+scratch originals remain for the moment but scratch is a shared allocation with
+no backup, so anything needed from `WBLL_*` should be taken from the archive
+rather than assumed to be on the cluster.

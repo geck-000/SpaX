@@ -539,6 +539,184 @@ def _add_wavy_channel(cx, cy, r, L, z_ext, amp, az_cos, az_sin, npts=25, zshift=
     return [t for (d, t) in fused if d == 3]
 
 
+def _add_brine_slab(x0, thickness, L, bridges, axis=0):
+    """A cell-spanning brine layer interrupted by ice bridges.
+
+    Every ellipsoidal inclusion leaves the matrix percolating around it, so no
+    packing of pockets -- however oblate -- can sever the load path: the
+    lamellar sweep moved E_x by under 3% from needle to 4:1 plate. A layer that
+    spans the cell cross-section does sever it, and the ice bridges piercing the
+    layer are then the only load path. Their area fraction b is the parameter
+    that sets the transverse modulus.
+
+    The slab spans the two in-plane directions completely, so its intersection
+    with each of those four faces is the same full rectangle and the periodic
+    face pairing is trivially satisfied. Bridges are required to sit clear of
+    the faces (the caller places them with a margin), which keeps every cut
+    curve interior; a bridge crossing a face would need its own periodic image
+    to keep the two decompositions identical, exactly the failure mode that
+    forced the sphere copies to be built by translation rather than rebuilt.
+
+    `axis` is the slab normal: 0=x, 1=y, 2=z. Bridges are (u, v, r) in the two
+    in-plane coordinates, ordered cyclically after the normal.
+    """
+    eps = 0.02 * max(thickness, 1e-9)
+    org = [0.0, 0.0, 0.0]
+    ext = [L, L, L]
+    org[axis] = x0
+    ext[axis] = thickness
+    slab = gmsh.model.occ.addBox(org[0], org[1], org[2], ext[0], ext[1], ext[2])
+    if not bridges:
+        return [slab]
+
+    tools = []
+    for (bu, bv, br) in bridges:
+        c = [0.0, 0.0, 0.0]
+        d = [0.0, 0.0, 0.0]
+        c[axis] = x0 - eps
+        c[(axis + 1) % 3] = bu
+        c[(axis + 2) % 3] = bv
+        d[axis] = thickness + 2.0 * eps
+        tools.append((3, gmsh.model.occ.addCylinder(
+            c[0], c[1], c[2], d[0], d[1], d[2], br)))
+
+    cut, _ = gmsh.model.occ.cut([(3, slab)], tools,
+                               removeObject=True, removeTool=True)
+    return [t for (d_, t) in cut if d_ == 3]
+
+
+def place_bridges(L, bridge_fraction, n_bridges, margin_mult=1.25, seed=None,
+                  max_tries=4000):
+    """Non-overlapping ice bridges of total area fraction `bridge_fraction`.
+
+    Equal radii, so N pi r^2 = b L^2 fixes r. They are kept clear of the cell
+    faces by `margin_mult * r` and clear of each other by the same, both to keep
+    the periodic faces uncut and to stop two bridges fusing into one larger
+    bridge of a different area than the caller asked for.
+    """
+    import random as _random
+    if bridge_fraction <= 0 or n_bridges <= 0:
+        return [], 0.0
+    r = L * math.sqrt(bridge_fraction / (math.pi * n_bridges))
+    rng = _random.Random(seed)
+    m = margin_mult * r
+    out = []
+    tries = 0
+    while len(out) < n_bridges and tries < max_tries:
+        tries += 1
+        u = rng.uniform(m, L - m)
+        v = rng.uniform(m, L - m)
+        if all((u - pu) ** 2 + (v - pv) ** 2 >= (2.0 * m) ** 2
+               for (pu, pv, _) in out):
+            out.append((u, v, r))
+    if len(out) < n_bridges:
+        # Falling back to a lattice rather than to fewer bridges: the area
+        # fraction is the physical quantity being controlled and must not
+        # silently come out low because the random placement jammed.
+        #
+        # SAY SO. A lattice is a different microstructure from a jammed random
+        # packing, not a near-miss of one: it gives the load a straight path
+        # where the random arrangement makes it hop sideways. Whether this
+        # branch fires depends on N and b, so a bridge-count sweep that does
+        # not report it silently compares regular arrangements against
+        # irregular ones and attributes the difference to the count.
+        print("    [Bridges] WARNING: random placement jammed after %d tries "
+              "at N=%d, b=%.4f -- FALLING BACK TO A LATTICE. This is a "
+              "different arrangement, not a perturbed one." %
+              (tries, n_bridges, bridge_fraction))
+        k = int(math.ceil(math.sqrt(n_bridges)))
+        step = L / k
+        out = []
+        for i in range(k):
+            for j in range(k):
+                if len(out) < n_bridges:
+                    out.append(((i + 0.5) * step, (j + 0.5) * step, r))
+        return out, (sum(math.pi * br ** 2 for (_, _, br) in out) / (L * L),
+                     'lattice')[0]
+    return out, sum(math.pi * br ** 2 for (_, _, br) in out) / (L * L)
+
+
+def bridge_arrangement(L, bridge_fraction, n_bridges, seed=None):
+    """'lattice' or 'random' for the arrangement place_bridges would return.
+
+    Exposed so a sweep can record which branch it got instead of discovering
+    later that half its cells were laid out differently from the other half.
+    """
+    out, _ = place_bridges(L, bridge_fraction, n_bridges, seed=seed)
+    if not out:
+        return 'empty'
+    k = int(math.ceil(math.sqrt(n_bridges)))
+    step = L / k
+    on_grid = all(
+        any(abs(u - (i + 0.5) * step) < 1e-12 for i in range(k)) and
+        any(abs(v - (j + 0.5) * step) < 1e-12 for j in range(k))
+        for (u, v, _) in out)
+    return 'lattice' if on_grid else 'random'
+
+
+def place_bridges_layers(L, bridge_fraction, n_bridges, n_layers,
+                         correlation=0.0, seed=None, max_tries=200):
+    """Bridge positions for every layer, correlated across layers.
+
+    Independent positions in each layer force the load to hop sideways from one
+    bridge to the next, and the hop length scales with the cell edge, so the
+    drained modulus falls as 1/n and the cell never homogenises: measured
+    E ~ n^-1.14 over a 2.5x change in cell size. Aligning the bridges gives a
+    straight load path whose compliance per layer does not know the cell size,
+    which should restore convergence.
+
+    Whether real bridges line up between adjacent ice plates is a
+    microstructural question, so it is exposed as a parameter rather than
+    assumed: `correlation` 0 reproduces the independent placement, 1 stacks
+    every layer's bridges at the same in-plane positions, and values between
+    jitter each layer off the shared template by an amplitude that grows as the
+    correlation falls. Non-overlap and the face margin are re-checked after
+    jittering, since a blend of two valid layouts need not itself be valid.
+    """
+    import random as _random
+
+    base, b_real = place_bridges(L, bridge_fraction, n_bridges, seed=seed)
+    if not base:
+        return [[] for _ in range(n_layers)], 0.0
+
+    c = min(max(float(correlation), 0.0), 1.0)
+    if c >= 0.999:
+        return [list(base) for _ in range(n_layers)], b_real
+    if c <= 1e-9:
+        # exactly the old behaviour, seeded per layer as before
+        return ([place_bridges(L, bridge_fraction, n_bridges,
+                               seed=(k + 1) * 7919)[0]
+                 for k in range(n_layers)], b_real)
+
+    r = base[0][2]
+    m = 1.25 * r
+    amp = (1.0 - c) * 0.5 * L
+    rng = _random.Random((seed or 0) + 13)
+    out = []
+    for _k in range(n_layers):
+        cand = list(base)
+        for _ in range(max_tries):
+            trial = []
+            for (u, v, rr) in base:
+                nu = min(max(u + rng.uniform(-amp, amp), m), L - m)
+                nv = min(max(v + rng.uniform(-amp, amp), m), L - m)
+                trial.append((nu, nv, rr))
+            ok = True
+            for i in range(len(trial)):
+                for j in range(i + 1, len(trial)):
+                    if ((trial[i][0] - trial[j][0]) ** 2 +
+                            (trial[i][1] - trial[j][1]) ** 2) < (2.0 * m) ** 2:
+                        ok = False
+                        break
+                if not ok:
+                    break
+            if ok:
+                cand = trial
+                break
+        out.append(cand)
+    return out, b_real
+
+
 # =====================================================================
 # Main mesh generation
 # =====================================================================
@@ -547,7 +725,8 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                            Is_Porous='Composite', run_id='gmsh_rve',
                            mesh_order=1, optimise=True,
                            VoF_void_sphere=0.0, VoF_incl_sphere=0.0,
-                           Inclusion_Type='Solid', gap_balls=None):
+                           Inclusion_Type='Solid', gap_balls=None,
+                           slabs=None):
     """
     Generate a periodic RVE mesh using Gmsh.
     
@@ -816,8 +995,24 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
             sphere_tags.append((3, sc))
             sphere_to_parent[sc] = parent_idx
     
+    # ---- Cell-spanning brine layers ----
+    # Appended to sphere_tags so they ride the same fragment and periodicity
+    # path as the pockets, but their positions in the list are recorded so the
+    # hybrid classifier can force them to brine: a slab assigned to the gas
+    # quota would be unmeshed and would cut the cell in two.
+    slab_positions = []
+    for sl in (slabs or []):
+        for t in _add_brine_slab(sl['origin'], sl['thickness'], L,
+                                 sl.get('bridges', []), axis=sl.get('axis', 0)):
+            slab_positions.append(len(sphere_tags))
+            sphere_tags.append((3, t))
+            sphere_to_parent[t] = -1
+    if slab_positions:
+        print("  Brine slabs: {} layer volume(s), {} bridge(s) each".format(
+            len(slab_positions), len((slabs or [{}])[0].get('bridges', []))))
+
     print("  Total sphere volumes (incl copies): {}".format(len(sphere_tags)))
-    
+
     # ---- Boolean fragment ----
     print("  Running Boolean fragment...")
     if sphere_tags:
@@ -854,6 +1049,12 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         for dim, tag in outmap[i + 1]:
             if dim == 3:
                 sphere_children.add(tag)
+
+    slab_children = set()
+    for i in slab_positions:
+        for dim, tag in outmap[i + 1]:
+            if dim == 3:
+                slab_children.add(tag)
     
     matrix_vols = sorted(list(box_children - sphere_children))
     sphere_vols = sorted(list(box_children & sphere_children))
@@ -902,13 +1103,17 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         vol_data = []  # (vol_tag, parent_sphere_idx, volume, centroid)
         
         for vtag in sphere_vols:
+            # Slabs are brine by construction and never enter the gas lottery.
+            if vtag in slab_children:
+                incl_vols.append(vtag)
+                continue
             try:
                 com = gmsh.model.occ.getCenterOfMass(3, vtag)
                 vol = gmsh.model.occ.getMass(3, vtag)
             except:
                 com = (0, 0, 0)
                 vol = 0
-            
+
             # Find closest parent sphere
             best_parent = 0
             best_dist = 1e30
@@ -954,8 +1159,19 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         for pidx in parent_list:
             parent_vol = sum(v for _, v, _ in parent_groups[pidx])
             parent_vof = parent_vol / V_RVE
-            
-            if void_vof_accum < VoF_void_sphere:
+
+            # Take this parent as void only if doing so brings the running total
+            # CLOSER to the requested gas fraction than leaving it out.
+            #
+            # The rule used to be `accum < target`, i.e. keep adding until the
+            # total crossed the target, which then kept the whole of the parent
+            # that crossed it -- an overshoot of up to one inclusion. On the
+            # column that showed as realised gas fractions 3-36% above target,
+            # much worse than the brine, and it biases the softer phase upward.
+            # Continuing through the whole shuffled list rather than stopping at
+            # the crossing also lets a later small inclusion trim the residual.
+            if abs(void_vof_accum + parent_vof - VoF_void_sphere) < \
+               abs(void_vof_accum - VoF_void_sphere):
                 # Assign to void (air — unmeshed)
                 for vtag, _, _ in parent_groups[pidx]:
                     void_vols.append(vtag)
@@ -1305,7 +1521,15 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
     # and a mesh that is periodic by construction gets rejected. Mesh node
     # spacing is ~1e-2, so this stays five orders of magnitude clear of
     # pairing two genuinely distinct nodes.
-    tol_match = 1e-7 * max(L, 1.0)
+    # 1e-7 was still marginally too tight for the dense channelled cells. The
+    # diagnostic below reports, for every node it fails to pair, how far the
+    # nearest candidate on the opposite face actually was: on the base slice
+    # those distances came out at 1.2-2.1e-7 -- partners that exist and are
+    # correct, missed by a factor under three. All of them lay on the Z faces,
+    # which is where the channels cut. At 1e-6 there is five times the headroom
+    # those cases need, while still sitting four orders of magnitude below the
+    # element size, so it cannot pair two genuinely distinct nodes.
+    tol_match = 1e-6 * max(L, 1.0)
     periodicity = {}
     
     for axis_name, axis_idx in [('X', 0), ('Y', 1), ('Z', 2)]:
@@ -1478,7 +1702,8 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         
         n_pairs_written = 0
         n_pairs_skipped = 0
-        
+        _unmatched_report = []
+
         for axis_name, axis_idx in [('X', 0), ('Y', 1), ('Z', 2)]:
             ip = [j for j in range(3) if j != axis_idx]
             
@@ -1501,9 +1726,30 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                         break
                 if not matched:
                     n_pairs_skipped += 1
+                    # Record how far the nearest candidate on the opposite face
+                    # actually was. This distinguishes the two ways this gate
+                    # fires, which need opposite responses: a near miss of
+                    # order the geometric tolerance means the partner exists
+                    # and the match is too strict, whereas a miss of order the
+                    # element size means there is genuinely no partner -- a
+                    # void on one face against material on the other -- and the
+                    # placement has to be rejected instead.
+                    if len(_unmatched_report) < 12 and pos_data:
+                        dmin = min(max(abs(ny - py), abs(nz - pz))
+                                   for _pt, py, pz in pos_data)
+                        _unmatched_report.append((axis_name, ntag, dmin))
     
     print("  Periodic pairs written: {}, skipped: {}".format(
         n_pairs_written, n_pairs_skipped))
+    if _unmatched_report:
+        worst = max(d for _a, _t, d in _unmatched_report)
+        print("  Unmatched nodes: nearest partner was this far away "
+              "(tol {:.2e}, element size ~{:.2e})".format(tol_match, L_mesh))
+        for a, t, d in _unmatched_report[:8]:
+            print("    axis {}  node {:<8} nearest {:.3e}  {}".format(
+                a, t, d,
+                "NEAR MISS -> tolerance" if d < 100 * tol_match
+                else "NO PARTNER -> geometry"))
     print("  Periodic pairs: {}".format(match_path))
     
     gmsh.finalize()
@@ -1987,6 +2233,7 @@ if __name__ == '__main__':
             VoF_incl_sphere=_p['VoF_incl_sphere'],
             Inclusion_Type=_p['Inclusion_Type'],
             gap_balls=_p.get('gap_balls'),
+            slabs=_p.get('slabs'),
             mesh_order=_p.get('mesh_order', 1))
         with open(out_pkl, 'wb') as _f:
             pickle.dump(_res, _f)

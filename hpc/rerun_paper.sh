@@ -82,24 +82,111 @@ case "$STAGE" in
       exit 1
     fi
     echo "--- volume audit ---"
-    python3 audit_volume.py "params/$DECK" "$OUTDIR" "$TOL" || {
+    # Distinguish "the geometry is wrong" from "the auditor could not run".
+    # audit_volume.py exits 2 when the meshed fraction exceeds TOL; any other
+    # non-zero status is the script itself failing (a missing PYTHONUSERBASE
+    # leaves numpy unimportable, which previously read as a volume failure and
+    # stopped a chain over an environment problem).
+    python3 audit_volume.py "params/$DECK" "$OUTDIR" "$TOL"
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
       echo "!!! VOLUME AUDIT FAILED for $NAME -- chain stopped."
       echo "!!! The meshed inclusion fraction still exceeds what the deck asks for."
       exit 1
-    }
+    elif [ "$rc" -ne 0 ]; then
+      echo "!!! audit_volume.py could not run (exit $rc) -- chain stopped."
+      echo "!!! This is an environment fault, not a geometry fault."
+      echo "!!! PYTHONUSERBASE=$PYTHONUSERBASE"
+      exit 1
+    fi
     find "$OUTDIR" -name 'Job-*.inp' -exec mv -t "$W" {} + 2>/dev/null || true
     find "$OUTDIR" -name '*_periodic_pairs.csv' -exec mv -t "$W" {} + 2>/dev/null || true
-    ls $GLOB.inp 2>/dev/null | sed 's/\.inp$//' | sort > "GJ_$NAME"
+    # Build the job list from the deck's own run_ids, not from a filename glob.
+    # A glob cannot always separate two campaigns: colseeds and colseeds_extra
+    # are both Job-CSEED_*, so the second would collect the first's decks as
+    # well -- harmless while they run in sequence, because the solve array skips
+    # decks whose ODB exists and the post-processor filters by the deck's
+    # run_ids, but wasteful, and wrong outright if the two ever run at the same
+    # time. The deck is the authority on which RVEs belong to the campaign.
+    python3 - "params/$DECK" > "GJ_$NAME" <<'PYEOF'
+import csv, glob, os, sys
+seen = set()
+for row in csv.DictReader(open(sys.argv[1], encoding='utf8', errors='replace')):
+    rid = (row.get('run_id') or '').strip()
+    if not rid or rid in seen:
+        continue
+    seen.add(rid)
+    for f in sorted(glob.glob('Job-%s-*.inp' % rid)):
+        print(os.path.basename(f)[:-4])
+PYEOF
     N=$(wc -l < "GJ_$NAME")
     echo "decks collected: $N"
     if [ "$N" -lt 1 ]; then
       echo "!!! no decks for $NAME -- chain stopped."; exit 1
     fi
-    S=$(sbatch --parsable $A --partition=small --cpus-per-task=4 --mem=16G \
-        --time=00:40:00 --array=1-${N}%30 \
-        --export=ALL,WORKDIR=$W,JOBLIST=GJ_$NAME csc_solve_array.sh)
-    echo "solve: $S"
-    sbatch $A --dependency=afterany:$S \
+    # Bending is memory-bound in a way the uniaxial cases are not: the mesh
+    # grows as (L/d)^3 and the direct solver dominates. Four eringen bending
+    # solves were killed at 16.3-16.7 GB against a 16 GB allocation, and an
+    # Abaqus killed for memory still leaves an ODB behind -- which the solve
+    # array reads as success, so the loss is silent until the results table
+    # comes up short. Give any campaign carrying bending decks real headroom
+    # rather than discovering the ceiling one cell at a time.
+    # Size the solve from the cell edge, not from the load case. Element count
+    # goes as L^3, and so does the direct solver's appetite, so a campaign at
+    # L=1.00 needs roughly eight times what one at L=0.50 does. Keying this on
+    # bending alone was wrong: the uniaxial L=1.00 campaigns ran out of memory
+    # at 16 GB (MaxRSS 16.7 GB) and out of walltime at forty minutes, while the
+    # bending flag never applied to them. Bending on top costs about another
+    # factor of three. Nodes carry 762 GB, so being generous costs nothing but
+    # queue position.
+    LMAX=$(python3 - "params/$DECK" <<'PYEOF'
+import csv, sys
+vals = []
+for r in csv.DictReader(open(sys.argv[1], encoding='utf8', errors='replace')):
+    try:
+        vals.append(float(r.get('L') or 0))
+    except ValueError:
+        pass
+print('%.3f' % (max(vals) if vals else 0.5))
+PYEOF
+)
+    read SOLVE_MEM SOLVE_TIME <<EOF
+$(python3 -c "
+import sys
+L=float('$LMAX') or 0.5
+bend=$(grep -qc -- '-ben\$' "GJ_$NAME" 2>/dev/null && echo 1 || echo 0)
+s=(L/0.5)**3
+mem=16*s*(3 if bend else 1)
+mem=max(16,min(360,mem))
+hrs=(40/60.0)*s*(2 if bend else 1)
+hrs=max(0.67,min(8.0,hrs))
+h=int(hrs); m=int(round((hrs-h)*60))
+print('%dG %02d:%02d:00' % (int(mem), h, m))
+")
+EOF
+    echo "cell edge $LMAX -> mem $SOLVE_MEM, walltime $SOLVE_TIME"
+    # Submit in chunks under the account's job-submission cap. Throttling with
+    # %N limits how many tasks RUN, not how many are submitted, so a campaign
+    # with more decks than the cap is rejected outright with
+    # AssocMaxSubmitJobLimit however it is throttled -- which is how fieldseeds
+    # (150 RVEs, 300 decks, against a 200 cap) killed its own controller after
+    # generating every deck and passing the audit.
+    CHUNK=${SPAX_MAX_ARRAY:-150}
+    DEP=""
+    LAST=""
+    lo=1
+    while [ "$lo" -le "$N" ]; do
+      hi=$(( lo + CHUNK - 1 ))
+      [ "$hi" -gt "$N" ] && hi=$N
+      S=$(sbatch --parsable $A $DEP --partition=small --cpus-per-task=4 \
+          --mem=$SOLVE_MEM --time=$SOLVE_TIME --array=${lo}-${hi}%30 \
+          --export=ALL,WORKDIR=$W,JOBLIST=GJ_$NAME csc_solve_array.sh)
+      echo "solve ${lo}-${hi}: $S"
+      DEP="--dependency=afterany:$S"
+      LAST=$S
+      lo=$(( hi + 1 ))
+    done
+    sbatch $A --dependency=afterany:$LAST \
       --export=ALL,WORKDIR=$W,STAGE=post,IDX=$IDX,MANIFEST=$MAN "$SELF"
     ;;
 

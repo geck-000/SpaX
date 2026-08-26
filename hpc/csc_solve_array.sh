@@ -30,15 +30,44 @@ SCR="${LOCAL_SCRATCH:-$WORKDIR/scratch_${SLURM_JOB_ID}_${SLURM_ARRAY_TASK_ID}}"
 mkdir -p "$SCR"
 export OMP_NUM_THREADS=$SLURM_CPUS_PER_TASK
 
+# Clear debris a killed predecessor left behind. Abaqus writes a .lck while a
+# job is live and removes it on exit; a job killed by Slurm for memory or
+# walltime never gets that far, and the stale lock then makes every subsequent
+# attempt fail instantly with "Detected lock file", six seconds in. Because the
+# cleanup below is likewise never reached when the job is killed, nothing else
+# removes it either, so a deck that dies once stays dead until cleared by hand.
+if [ -f "${JOBNAME}.lck" ]; then
+    echo "clearing stale lock from a previous killed run: ${JOBNAME}.lck"
+    rm -f "${JOBNAME}.lck"
+fi
+
 abaqus job="${JOBNAME}" cpus=$SLURM_CPUS_PER_TASK scratch="$SCR" \
        ask_delete=OFF mp_mode=threads memory="90%" interactive
 RC=$?
 echo "Abaqus exit: ${RC}"
 
 # Keep only this job's deck + ODB; drop .dat/.sta/.msg/.com/.prt/.sim/.lck.
+#
+# ...unless the solve failed. Abaqus reports errors as "Please see the message
+# file", and pruning it removes the only description of what went wrong: the
+# job log carries the generic line and nothing else, so a failure that needs
+# diagnosing has to be reproduced blind. Keep .msg, .sta and .dat when the exit
+# code is non-zero. They cost little, there should be few of them, and a later
+# successful solve of the same deck prunes them anyway.
+if [ "$RC" -eq 0 ]; then
+    KEEP='inp|odb'
+else
+    KEEP='inp|odb|msg|sta|dat'
+    echo "solve failed (rc=$RC) -- keeping .msg/.sta/.dat for diagnosis"
+fi
 for f in "${JOBNAME}".*; do
     [ -e "$f" ] || continue
-    case "${f##*.}" in inp|odb) ;; *) rm -f "$f" 2>/dev/null ;; esac
+    ext="${f##*.}"
+    case "$ext" in
+        inp|odb) ;;
+        msg|sta|dat) [ "$RC" -eq 0 ] && rm -f "$f" 2>/dev/null ;;
+        *) rm -f "$f" 2>/dev/null ;;
+    esac
 done
 [ "$SCR" != "$LOCAL_SCRATCH" ] && rm -rf "$SCR"
 echo "===== ${JOBNAME}  done $(date)  (odb: $([ -f ${JOBNAME}.odb ] && echo yes || echo NO)) ====="

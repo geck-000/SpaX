@@ -17,17 +17,23 @@ unset SLURM_GTIDS
 # missing"). Source the snapshot of the working interactive env instead, exactly
 # as csc_solve_array.sh does.
 source "$HOME/abaqus_env.sh"
+# Common post-processing contract (see hpc/README.md): WORKDIR, CSV, RESULTS,
+# OUTDIR. Writes per-RVE tensor files rather than a results table, so RESULTS is
+# unused; TENSOR_DIR, PREFIX and CELL may be overridden.
 WORKDIR=${WORKDIR:?set WORKDIR}
+TENSOR_DIR=${TENSOR_DIR:-tensors/bt80}
+PREFIX=${PREFIX:-BT80_z95}
+CELL=${CELL:-0.80}
 cd "$WORKDIR" || exit 1
-mkdir -p tensors/bt80
+mkdir -p "$TENSOR_DIR"
 
 for s in 1 2 3 4 5; do
-    RID="BT80_z95_s${s}"
+    RID="${PREFIX}_s${s}"
     n=$(ls Job-${RID}-*.odb 2>/dev/null | wc -l)
     echo "===== ${RID}: ${n}/6 ODBs present ====="
     [ "$n" -ge 1 ] || { echo "  SKIP ${RID}: no ODBs"; continue; }
-    abaqus python SpaX_PostProcess.py elasticity "$WORKDIR" tensors/bt80 0.80 "$RID"
+    abaqus python SpaX_PostProcess.py elasticity "$WORKDIR" "$TENSOR_DIR" "$CELL" "$RID"
 done
 
 echo "===== tensors written ====="
-ls -1 tensors/bt80/elasticity_tensor_BT80_z95_s*.csv 2>/dev/null
+ls -1 "$TENSOR_DIR"/elasticity_tensor_${PREFIX}_s*.csv 2>/dev/null

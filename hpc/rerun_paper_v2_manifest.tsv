@@ -1,0 +1,66 @@
+# Every campaign main_fix.tex rests on, for the v2 controller.
+#
+# Columns, tab separated:
+#   name  deck(params/)  outdir  deck-glob  results  post-script(s)  extra-env
+#
+# post-script may name several scripts, '+'-separated, run in order. Torsion
+# needs two: the first-order pass for E_eff/nu_eff, and torsion_extract.py for
+# the rigidity, because the first-order pass cannot read a torsion step and
+# would silently mis-extract it.
+#
+# Order: the validation gate first, then cheap campaigns, then the expensive
+# second-order ones. A campaign's ODBs are reclaimed as soon as its results are
+# written, so peak scratch is set by the largest single campaign rather than by
+# the sum -- which is what kept the v1 run at 230 GB against a 250 GB quota.
+#
+# NOTE. These decks describe every inclusion as a PROLATE needle, because that
+# is all the generator could build until the sphericity ceiling was lifted. If
+# the lamellar test confirms that basal brine is plate-like, the sphericity and
+# growth-direction columns of the depth-resolved decks need re-specifying before
+# this manifest is run in anger; the morphology characterisation is the
+# scientific prerequisite, not the engineering.
+#
+validate	rve_validate.csv	out_val	Job-VAL_*	results_validate.csv	postprocess_firstorder.sh	-
+colseeds	rve_colseeds.csv	out_cs1	Job-CSEED_*	results_colseeds.csv	postprocess_firstorder.sh	-
+colseeds_extra	rve_colseeds_extra.csv	out_cse	Job-CSEED_*	results_colseeds_extra.csv	postprocess_firstorder.sh	-
+coltensor	rve_coltensor.csv	out_cten	Job-CTEN_*	results_coltensor.csv	postprocess_coltensor.sh	-
+basesweep	rve_basesweep.csv	out_bsw	Job-BSW_*	results_basesweep_new.csv	postprocess_basesweep.sh	-
+sizechan	rve_sizechan.csv	out_szch	Job-SZCH_*	results_sizechan.csv	postprocess_firstorder.sh	-
+percolation	rve_perc_rep.csv	out_percrep	Job-PERC_*	results_perc_rep.csv	postprocess_firstorder.sh	-
+morphology	rve_morphology.csv	out_morf	Job-MORF_*	results_morph.csv	postprocess_firstorder.sh	-
+orientation	rve_orient.csv	out_ori	Job-ORI_*	results_orient.csv	postprocess_firstorder.sh	-
+channel	rve_chan_rep.csv	out_chanrep	Job-CHAN_*	results_chan_rep.csv	postprocess_firstorder.sh	-
+tilt00	rve_tilt00.csv	out_tlt00	Job-TLT00_*	results_tilt00.csv	postprocess_firstorder.sh	SPAX_CHANNEL_TILT_DEG=0
+tilt15	rve_tilt15.csv	out_tlt15	Job-TLT15_*	results_tilt15.csv	postprocess_firstorder.sh	SPAX_CHANNEL_TILT_DEG=15
+tilt30	rve_tilt30.csv	out_tlt30	Job-TLT30_*	results_tilt30.csv	postprocess_firstorder.sh	SPAX_CHANNEL_TILT_DEG=30
+gas_dilute	rve_gas_dilute.csv	out_gasd	Job-GASD_*	results_gas_dilute.csv	postprocess_firstorder.sh	-
+brine	rve_brine.csv	out_brn	Job-BRINE_*	results_brine.csv	postprocess_firstorder.sh	-
+brineKconst	rve_brineKconst.csv	out_bkc	Job-BKC_*	results_brineKconst.csv	postprocess_firstorder.sh	-
+brineKtemp	rve_brineKtemp.csv	out_bkt	Job-BKT_*	results_brineKtemp.csv	postprocess_firstorder.sh	-
+skeletal	rve_skeletal.csv	out_skel	Job-SKEL_*	results_skeletal.csv	postprocess_firstorder.sh	-
+skeletal_laminae	rve_skeletal_laminae.csv	out_sklm	Job-SKLM_*	results_skeletal_laminae.csv	postprocess_firstorder.sh	-
+lowbase	rve_lowbase.csv	out_lb	Job-LBASE_*	results_lowbase.csv	postprocess_firstorder.sh	-
+steep_column	rve_steep_column.csv	out_steep	Job-STEEP_*	results_steep_column.csv	postprocess_firstorder.sh	-
+salfamily	rve_salfamily.csv	out_salf	Job-SAL_*	results_salfamily.csv	postprocess_firstorder.sh	-
+seasonal	rve_seasonal.csv	out_seas	Job-SEAS_*	results_seas.csv	postprocess_firstorder.sh	-
+fymy	rve_fymy.csv	out_fymy	Job-FYMY_*	results_fymy.csv	postprocess_firstorder.sh	-
+failure	rve_failure_rep.csv	out_failrep	Job-ICE_z*	results_failure_rep.csv	postprocess_failure.sh	-
+weibull	rve_weibull.csv	out_wbl	Job-WBL_*	results_weibull_scf.csv	postprocess_weibull_scf.sh	-
+fieldseeds	rve_fieldseeds.csv	out_fs2	Job-FSEED_*	results_fieldseeds.csv	postprocess_firstorder.sh	-
+gogo_column	rve_gogo_column.csv	out_gogo	Job-GOGO_*	results_gogo_column.csv	postprocess_firstorder.sh	-
+gogo_chanfrac	rve_gogo_chanfrac.csv	out_goch	Job-GOCH_*	results_gogo_chanfrac.csv	postprocess_firstorder.sh	-
+nlgeom_lin	rve_nlgeom_lin.csv	out_nlglin	Job-NLGLIN_*	results_nlgeom_lin.csv	postprocess_nlgeom.sh	-
+nlgeom_ten	rve_nlgeom_ten.csv	out_nlgten	Job-NLGTEN_*	results_nlgeom_ten.csv	postprocess_nlgeom.sh	-
+nlgeom_cmp	rve_nlgeom_cmp.csv	out_nlgcmp	Job-NLGCMP_*	results_nlgeom_cmp.csv	postprocess_nlgeom.sh	-
+eringen_homog	rve_eringen_homog.csv	out_ergh	Job-ERGH_*	results_eringen_homog.csv	postprocess_firstorder.sh	SPAX_MESH_ORDER=2
+eringen	rve_eringen.csv	out_erg	Job-ERG_*	results_eringen.csv	postprocess_firstorder.sh	SPAX_MESH_ORDER=2
+torsion_homog	rve_torsion_homog.csv	out_torh	Job-TORH_*	results_torsion_homog.csv	postprocess_firstorder.sh+postprocess_torsion.sh	SPAX_MESH_ORDER=2
+torsion	rve_torsion.csv	out_tor	Job-TOR_*	results_torsion.csv	postprocess_firstorder.sh+postprocess_torsion.sh	SPAX_MESH_ORDER=2
+bracket_nlayers	rve_bracket_nlayers.csv	out_brkn	Job-BRKN_*	results_bracket_nlayers.csv	postprocess_firstorder.sh	-
+bracket_pocket	rve_bracket_pocket.csv	out_brkp	Job-BRKP_*	results_bracket_pocket.csv	postprocess_firstorder.sh	-
+bracket_layer	rve_bracket_layer.csv	out_brkl	Job-BRKL_*	results_bracket_layer.csv	postprocess_firstorder.sh	-
+bracket_spacing	rve_bracket_spacing.csv	out_brks	Job-BRKS_*	results_bracket_spacing.csv	postprocess_firstorder.sh	-
+bracket_bridge	rve_bracket_bridge.csv	out_brkb	Job-BRKB_*	results_bracket_bridge.csv	postprocess_firstorder.sh	-
+bracket_corr	rve_bracket_corr.csv	out_brkc	Job-BRKC_*	results_bracket_corr.csv	postprocess_firstorder.sh	-
+bracket_nbridges	rve_bracket_nbridges.csv	out_brkg	Job-BRKG_*	results_bracket_nbridges.csv	postprocess_firstorder.sh	-
+bracket_density	rve_bracket_density.csv	out_brkd	Job-BRKD_*	results_bracket_density.csv	postprocess_firstorder.sh	-

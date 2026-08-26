@@ -1,0 +1,11 @@
+run_id,n_bridges,bridge_fraction,phi_inclusion,E_x_GPa,n_exponent,solved_on,note
+NB_p094_n3_drn_s1,3,0.3144,0.09584,2.4605,0.9730,roihu,
+NB_p094_n3_drn_s2,3,0.3144,0.09491,2.5142,0.9559,local,
+NB_p094_n3_drn_s3,3,0.3144,0.09422,2.4937,0.9641,local,
+NBR2_p094_n4_drn_s1,4,0.3144,0.09348,3.6959,0.6253,roihu,
+NB_p094_n4_drn_s2,4,0.3144,0.09382,3.6157,0.6437,local,
+NB_p094_n4_drn_s3,4,0.3144,0.09430,3.6772,0.6283,local,
+NB_p094_n6_drn_s1,6,0.3144,0.09554,3.9197,0.5710,roihu,
+NB_p094_n6fine_drn_s1,6,0.3144,0.09586,3.8249,0.5916,roihu,4.60 el/bridge mesh check (others 3.08 at N=6)
+GAP_p094_drn_s1,2,0.3144,0.09590,3.4391,0.6835,local,percolating at b>0.312; excluded from the N series
+GAP_p094_drn_s2,2,0.3144,0.09560,3.3950,0.6951,local,percolating at b>0.312; excluded from the N series

@@ -1,0 +1,44 @@
+     t      b     E GPa         n     seeds
+  0.14   0.10    0.8283    0.9178         2
+  0.14   0.20    1.2619    1.0700         1
+  0.14   0.30    2.3977    0.9214         1
+  0.18   0.10    0.7877    0.9043         1
+  0.18   0.20    1.2208    1.0473         1
+  0.18   0.30    2.3709    0.8817         1
+  0.22   0.10    0.7692    0.8762         1
+  0.22   0.20    1.2148    1.0037         1
+  0.22   0.30    2.2992    0.8552         1
+
+n across b, at FIXED t (this is the controlled comparison):
+  t=0.14 : 0.9178 1.0700 0.9214   spread 0.1522
+  t=0.18 : 0.9043 1.0473 0.8817   spread 0.1655
+  t=0.22 : 0.8762 1.0037 0.8552   spread 0.1485
+
+largest spread in n at fixed t: 0.1655
+LAYERB, which moved t as well:   0.1792
+
+VERDICT: n still varies along b at fixed t. The bridge factor
+needs both arguments; g(phi) cannot be recovered from b alone.
+
+
+Nine layered cells, b crossed with t, solved on a workstation 2026-08-20 at no
+billing cost. slab_vof = t(1-b) so each cell realises its intended pair, which
+makes t constant along a row by construction and a variation in n there a
+variation in b alone. One seed per condition: seed scatter has run 0.004 to
+0.012 across every deck in this campaign against an effect of 0.12 to 0.18, so
+the replicate was not earning its solve time. t=0.14 b=0.10 carries two seeds
+and they agree.
+
+The t confound explains almost none of the LAYERB result. Holding t fixed leaves
+the spread in n at 0.149 to 0.166 where LAYERB, with t moving 29 per cent, gave
+0.179. All three rows peak at b = 0.20, the same shape LAYERB showed at two
+brine fractions 68 per cent apart.
+
+Reading the table the other way separates the two: at fixed b, n moves 0.042 to
+0.066 across t, against 0.149 to 0.166 across b at fixed t. Both variables
+matter and b dominates by about two and a half times.
+
+CAVEAT. Rows sit at slightly different element sizes -- L_mesh 0.0109 at t=0.14
+against 0.0120 at t=0.18 and 0.22 -- because mesh_for sizes from layer
+thickness. That bears on comparisons BETWEEN rows, which is the smaller t
+effect; within a row, which is the b test, the mesh is identical.

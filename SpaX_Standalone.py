@@ -625,6 +625,49 @@ def _collect_gap_balls(spheres, L, lc_fine, channels=None,
     return out
 
 
+def _slab_gap_balls(spheres, slabs, L, lc_fine, resolve=0.5, thresh_mult=1.5,
+                    cap=4000):
+    """Refinement balls where an inclusion runs close to a lamella face.
+
+    `_collect_gap_balls` covers sphere-sphere and channel<->inclusion pairs on
+    one argument: a matrix sheet about an element thick meshes unreliably and
+    Gmsh reports it as overlapping facets. A lamella presents exactly the same
+    hazard and was not covered. An inclusion whose surface runs within an
+    element of a layer face -- or which straddles it, leaving a thin lens of
+    matrix -- cuts that face in a curve the surface mesher cannot resolve.
+
+    The exposure grows with the number of layers rather than with cell size,
+    which is why sweeps holding the spacing while the cell grows fail: more
+    layers at fixed spacing means more faces for the same pack of inclusions to
+    graze. Cells of four lamellae mesh; six do not.
+
+    Slabs are axis-aligned plates, so the clearance is the perpendicular one and
+    needs no GJK: along the slab normal the inclusion spans its semi-axis, and
+    the sliver sits between that surface and the nearer face."""
+    if not slabs or lc_fine <= 0.0:
+        return []
+    thresh = thresh_mult * lc_fine
+    size_floor = 0.18 * lc_fine
+    balls = []
+    for sl in slabs:
+        a = int(sl['axis'])
+        for face in (sl['origin'], sl['origin'] + sl['thickness']):
+            for sp in spheres:
+                d = sp[a] - face
+                d -= L * round(d / L)          # nearest periodic image
+                g = abs(d) - sp[3 + a]         # surface-to-face clearance
+                if g >= thresh:
+                    continue
+                mid = [sp[0], sp[1], sp[2]]
+                # midway between the inclusion surface and the face it grazes
+                mid[a] = face + 0.5 * (d - math.copysign(sp[3 + a], d or 1.0))
+                balls.append((mid[0] % L, mid[1] % L, mid[2] % L,
+                              max(size_floor, resolve * max(g, 0.0))))
+                if len(balls) >= cap:
+                    return balls
+    return balls
+
+
 def _repair_offaxis_slivers(spheres, L, gap_target, V_RVE, current_vof,
                             broad=2.5, max_passes=8, channels=None,
                             channel_gap=None):
@@ -1063,14 +1106,43 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                 coords[i] = L - r * 0.5
         cx, cy, cz = coords
         
-        # Random sphericity
-        sph = np.clip(np.random.normal(sphericity_avg, sphericity_std), 0.5, 1.0)
-        
-        # Compute semi-axes from equivalent radius and sphericity
+        # Random sphericity. `sphericity` here is the ratio of the two equal
+        # semi-axes to the distinct one, so s<1 is a PROLATE needle (one long
+        # axis, two short) and s>1 an OBLATE plate (one short axis, two long).
+        # The ceiling used to sit at 1.0, which made plates unreachable: every
+        # inclusion was a needle however the deck was written. Columnar sea ice
+        # carries much of its basal brine in LAYERS between ice platelets, which
+        # are oblate with the short axis horizontal, so the range must extend
+        # above 1 for that morphology to be expressible at all.
+        # Upper limit is generous rather than physical: high-aspect plates are
+        # what the sliver rejection below and the mesher decide on, not this
+        # clip. Basal brine layers are reported at aspect ratios of order ten.
+        sph = np.clip(np.random.normal(sphericity_avg, sphericity_std), 0.3, 12.0)
+
+        # Compute semi-axes from equivalent radius and sphericity. The algebra
+        # is unchanged for s<1, so prolate packings are bit-identical to before;
+        # for s>1 it simply returns r_long < r_short, and the assignment below
+        # then puts the SHORT axis along the growth direction, giving a plate
+        # whose plane contains the other two axes.
+        # Volume-preserving: the ellipsoid must have the volume of a sphere of
+        # radius r_eq whatever its shape, so that r_avg means the size the deck
+        # asks for and the inclusion COUNT is not a function of sphericity.
+        #
+        #   distinct axis a = r_eq s^(-2/3),  pair axis b = r_eq s^(1/3)
+        #   a b^2 = r_eq^3  for every s,      and b/a = s  (the aspect ratio)
+        #
+        # The previous form (a = r_eq s^(-1/3), b = a s) gave V = V_sphere * s:
+        # 40% under-volume at the s=0.6 of the warm slices and, once s>1 became
+        # reachable, eight times over-volume at s=8. The packer iterates on the
+        # volume FRACTION so the achieved VoF was still met, and effective
+        # properties are scale-invariant at fixed fraction and shape, so earlier
+        # prolate results are unaffected; what was wrong is the size and hence
+        # the number of inclusions per cell, which is what sets the realisation
+        # scatter -- and, for plates, the morphology outright.
         r_eq = r
-        if sph < 0.999:
-            r_long = r_eq / (sph ** (1.0/3.0))
-            r_short = r_long * sph
+        if abs(sph - 1.0) > 1e-3:
+            r_long = r_eq * (sph ** (-2.0/3.0))   # distinct axis
+            r_short = r_eq * (sph ** (1.0/3.0))   # the two equal axes
         else:
             r_long = r_eq
             r_short = r_eq
@@ -1078,19 +1150,39 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         # Assign semi-axes using Von Mises-Fisher orientation distribution
         # Maps growth_concentration to vMF concentration parameter kappa
         if growth_direction != 'Random' and growth_concentration > 0.01:
-            # Sample direction biased toward preferred axis via vMF-like distribution
-            kappa_vmf = growth_concentration * 30.0  # 0.6 -> kappa=18, 0.8 -> 24
-            
-            # Preferred axis unit vector
+            # Orientation is drawn from a von Mises-Fisher distribution about the
+            # preferred axis and then snapped to the nearest Cartesian axis,
+            # because the mesher builds axis-aligned ellipsoids only. The snap
+            # means the fabric is represented as a MIXTURE of three aligned
+            # populations whose weights the concentration controls; it is not a
+            # continuous orientation distribution, which is a limitation of the
+            # geometry kernel rather than of the sampling.
+            kappa_vmf = growth_concentration * 30.0
+
             if growth_direction == 'Z': mu = np.array([0., 0., 1.])
             elif growth_direction == 'X': mu = np.array([1., 0., 0.])
             elif growth_direction == 'Y': mu = np.array([0., 1., 0.])
             else: mu = np.array([0., 0., 1.])
-            
-            # Sample direction: mix preferred + random, weighted by kappa
-            rand_dir = np.random.randn(3)
-            rand_dir /= np.linalg.norm(rand_dir)
-            d = kappa_vmf * mu + rand_dir
+
+            # Wood's exact vMF sampler, in the form that closes for p=3.
+            # The previous draw, d = kappa*mu + unit_random, was NOT a vMF
+            # sample: with kappa >= 3 the mu term dominates a unit vector
+            # absolutely, so every draw landed within arcsin(1/kappa) of the
+            # preferred axis and the snap below always returned it. Measured
+            # over 200k draws the aligned fraction was 1.0000 at every
+            # concentration from 0.1 to 0.9 -- the parameter did nothing.
+            u = np.random.rand()
+            w = 1.0 + (1.0 / kappa_vmf) * np.log(
+                u + (1.0 - u) * np.exp(-2.0 * kappa_vmf))
+            # a unit vector in the plane orthogonal to mu
+            tmp = np.array([1.0, 0.0, 0.0])
+            if abs(np.dot(tmp, mu)) > 0.9:
+                tmp = np.array([0.0, 1.0, 0.0])
+            e1 = np.cross(mu, tmp); e1 /= np.linalg.norm(e1)
+            e2 = np.cross(mu, e1)
+            phi = 2.0 * np.pi * np.random.rand()
+            v = np.cos(phi) * e1 + np.sin(phi) * e2
+            d = w * mu + np.sqrt(max(0.0, 1.0 - w * w)) * v
             d /= np.linalg.norm(d)
             
             # Assign semi-axes: r_long along d, r_short perpendicular
@@ -1267,6 +1359,27 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         print("    [Densify] VoF {:.4f} -> {:.4f} by growing {} inclusions".format(
             vof_before, current_vof, len(spheres)))
 
+    # Land on the target fraction rather than the first value past it.
+    #
+    # The grow/densify rounds stop as soon as the running VoF crosses the
+    # target, so the packing keeps whatever the last growth step added -- an
+    # overshoot of several percent, which then propagates into every modulus
+    # through the knockdown law. A single uniform scaling of the semi-axes
+    # removes it exactly, since VoF goes as the cube of the scale factor.
+    #
+    # Only ever applied downwards. Shrinking increases every pair clearance and
+    # every distance to a face, so it cannot create an overlap or a sliver that
+    # the placement tests already accepted; growing could do both, so an
+    # undershooting pack (the packer stalled and could not reach the target) is
+    # left alone and reported as it stands.
+    if VoF_target > 0 and current_vof > VoF_target and spheres:
+        f = (VoF_target / current_vof) ** (1.0 / 3.0)
+        spheres = [(cx, cy, cz, rx * f, ry * f, rz * f)
+                   for (cx, cy, cz, rx, ry, rz) in spheres]
+        print("    [Trim] VoF {:.4f} -> {:.4f} by scaling semi-axes x{:.4f}".format(
+            current_vof, VoF_target, f))
+        current_vof = VoF_target
+
     # Build sphere array
     N = len(spheres)
     Sphere_array = np.zeros((N, 10))
@@ -1361,7 +1474,13 @@ def compute_lesicar_constraints(nodes, elements, L, bending_plane='xz'):
                 x = nodes[n]
                 x_c = [x[0]-L/2, x[1]-L/2, x[2]-L/2]
                 
-                if bending_plane == 'xz':
+                if bending_plane == 'torsion':
+                    # twist about z: u_x = -alpha*z*y, u_y = +alpha*z*x
+                    if dof == 1:
+                        rp_K_coeff += a * (-x_c[2]*x_c[1])
+                    elif dof == 2:
+                        rp_K_coeff += a * (x_c[2]*x_c[0])
+                elif bending_plane == 'xz':
                     if dof == 1:
                         rp_E_coeff += a * x_c[0]  # membrane: x1
                         rp_K_coeff += a * (-x_c[0]*x_c[2])  # bending: -x1*x3
@@ -1398,9 +1517,27 @@ def bending_pbc_coeffs(xp, xn, L, bending_plane):
     on each pair is  u_pos[dof] - u_neg[dof] = c_mem*RP_E + c_bend*RP_K , where
     RP_E is the macroscopic membrane strain and RP_K the prescribed curvature.
     Coordinates are taken relative to the RVE centre (L/2).
+
+    `bending_plane='torsion'` selects the torsion mode instead, for which the
+    macroscopic field is a rigid twist about z at rate alpha,
+
+        u_x = -alpha * z * y,   u_y = +alpha * z * x,   u_z = 0,
+
+    so RP_K carries alpha and there is no membrane term. Torsion is the
+    canonical couple-stress probe and, unlike bending, imposes no plate-like
+    kinematic on the cube -- which is the point of having it: the cube-versus-
+    plate extraction bias that dominates the bending control should be absent.
+    The field is not periodic, but its DIFFERENCE across a face pair is, which
+    is the same property the bending modes rely on.
     """
     x1p, x2p, x3p = xp[0]-L/2, xp[1]-L/2, xp[2]-L/2
     x1n, x2n, x3n = xn[0]-L/2, xn[1]-L/2, xn[2]-L/2
+    if bending_plane == 'torsion':
+        return {
+            1: (0.0, -(x3p*x2p - x3n*x2n)),
+            2: (0.0,  (x3p*x1p - x3n*x1n)),
+            3: (0.0, 0.0),
+        }
     if bending_plane == 'xz':
         return {
             1: (x1p-x1n, -(x1p*x3p-x1n*x3n)),
@@ -1469,6 +1606,67 @@ def build_bending_pbc_equations(pairs, nodes, L, bending_plane, tol=1e-15):
                 equations.append(terms)
 
     return equations, used_dep, n_dropped
+
+
+def write_lesicar_couplings(f, lesicar_constraints, inst_name, first_rp_id):
+    """Emit the Lesicar Eq.14 constraints as distributing couplings.
+
+    Written as *Equation, each constraint is one equation carrying every node on
+    a face -- Abaqus stores that as a single element, and past roughly 8000
+    nodes it exceeds a hard 2GB-per-element limit and the job dies. The count
+    goes as (L/h)^2, so the failure is set by mesh density on a face rather than
+    by cell size, and no amount of memory helps.
+
+    A distributing coupling expresses the same statement -- the area-weighted
+    mean of a face is tied to a reference point -- through an implementation
+    built for large node sets. The tributary areas carry over exactly as
+    node-based surface weights, so the constraint is not approximated, only
+    written differently:
+
+        sum_i a_i u_i = cE*RP_E + cK*RP_K
+
+    becomes a coupling giving RP_LES = sum_i a_i u_i / sum_i a_i, plus a
+    three-term equation relating RP_LES to RP_E and RP_K with the same
+    coefficients divided through by sum_i a_i.
+
+    Returns the number of couplings written.
+    """
+    n = 0
+    for k, con in enumerate(lesicar_constraints):
+        nw = con['nodes']
+        if len(nw) < 2:
+            continue
+        dof = con['dof']
+        atot = sum(w for _lab, w in nw)
+        if atot <= 0:
+            continue
+        rp_id = first_rp_id + k
+        rp = 'RP_LES{}'.format(k)
+
+        f.write('*Node\n{}, {}, {}, {}\n'.format(rp_id, 3.0, 3.0, 3.0 + 0.001 * k))
+        f.write('*Nset, nset={}\n{},\n'.format(rp, rp_id))
+
+        # Node-based surface carrying the tributary areas as weights.
+        f.write('*Surface, type=NODE, name=LESS{}\n'.format(k))
+        for lab, w in nw:
+            f.write('{}.{}, {:.12g}\n'.format(inst_name, lab, w))
+        f.write('*Coupling, constraint name=LESC{}, ref node={}, '
+                'surface=LESS{}\n'.format(k, rp, k))
+        f.write('*Distributing, weighting method=UNIFORM\n')
+        f.write('{}, {}\n'.format(dof, dof))
+
+        # RP_LES is the mean, so the original coefficients divide by the area.
+        terms = [(rp, dof, 1.0)]
+        if con.get('rp_E_coeff'):
+            terms.append(('RP_E', 1, -con['rp_E_coeff'] / atot))
+        if con.get('rp_K_coeff'):
+            terms.append(('RP_K', 1, -con['rp_K_coeff'] / atot))
+        if len(terms) > 1:
+            f.write('*Equation\n{}\n'.format(len(terms)))
+            for name, d, c in terms:
+                f.write('{}, {}, {:.12g}\n'.format(name, d, c))
+        n += 1
+    return n
 
 
 def build_lesicar_equations(lesicar_constraints, used_dep, nodes, L, ftol_factor=0.01):
@@ -1714,15 +1912,23 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
     elif mode == 'bend':
         step_name = 'Step-Bending'
         step_desc = 'Second-Order Bending ({})'.format(bending_plane)
+    elif mode == 'tors':
+        step_name = 'Step-Torsion'
+        step_desc = 'Second-Order Torsion (twist about z)'
     else:
         raise ValueError(
-            "Unsupported mode: {}. Use one of utx/uty/utz/ss12/ss13/ss23 or bend.".format(mode))
-    
-    # ---- Bending-specific setup ----
-    # For bending mode, we need coordinate-dependent PBC equations
-    # instead of the standard RP-based ones
-    is_bending = (mode == 'bend')
-    
+            "Unsupported mode: {}. Use one of utx/uty/utz/ss12/ss13/ss23, "
+            "bend or tors.".format(mode))
+
+    # ---- Second-order setup ----
+    # Bending and torsion share all of the machinery below and differ only in
+    # the prescribed macroscopic field, which enters through the coefficient
+    # functions keyed on `so_plane`. In torsion RP_K carries the twist rate
+    # alpha and the membrane reference point RP_E is unused.
+    is_torsion = (mode == 'tors')
+    is_bending = (mode == 'bend') or is_torsion
+    so_plane = 'torsion' if is_torsion else bending_plane
+
     if is_bending:
         # Compute coordinate-dependent coefficients for each pair
         # RP_E: membrane strain (free, DOF 1)
@@ -1731,10 +1937,15 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         rp_E_id = rp_base_bend + 1
         rp_K_id = rp_base_bend + 2
         
+        # Torsion has no membrane term, so every RP_E coefficient is zero and
+        # the node would appear in no equation. Abaqus then treats it as
+        # inactive and rejects the boundary condition on it, so it is simply
+        # not created in that mode.
         rp_nodes_bend = {
-            'RP_E': (rp_E_id, 2.5*L, 2.0*L, 2.0*L),
             'RP_K': (rp_K_id, 2.0*L, 2.0*L, 2.0*L),
         }
+        if not is_torsion:
+            rp_nodes_bend['RP_E'] = (rp_E_id, 2.5*L, 2.0*L, 2.0*L)
     
     # ---- Write complete .inp ----
     inst_name = 'PART-1-1'
@@ -1838,12 +2049,13 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         face_rp = {'X': 'RP-1', 'Y': 'RP-2', 'Z': 'RP-3'}
         
         if is_bending:
-            f.write('** Second-Order Bending PBCs\n')
+            f.write('** Second-Order {} PBCs\n'.format(
+                'Torsion' if is_torsion else 'Bending'))
             # Build the periodic *Equation set. `used_dep` (the (node,dof) pairs
             # eliminated as dependent DOFs) is shared with the Lesicar integral
             # constraints below so the two never claim the same dependent DOF.
             bend_eqs, used_dep, n_dropped = build_bending_pbc_equations(
-                pairs, nodes, L, bending_plane)
+                pairs, nodes, L, so_plane)
             for terms in bend_eqs:
                 f.write('*Equation\n{}\n'.format(len(terms)))
                 for is_node, name, dof, coeff in terms:
@@ -1861,18 +2073,26 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             # cycle) lives in build_lesicar_equations and is unit-tested.
             f.write('** Lesicar Eq.14 integral constraints\n')
             lesicar_constraints = compute_lesicar_constraints(
-                nodes, elements, L, bending_plane)
-            lesicar_eqs, n_lesicar_skipped = build_lesicar_equations(
-                lesicar_constraints, used_dep, nodes, L)
-            for terms in lesicar_eqs:
-                f.write('*Equation\n{}\n'.format(len(terms)))
-                for is_node, name, dof, coeff in terms:
-                    if is_node:
-                        f.write('{}.{}, {}, {}\n'.format(inst_name, name, dof, coeff))
-                    else:
-                        f.write('{}, {}, {:.12g}\n'.format(name, dof, coeff))
-            print("    Lesicar constraints: {} ({} redundant skipped)".format(
-                len(lesicar_eqs), n_lesicar_skipped))
+                nodes, elements, L, so_plane)
+            if os.environ.get('SPAX_LESICAR_COUPLING', '') == '1':
+                n_cpl = write_lesicar_couplings(
+                    f, lesicar_constraints, inst_name,
+                    first_rp_id=max(rp_id for rp_id, _x, _y, _z
+                                    in rp_nodes_bend.values()) + 100)
+                print("    Lesicar constraints: {} distributing coupling(s)"
+                      .format(n_cpl))
+            else:
+                lesicar_eqs, n_lesicar_skipped = build_lesicar_equations(
+                    lesicar_constraints, used_dep, nodes, L)
+                for terms in lesicar_eqs:
+                    f.write('*Equation\n{}\n'.format(len(terms)))
+                    for is_node, name, dof, coeff in terms:
+                        if is_node:
+                            f.write('{}.{}, {}, {}\n'.format(inst_name, name, dof, coeff))
+                        else:
+                            f.write('{}, {}, {:.12g}\n'.format(name, dof, coeff))
+                print("    Lesicar constraints: {} ({} redundant skipped)".format(
+                    len(lesicar_eqs), n_lesicar_skipped))
         
         else:
             f.write('** Periodic Boundary Conditions\n')
@@ -1971,7 +2191,8 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             # DOFs (which would make the stiffness matrix singular). Only DOFs 1-3
             # exist on a plain node, so constraining 2-3 (not 2-6) avoids spurious
             # "boundary condition on inactive dof" warnings.
-            f.write('RP_E, 2, 3\n')
+            if not is_torsion:
+                f.write('RP_E, 2, 3\n')
             f.write('RP_K, 2, 3\n')
         f.write('**\n')
         
@@ -1989,7 +2210,54 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         nlgeom_str = 'YES' if nlgeom.upper() in ('ON', 'YES', 'TRUE') else 'NO'
         f.write('*Step, name={}, nlgeom={}, inc=100000\n'.format(step_name, nlgeom_str))
         f.write('*Static\n')
-        f.write('0.1, 1., 1e-10, 0.1\n')
+        # Ten increments of 0.1 is what a nonlinear reload needs: the curve
+        # extractor at SpaX_PostProcess.py:202 walks every frame and fits E over
+        # the 10-40% window, so the intermediate frames ARE the measurement.
+        #
+        # First-order homogenisation reads none of them. extract_principals is
+        # called with last_frame_only=True, so a linear cell writes nine full
+        # field frames -- S, E, LE, EVOL over every element -- that nothing ever
+        # opens. With nlgeom OFF and linear elastic phases the response is
+        # exactly proportional to the imposed displacement, so the single
+        # increment is not an approximation to the ten: it is the same answer
+        # with the discarded frames not written.
+        #
+        # The saving is in the frames and not in the factorisation. Abaqus
+        # factorises a linear step once and back-substitutes thereafter, so the
+        # solve itself gives up perhaps a quarter; what goes is the stress
+        # recovery over several million elements nine times over, the ODB write,
+        # and the disk. On the ramp campaign the ODBs are the binding constraint
+        # rather than the CPU.
+        #
+        # SAFE WITH extract_first_order SINCE THE EXTRACTOR WAS FIXED. It was
+        # not always: the extractor used to fit sigma against epsilon by polyfit
+        # over the 10-40% window of peak strain, so one increment left a single
+        # point at 100% of peak, the window was empty, and E_eff came back
+        # exactly 0.0 from an ODB that was perfectly healthy -- two frames, all
+        # fields, frameValue 1.0. A whole campaign was extracted as zeros that
+        # way. extract_first_order now carries a single-point branch that takes
+        # sigma/eps directly, so one increment is read correctly.
+        #
+        # Prefer it for any linear, nlgeom=OFF first-order campaign. The default
+        # of ten increments buys nothing on a proportional response and costs
+        # real money: N4_LCOL_p134 at 9.3M equations spent 74 minutes on Roihu
+        # and was cancelled part-way, because ten increments of a linear solve
+        # is ten factorisations of the same stiffness matrix.
+        #
+        # (last_frame_only=True at SpaX_PostProcess.py:1381 belongs to
+        # extract_principals, a different route: the full-tensor and bending
+        # paths.)
+        #
+        # It remains available for a pipeline that genuinely reads one frame,
+        # and it still refuses to engage when nlgeom is ON, where the
+        # intermediate frames ARE the measurement.
+        one_inc = os.environ.get('SPAX_LINEAR_ONE_STEP', '') not in ('', '0')
+        if one_inc and nlgeom_str == 'NO':
+            f.write('1., 1., 1e-10, 1.\n')
+        else:
+            if one_inc:
+                print("    SPAX_LINEAR_ONE_STEP ignored: nlgeom is ON")
+            f.write('0.1, 1., 1e-10, 0.1\n')
         f.write('**\n')
         
         # Step BCs for each loading mode
@@ -2020,7 +2288,10 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
             for d in [1, 2, 3]:
                 if d != cfg['shear_dof']:
                     f.write('RP-4, {}, {}\n'.format(d, d))
-        elif mode == 'bend':
+        elif mode in ('bend', 'tors'):
+            # In torsion RP_K carries the twist rate alpha (radians per unit
+            # length); `kappa` is reused as its magnitude, so a torsion deck
+            # needs no new column.
             f.write('*Boundary, amplitude=LoadRamp\n')
             f.write('RP_K, 1, 1, {}\n'.format(kappa))
         
@@ -2035,7 +2306,7 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
         # which the post-processor doesn't read -> KeyError 'EVOL'.)
         f.write('S, E, LE, EVOL\n' if not is_bending else 'S, E, EVOL, COORD\n')
         f.write('*Output, history, frequency=1\n')
-        if mode == 'bend':
+        if mode in ('bend', 'tors'):
             f.write('*Node Output, nset=RP_K\n')
         elif is_shear:
             f.write('*Node Output, nset=RP-4\n')
@@ -2053,8 +2324,77 @@ def write_complete_inp(gmsh_inp_path, pairs_csv_path, output_inp_path,
 # BATCH PIPELINE
 # =====================================================================
 
+def build_slabs(params, L):
+    """Cell-spanning brine layers from the deck row, or [] if none are asked for.
+
+    `slab_vof` is the brine fraction carried by the layers; the pocket phase
+    keeps whatever `VoF_incl_sphere` still asks for, so a deck can run layers
+    only, pockets only, or both. Each layer is a box of thickness t pierced by
+    ice bridges of total area fraction b, and the brine it carries is
+    t*(1-b)*L^2, which is what fixes t:
+
+        n_slabs * t * (1 - b) / L = slab_vof
+
+    Layers are spread evenly through the cell on the slab normal. Even spacing
+    rather than random placement because in series the transverse modulus
+    depends only on the total layer thickness and the bridge fraction, not on
+    where the layers sit, and even spacing keeps them clear of each other and of
+    the faces without a rejection loop.
+    """
+    import SpaX_GmshPeriodic as _gp
+
+    n_slabs = int(float(params.get('n_slabs', 0) or 0))
+    slab_vof = float(params.get('slab_vof', 0.0) or 0.0)
+    if n_slabs <= 0 or slab_vof <= 0:
+        return []
+
+    b = float(params.get('bridge_fraction', 0.0) or 0.0)
+    n_bridges = int(float(params.get('n_bridges', 4) or 4))
+    axis = {'x': 0, 'y': 1, 'z': 2}.get(
+        str(params.get('slab_axis', 'x')).strip().lower(), 0)
+
+    t = slab_vof * L / (n_slabs * max(1.0 - b, 1e-6))
+    pitch = L / n_slabs
+    if t >= pitch:
+        raise ValueError(
+            'slab_vof %.3f needs thickness %.4f per layer but the pitch is only '
+            '%.4f: use more layers or a lower fraction' % (slab_vof, t, pitch))
+
+    # Correlation of bridge positions between layers. Zero reproduces the
+    # independent placement, under which the drained modulus falls as n^-1.14
+    # with cell size and the cell does not homogenise; one stacks the bridges
+    # so the load path is straight. Default zero so existing decks are
+    # unchanged, and set explicitly where it is being tested.
+    corr = float(params.get('bridge_correlation', 0.0) or 0.0)
+
+    # The bridge seed was hardcoded, so "seed replicates" varied only the
+    # pocket packing and left the bridge positions identical. That is not a
+    # replicate of the thing that matters most: at fixed N and b, one
+    # arrangement can read 20% softer than another. Exposed so a sweep can
+    # average over arrangements instead of measuring one of them.
+    bseed = int(float(params.get('bridge_seed', 7919) or 7919))
+    per_layer, b_real = _gp.place_bridges_layers(
+        L, b, n_bridges, n_slabs, correlation=corr, seed=bseed)
+    try:
+        arrangement = _gp.bridge_arrangement(L, b, n_bridges, seed=bseed)
+    except Exception:
+        arrangement = 'unknown'
+
+    slabs = []
+    for k in range(n_slabs):
+        slabs.append(dict(origin=(k + 0.5) * pitch - 0.5 * t,
+                          thickness=t, axis=axis, bridges=per_layer[k]))
+    print("    [Slabs] {} layer(s) normal to {}, t={:.4f} ({:.1f}% of L), "
+          "b={:.4f} over {} bridge(s), correlation {:.2f}".format(
+              n_slabs, 'xyz'[axis], t, 100.0 * n_slabs * t / L, b_real,
+              n_bridges, corr))
+    print("    [Bridges] seed {}, arrangement {}".format(bseed, arrangement))
+    return slabs
+
+
 def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
-                       VoF_void, VoF_incl, Inclusion_Type, gap_balls=None):
+                       VoF_void, VoF_incl, Inclusion_Type, gap_balls=None,
+                       slabs=None):
     """Run generate_periodic_mesh in an isolated child process.
 
     Gmsh's C++ mesher can SIGSEGV/SIGABRT on degenerate inclusion geometry
@@ -2075,6 +2415,7 @@ def mesh_in_subprocess(sphere_array, L, L_mesh, output_dir, mode, run_id,
                    output_dir=output_dir, Is_Porous=mode, run_id=run_id,
                    VoF_void_sphere=VoF_void, VoF_incl_sphere=VoF_incl,
                    Inclusion_Type=Inclusion_Type, gap_balls=gap_balls or [],
+                   slabs=slabs or [],
                    # SPAX_MESH_ORDER=2 -> quadratic C3D10 (locking-free in
                    # bending). Default 1 (C3D4) keeps existing runs unchanged.
                    mesh_order=int(os.environ.get('SPAX_MESH_ORDER', '1')))
@@ -2208,6 +2549,45 @@ def _generate_one_row(task):
 
     # Compute inclusion material
     if Inclusion_Type == 'Liquid' and K_incl > 0 and G_incl > 0:
+        # SPAX_BRINE_KG caps the liquid's bulk-to-shear ratio, by RAISING G
+        # and leaving K untouched.
+        #
+        # WHY.  The brine's real ratio is K/G = 5000, and that number -- not
+        # any element bug -- is what makes this hard: a linear tet needs a
+        # volumetric constraint whose stiffness is K while its own stability
+        # can only be bought at the scale of G, and no formulation reconciles
+        # a factor of 5000 between them.  Measured on BRKB_b280: plain C3D4
+        # locks (+4.11% against Abaqus C3D4H), the nodal B-bar leaves a
+        # spurious mode at 19x the applied displacement, MINI loses the brine
+        # bulk modulus outright (R 2.9150 -> 1.2743), and the one-parameter
+        # family between them has no interior point that is right on more than
+        # one cell.
+        #
+        # But the ratio is a modelling choice, not data.  Brine is a liquid,
+        # G = 0 physically; 4.4e5 is already a regularisation.  The G sweep in
+        # params/rve_brine.csv, at fixed K, says the homogenised answer barely
+        # notices (results/results_brine.csv, E_x against the K/G = 5000 row):
+        #
+        #     K/G     50000     5000      500       50        5
+        #     iso    -0.18%     --      -0.08%   -0.01%   +1.36%
+        #     chan   -4.10%     --      +0.92%   +0.17%   +2.08%
+        #
+        # so K/G = 50 reproduces the physics to ~0.2% while putting nu at
+        # 0.4901 instead of 0.4999 -- a ratio at which the ordinary
+        # displacement tet does not lock at all.  Those cells are 5%
+        # inclusion; see elements_ccx/README.md for the check at the bracket
+        # cells' 15.7%.
+        #
+        # Unset, or 0, keeps the deck's own ratio.  The DRAINED twin is at
+        # K/G = 5 already and is written directly by the campaign scripts, so
+        # it is untouched either way.
+        _kg_cap = float(os.environ.get('SPAX_BRINE_KG', 0) or 0)
+        if _kg_cap > 0 and K_incl / G_incl > _kg_cap:
+            print("  SPAX_BRINE_KG={:g}: raising G {:.3e} -> {:.3e} "
+                  "(K/G {:.0f} -> {:.0f}, K unchanged)".format(
+                      _kg_cap, G_incl, K_incl / _kg_cap,
+                      K_incl / G_incl, _kg_cap))
+            G_incl = K_incl / _kg_cap
         E_incl = 9.0 * K_incl * G_incl / (3.0 * K_incl + G_incl)
         nu_incl = (3.0 * K_incl - 2.0 * G_incl) / (2.0 * (3.0 * K_incl + G_incl))
         print("  Liquid: K={:.3e}, G={:.3e} -> E={:.3e}, nu={:.6f}".format(
@@ -2444,6 +2824,9 @@ def _generate_one_row(task):
     result = None
     for attempt in range(max_retries):
         try:
+            # Built once here so the inclusion<->lamella slivers can be refined
+            # before meshing; the pack is fixed by this point.
+            _slabs_for_mesh = build_slabs(params, L)
             result = mesh_in_subprocess(
                 sphere_array=Sphere_array,
                 L=L, L_mesh=L_mesh,
@@ -2453,7 +2836,10 @@ def _generate_one_row(task):
                 VoF_void=VoF_void,
                 VoF_incl=VoF_incl,
                 Inclusion_Type=Inclusion_Type,
-                gap_balls=gap_balls)
+                gap_balls=gap_balls + _slab_gap_balls(
+                    [tuple(row[:6]) for row in Sphere_array],
+                    _slabs_for_mesh, L, L_mesh),
+                slabs=_slabs_for_mesh)
 
             # Check for empty mesh
             n_total = result.get('n_elements_matrix', 0) + result.get('n_elements_sphere', 0)
@@ -2548,11 +2934,20 @@ def _generate_one_row(task):
             write_complete_inp(gmsh_inp, pairs_csv, path2,
                 mode=ms2, disp=Disp2, **common)
 
-    # Bending (always if Kappa > 0)
+    # Second-order probe (always if Kappa > 0). Bending_Plane selects which:
+    # 'xz'/'yz'/'xy' give the bending modes, 'torsion' the twist probe. The two
+    # are mutually exclusive per deck, so no existing deck changes behaviour.
     if Kappa_val > 0:
-        path_ben = os.path.join(output_dir, 'Job-{}-ben.inp'.format(run_id))
-        write_complete_inp(gmsh_inp, pairs_csv, path_ben,
-            mode='bend', disp=0, bending_plane=bp, kappa=Kappa_val, **common)
+        if str(bp).strip().lower() == 'torsion':
+            path_tor = os.path.join(output_dir, 'Job-{}-tor.inp'.format(run_id))
+            write_complete_inp(gmsh_inp, pairs_csv, path_tor,
+                mode='tors', disp=0, bending_plane='torsion',
+                kappa=Kappa_val, **common)
+        else:
+            path_ben = os.path.join(output_dir, 'Job-{}-ben.inp'.format(run_id))
+            write_complete_inp(gmsh_inp, pairs_csv, path_ben,
+                mode='bend', disp=0, bending_plane=bp, kappa=Kappa_val,
+                **common)
 
     # Remove the Gmsh mesh .inp and periodic-pairs .csv now that they have
     # been folded into the solver-ready Job-*.inp files. The output_dir is

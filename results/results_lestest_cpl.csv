@@ -1,0 +1,3 @@
+run_id,L,L_mesh,Is_Porous,E_matrix,nu_matrix,VoF_sphere,r_avg,VoF_void_sphere,VoF_incl_sphere,E_sphere_inclusion,sphericity_avg,PBC_Method,Bending_PBC_Type,Growth_Direction,generate_channels,channel_vof_target,E_eff,nu_eff,G_eff,D_rve,E_bending,porosity,N_membrane,B_coupling
+ERGX_L240_s1,0.240,0.0100,Composite,9.37e9,0.33,0.0325,0.030,0.0100,0.0225,2.2e9,0.85,Gmsh,Lesicar,Z,No,0.0,MISSING,MISSING,MISSING,1039272.9856576348,3758944537.2454967,0.010298195341371885,-33.83044851880045,-307.5495336555842
+ERGX_L480_s1,0.480,0.0100,Composite,9.37e9,0.33,0.0325,0.030,0.0100,0.0225,2.2e9,0.85,Gmsh,Lesicar,Z,No,0.0,MISSING,MISSING,MISSING,ERROR,,,,

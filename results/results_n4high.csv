@@ -1,0 +1,5 @@
+run_id,phi_inclusion,bridge_fraction,n_bridges,E_x_GPa,n_exponent,solved_on
+N4_LCOL_p100_drn_s1,0.11920,0.2929,4,2.9874,0.7207,roihu
+N4_RAMP_p104_drn_s1,0.10325,0.2789,4,2.8190,0.7637,roihu
+N4_RAMP_p110_drn_s1,0.11088,0.2584,4,2.6179,0.7640,roihu
+N4_LCOL_p120_drn_s1,0.13669,0.2254,4,2.1040,0.8047,roihu

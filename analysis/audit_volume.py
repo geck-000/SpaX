@@ -67,20 +67,33 @@ def expand(es):
 
 
 def meshed_fraction(path, L):
+    """Volume fraction of the inclusion element set.
+
+    Vectorised deliberately. Computing each tetrahedron with its own numpy call
+    costs a few tens of microseconds, which is invisible on a four-deck campaign
+    and fatal on a sixty-deck one: at ~10^5 elements per deck it ran past the
+    controller's twenty-minute walltime and halted a whole lane. Only the
+    inclusion elements are measured, so the cost scales with the phase of
+    interest rather than the whole mesh.
+    """
     nodes, elems, esets = parse_deck(path)
     if not elems:
         return None
-    n = np.array([nodes[k] for k in sorted(nodes)])
-    idx = {k: i for i, k in enumerate(sorted(nodes))}
-    vol = {}
-    for e, nd in elems.items():
-        a, b, c, d = (n[idx[x]] for x in nd)
-        vol[e] = abs(np.dot(np.cross(b - a, c - a), d - a)) / 6.0
-    for name in ('Sphere_Only', 'SPHERE_ONLY'):
-        if name in esets:
-            ids = [i for i in expand(esets[name]) if i in vol]
-            return sum(vol[i] for i in ids) / (L ** 3)
-    return None
+    name = next((n for n in ('Sphere_Only', 'SPHERE_ONLY') if n in esets), None)
+    if name is None:
+        return None
+    ids = [i for i in expand(esets[name]) if i in elems]
+    if not ids:
+        return None
+
+    keys = sorted(nodes)
+    idx = {k: i for i, k in enumerate(keys)}
+    P = np.asarray([nodes[k] for k in keys], dtype=float)
+    conn = np.asarray([[idx[x] for x in elems[i]] for i in ids], dtype=np.int64)
+
+    a, b, c, d = P[conn[:, 0]], P[conn[:, 1]], P[conn[:, 2]], P[conn[:, 3]]
+    vol = np.abs(np.einsum('ij,ij->i', np.cross(b - a, c - a), d - a)) / 6.0
+    return float(vol.sum()) / (L ** 3)
 
 
 def main():
@@ -92,16 +105,38 @@ def main():
 
     ratios = []
     print('%-24s %10s %10s %8s' % ('run_id', 'target', 'meshed', 'ratio'))
-    for f in sorted(glob.glob(os.path.join(outdir, 'Job-*-utx.inp')))[:40]:
+    # Sample rather than exhaust: the ratio is a campaign-level property and
+    # eight decks pin it to well inside the tolerance. Generation leaves decks
+    # in per-task subdirectories until the controller collects them, so search
+    # recursively as well as at the top level.
+    found = (sorted(glob.glob(os.path.join(outdir, '**', 'Job-*-utx.inp'),
+                              recursive=True))
+             or sorted(glob.glob(os.path.join(outdir, 'Job-*-utx.inp'))))
+    # Sample ACROSS the deck rather than taking the first eight. Deck rows are
+    # ordered, so the leading eight are the first one or two conditions: on the
+    # cell-size sweep that meant auditing only the two smallest cells, which are
+    # exactly where an integer channel count overshoots its target fraction
+    # hardest (a channel is pi r^2 / L^2 of the cell, so a 0.3 cell needs 1.5
+    # channels and can only place 1 or 2). The campaign was then failed on a
+    # figure that described its smallest cells rather than itself.
+    if len(found) > 8:
+        step = len(found) / 8.0
+        found = [found[int(i * step)] for i in range(8)]
+    for f in found:
         rid = os.path.basename(f)[4:].rsplit('-', 1)[0]
         r = rows.get(rid)
         if r is None:
             continue
         L = float(r['L'])
         # Target brine = meshed soft phase only. Gas voids are not meshed.
+        # slab_vof carries the cell-spanning layers, which are brine and ARE
+        # meshed; omitting it made a layered deck read as 6.5x over target when
+        # it was in fact 3% under, and halted the campaign on a gate that was
+        # measuring the wrong number.
         incl = float(r.get('VoF_incl_sphere', 0) or 0)
         chan = float(r.get('channel_vof_target', 0) or 0)
-        target = incl + chan
+        slab = float(r.get('slab_vof', 0) or 0)
+        target = incl + chan + slab
         got = meshed_fraction(f, L)
         if got is None or target <= 0:
             continue
@@ -116,7 +151,9 @@ def main():
           % (len(ratios), m, tol))
     if m > tol:
         print('FAIL: the mesh still carries more inclusion than the deck asks for.')
-        return 1
+        # 2, not 1, so a caller can tell a real gate failure from this script
+        # failing to run at all (an unimportable numpy also exits non-zero).
+        return 2
     print('PASS')
     return 0
 
