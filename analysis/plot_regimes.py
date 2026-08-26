@@ -7,9 +7,10 @@ What changes is how much brine sits in those planes and, crucially, how it is
 connected. Each of Pringle's three percolation thresholds marks one connectivity
 change, and each connectivity change alters the load path.
 
-Top row: a vertical section through three platelets and the two brine planes
-between them, plus the in-plane view of one plane, which is what b measures.
-Bottom: the closure, with the regimes shaded.
+Layout: a 2x2 grid, one regime per panel. Within each panel, the left half is a
+vertical section through three platelets and the two brine planes between them,
+the right half is one of those planes seen face on (the view b measures). Below
+the grid, the closure itself, shaded by the same four regimes.
 
     python3 plot_regimes.py [outdir]
 """
@@ -33,25 +34,17 @@ BRINE = '#E69F00'
 
 REGIMES = [
     (r'$\phi < 0.046$', 'sealed pockets',
-     'brine isolated in every direction;\nice continuous; pore pressure sealed,\n'
-     'so brine resists at its bulk modulus',
-     r'$E=E_{\rm ice}(1-1.65\phi)$'),
+     r'$E=E_{\rm ice}(1-1.65\,\phi)$'),
     (r'$0.046 < \phi < 0.09$', 'drained pockets',
-     'brine now connects VERTICALLY and\ncan escape; pockets still separate\n'
-     'within a plane, so ice still continuous',
      r'same, $\div 1.04$'),
     (r'$0.09 < \phi < 0.14$', 'bridge constrictions',
-     'brine spans each PLANE; load crossing\nit must funnel through ice bridges,\n'
-     'so stress spreads into each contact',
-     r'$\times\, b^{\,n_{\rm eff}\,w}$, $n\!=\!0.98$'),
-    (r'$\phi > 0.14$', 'sparse bridges',
-     'brine crosses BETWEEN planes too:\nplatelets breached, but constriction\n'
-     'still governs -- measured, not assumed',
-     r'same law: $b^{\,0.86}$ measured'),
+     r'$\times\, b^{\,n(b)\,w}$'),
+    (r'$\phi > 0.14$', 'strut network',
+     r'same law (measured $b^{\,0.84-0.88}$)'),
 ]
 
 
-def platelets(ax, brine_frac, mode):
+def platelets(ax, mode):
     """Vertical section: three ice platelets, two brine planes between them."""
     ax.add_patch(Rectangle((0, 0), 1, 1, fc='white', ec='none'))
     xs = [0.0, 0.36, 0.64, 1.0]          # platelet edges
@@ -84,13 +77,13 @@ def platelets(ax, brine_frac, mode):
                                      ec='none', alpha=0.95))
     if mode == 'drained':
         ax.annotate('', xy=(0.33, 0.99), xytext=(0.33, 0.02),
-                    arrowprops=dict(arrowstyle='->', color=fs.VERM, lw=1.6))
-        ax.text(0.40, 0.995, 'drains', fontsize=7.5, color=fs.VERM,
+                    arrowprops=dict(arrowstyle='->', color=fs.VERM, lw=1.8))
+        ax.text(0.42, 0.995, 'drains', fontsize=11, color=fs.VERM,
                 va='top')
     if mode == 'struts':
         ax.annotate('', xy=(0.97, 0.48), xytext=(0.03, 0.48),
-                    arrowprops=dict(arrowstyle='<->', color=fs.VERM, lw=1.5))
-        ax.text(0.5, 0.53, 'brine crosses', fontsize=7.5, color=fs.VERM,
+                    arrowprops=dict(arrowstyle='<->', color=fs.VERM, lw=1.7))
+        ax.text(0.5, 0.55, 'brine crosses', fontsize=11, color=fs.VERM,
                 ha='center')
     ax.set_xlim(0, 1); ax.set_ylim(0, 1.06)
     ax.set_xticks([]); ax.set_yticks([])
@@ -128,41 +121,36 @@ def inplane(ax, mode):
         lab = r'$b<0.16$: sparse bridges'
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
     ax.set_xticks([]); ax.set_yticks([])
-    ax.set_xlabel(lab, fontsize=7.4, labelpad=2)
+    ax.set_xlabel(lab, fontsize=11.5, labelpad=4)
 
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else '.'
-    fig = plt.figure(figsize=(13.6, 9.4))
-    gs = fig.add_gridspec(4, 4, height_ratios=[1.15, 0.82, 0.30, 1.55],
-                          hspace=0.36, wspace=0.22)
+    fig = plt.figure(figsize=(12.6, 10.6))
+
+    # Four regimes as a 2x2 grid (each panel roughly twice the area of the old
+    # 1x4 strip), with the closure below spanning the full width.
+    gs = fig.add_gridspec(3, 2, height_ratios=[1.0, 1.0, 1.28],
+                          hspace=0.42, wspace=0.14)
     modes = ['sealed', 'drained', 'bridge', 'struts']
-    for i, (rng_lab, name, why, law) in enumerate(REGIMES):
-        ax = fig.add_subplot(gs[0, i])
-        platelets(ax, None, modes[i])
-        ax.set_title('%s\n%s' % (rng_lab, name), fontsize=10.5,
-                     fontweight='bold', pad=6)
-        if i == 0:
-            ax.set_ylabel('vertical section', fontsize=9, color='0.35')
-        ax2 = fig.add_subplot(gs[1, i])
-        inplane(ax2, modes[i])
-        if i == 0:
-            ax2.set_ylabel('one lamellar plane,\nseen face on', fontsize=9,
-                           color='0.35')
-        # description and law get their own row so nothing is clipped
-        axt = fig.add_subplot(gs[2, i])
+    for i, (rng_lab, name, law) in enumerate(REGIMES):
+        row, col = divmod(i, 2)
+        cell = gs[row, col].subgridspec(2, 2, height_ratios=[0.30, 1.0],
+                                        wspace=0.08, hspace=0.10)
+        axt = fig.add_subplot(cell[0, :])
         axt.axis('off')
-        # the mechanism sentence lives in the caption now; the figure keeps
-        # only what cannot be said in words as compactly -- the law itself
-        axt.text(0.5, 0.55, law, fontsize=10.5, color=fs.BLUE, ha='center',
-                 va='center')
+        axt.text(0.0, 0.74, r'%s\ \ \ %s' % (rng_lab, name),
+                 fontsize=14.5, fontweight='bold', va='center')
+        axt.text(0.0, 0.14, law, fontsize=13.5, color=fs.BLUE, va='center')
+
+        axv = fig.add_subplot(cell[1, 0])
+        platelets(axv, modes[i])
+        axp = fig.add_subplot(cell[1, 1])
+        inplane(axp, modes[i])
 
     # The closure itself, shaded by the same four regimes as the pictures
-    # above, so the reader meets the mechanism and the law on one page. This
-    # was Figure 10(a); Figure 10 is gone, its E(z) panel having become a
-    # duplicate of the field-comparison figure once that was rebuilt on the
-    # reference column.
-    axc = fig.add_subplot(gs[3, :])
+    # above, so the reader meets the mechanism and the law on one page.
+    axc = fig.add_subplot(gs[2, :])
     phi = np.linspace(0.002, 0.235, 3000)
     lo, mid, hi = ez.E_band(phi, floor=0.0)
     edges = [0.0, ez.PHI_DRAIN, ez.PHI_LAYER, ez.PHI_CROSS, ez.PHI_0, 0.235]
@@ -182,15 +170,15 @@ def main():
     for x, lab in ((ez.PHI_DRAIN, r'$0.046$'), (ez.PHI_LAYER, r'$0.09$'),
                    (ez.PHI_CROSS, r'$0.14$'), (ez.PHI_0, r'$\phi_0=0.20$')):
         axc.axvline(x, color='0.4', lw=1.0, ls=':')
-        axc.text(x, 17.0, lab, fontsize=8.6, color='0.3', ha='center', va='top')
-    axc.text(0.216, 0.30, 'skeletal:\nno model here', fontsize=8.4,
+        axc.text(x, 17.0, lab, fontsize=12, color='0.3', ha='center', va='top')
+    axc.text(0.216, 0.30, 'skeletal:\nno model here', fontsize=11.5,
              color=fs.VERM, ha='center')
     axc.set_yscale('log'); axc.set_ylim(0.04, 22); axc.set_xlim(0, 0.235)
-    axc.set_xlabel(r'brine volume fraction $\phi$')
-    axc.set_ylabel(r'$E$   [GPa]')
-    axc.legend(loc='lower left', fontsize=9)
+    axc.set_xlabel(r'brine volume fraction $\phi$', fontsize=15)
+    axc.set_ylabel(r'$E$   [GPa]', fontsize=15)
+    axc.legend(loc='lower left', fontsize=12.5)
 
-    fig.subplots_adjust(left=0.06, right=0.985, top=0.93, bottom=0.07)
+    fig.subplots_adjust(left=0.055, right=0.985, top=0.96, bottom=0.055)
     p = os.path.join(out, 'fig_regimes.png')
     fig.savefig(p, dpi=170)
     print('wrote %s' % p)
