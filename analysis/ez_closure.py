@@ -133,8 +133,9 @@ N_OF_B_INTERCEPT, N_OF_B_SLOPE = 1.091, -1.337
 N_FIT_RMS = 0.029
 N_FIT_B_RANGE = (0.180, 0.388)   # measured; below this the form is extrapolated
 
-# n(b) IS SPECIFIC TO FOUR BRIDGES. It is not a material law that happens to be
-# evaluated at N = 4; the count changes its shape.
+# n(b) IS CALIBRATED AT FOUR BRIDGES, but the count shifts WHERE n climbs, not
+# its shape. The count does not change n(b) away from the bridge-percolation
+# window.
 #
 # Measured at slab 0.075 for BOTH counts, so porosity is matched and only the
 # count differs:
@@ -144,12 +145,16 @@ N_FIT_B_RANGE = (0.180, 0.388)   # measured; below this the form is extrapolated
 #     0.3367     0.6104   0.5754   0.0350
 #     0.3144     0.6237   0.5948   0.0289
 #     0.2929     0.7481   0.5937   0.1545   (three draws per count)
+#     0.2789     0.7568   0.7637  -0.0069   (one draw per count)
+#     0.2584     0.7706   0.7660   0.0046
+#     0.2254     0.8001   0.7428   0.0573
 #
-# The offset runs from 0.015 to 0.155 -- twelve to thirty times the placement
-# noise of 0.004-0.011 -- and grows as b falls, slope -1.16 per unit b. The
-# N = 6 branch is nearly flat (0.544, 0.575, 0.595, 0.594) while the N = 4
-# branch climbs steeply at low b, so no constant shift transports one to the
-# other.
+# The offset is large ONLY at b = 0.2929, where the N = 4 branch has already
+# climbed but N = 6 has not. Below b ~ 0.28 the two branches coincide within
+# the 0.011 placement noise. The count therefore sets the b at which the climb
+# begins -- N = 4 nearer b = 0.31, N = 6 nearer b = 0.29 -- rather than the
+# shape of n(b). A constant shift DOES map one branch onto the other away from
+# that transition.
 #
 # A SECOND dependence is exposed by the same cells. At b = 0.3876 the matched
 # cell gives n = 0.559 where SUBC_p075 of the twelve-cell set gives 0.610 at
@@ -161,7 +166,9 @@ N_FIT_B_RANGE = (0.180, 0.388)   # measured; below this the form is extrapolated
 # four bridges, the slab fractions of the twelve cells -- and reproduces those
 # cells to an rms of 0.029. It must not be read as the bridge-branch law of sea
 # ice. Reporting it as one would repeat, at larger scale, the error that
-# produced phi_sat: a fit whose support was narrower than its use.
+# produced phi_sat: a fit whose support was narrower than its use. The count is
+# held at N = 4 rather than transported, but its effect is confined to the
+# narrow b window where the bridge array percolates.
 N_IS_COUNT_SPECIFIC = True
 
 # HOW MUCH OF THAT SCATTER IS THE BRIDGE ARRANGEMENT. Bridge positions are drawn
