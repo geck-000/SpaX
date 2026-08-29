@@ -114,9 +114,9 @@ def final_structure(u2, u3, tcn):
         ne = len(ka)
         base = np.arange(h, h + ne, dtype=np.int64)
         ring_e.append(np.repeat(base, np.diff(rptr)))
-        ring_n.append(ridx.astype(np.int64, copy=False))
+        ring_n.append(ridx)
         supp_e.append(np.repeat(base, np.diff(sptr)))
-        supp_n.append(sidx.astype(np.int64, copy=False))
+        supp_n.append(sidx)
         h += ne
 
     T = tcn
@@ -131,7 +131,8 @@ def final_structure(u2, u3, tcn):
 
     def inc(rows, cols, nr):
         rows = np.concatenate(rows) if rows else np.empty(0, dtype=np.int64)
-        cols = np.concatenate(cols) if cols else np.empty(0, dtype=np.int64)
+        cols = (np.concatenate(cols).astype(np.int64, copy=False) if cols
+                else np.empty(0, dtype=np.int64))
         return sp.csr_matrix((np.ones(rows.size, dtype=np.int32), (rows, cols)),
                              shape=(nr, nn))
 
@@ -387,7 +388,9 @@ def main():
         uniq, first, inv = np.unique(flat, return_index=True,
                                      return_inverse=True)
         o = np.argsort(first)
-        back = uniq[o]
+        # global node ids fit int32 comfortably; these arrays are the biggest
+        # thing the stencils carry, so do not spend 8 bytes on each
+        back = uniq[o].astype(np.int32)
         rank = np.empty(uniq.size, dtype=np.int64)
         rank[o] = np.arange(uniq.size, dtype=np.int64)
         conn = rank[inv.ravel()].reshape(-1, 4)
@@ -481,7 +484,7 @@ def main():
     def push(key, row):
         g = groups.get(key)
         if g is None:
-            g = groups[key] = array('q')
+            g = groups[key] = array('i')
         g.extend(row)
 
     for es in sets:
