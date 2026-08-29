@@ -104,15 +104,20 @@ def final_structure(u2, u3, tets):
     1.67e7 here against the 16 378 633 ccx goes on to report -- so treat it as
     a tight upper estimate rather than the exact final nnz.
     """
+    # u2/u3 arrive as CSR (edge offsets + flat global node indices), which is
+    # already the incidence pattern this needs -- no per-edge work at all.
     ring_e, ring_n, supp_e, supp_n = [], [], [], []
     h = 0
     for es in u3:
-        for (_, _, r), (_, _, s) in zip(u2[es], u3[es]):
-            ring_e.append(np.full(len(r), h, dtype=np.int64))
-            ring_n.append(np.asarray(r, dtype=np.int64))
-            supp_e.append(np.full(len(s), h, dtype=np.int64))
-            supp_n.append(np.asarray(s, dtype=np.int64))
-            h += 1
+        ka, _, rptr, ridx = u2[es]
+        _, _, sptr, sidx = u3[es]
+        ne = len(ka)
+        base = np.arange(h, h + ne, dtype=np.int64)
+        ring_e.append(np.repeat(base, np.diff(rptr)))
+        ring_n.append(ridx.astype(np.int64, copy=False))
+        supp_e.append(np.repeat(base, np.diff(sptr)))
+        supp_n.append(sidx.astype(np.int64, copy=False))
+        h += ne
 
     T = np.asarray(list(tets.values()), dtype=np.int64) if tets else \
         np.empty((0, 4), dtype=np.int64)
@@ -253,22 +258,38 @@ def stencils(conn, ncyc, chunk=20000):
     A = (inc @ inc.T).tocsr()
     A.data[:] = 1
 
-    ring, supp = [], []
+    # Returned FLAT, in CSR form (offsets + one index array), not as a list
+    # of one small array per edge: at 0.0060 that list is ~4M ndarray objects
+    # per side, whose ~112 bytes of object header each cost more than the
+    # node indices they carry.
+    rcnt, ridx, scnt, sidx = [], [], [], []
     for lo in range(0, len(keys), chunk):
         blk = E[lo:lo + chunk]
         r = (blk @ inc).tocsr()          # U2: nodes of the edge's own tets
         r.data[:] = 1
-        for i in range(r.shape[0]):
-            ring.append(r.indices[r.indptr[i]:r.indptr[i + 1]])
+        rcnt.append(np.diff(r.indptr))
+        ridx.append(r.indices[:r.indptr[-1]])
         s = blk
         for _ in range(ncyc):
             s = (s @ A).tocsr()
             s.data[:] = 1
         w = (s @ inc).tocsr()            # U3: nodes of the E A^c support
         w.data[:] = 1
-        for i in range(w.shape[0]):
-            supp.append(w.indices[w.indptr[i]:w.indptr[i + 1]])
-    return keys, ring, supp
+        scnt.append(np.diff(w.indptr))
+        sidx.append(w.indices[:w.indptr[-1]])
+
+    def csr(cnt, idx):
+        cnt = np.concatenate(cnt) if cnt else np.zeros(0, dtype=np.int64)
+        ptr = np.zeros(len(cnt) + 1, dtype=np.int64)
+        np.cumsum(cnt, out=ptr[1:])
+        return ptr, (np.concatenate(idx) if idx
+                     else np.zeros(0, dtype=np.int64))
+
+    ka = np.array([k[0] for k in keys], dtype=np.int64)
+    kb = np.array([k[1] for k in keys], dtype=np.int64)
+    rptr, ridx = csr(rcnt, ridx)
+    sptr, sidx = csr(scnt, sidx)
+    return ka, kb, rptr, ridx, sptr, sidx
 
 
 def card(eid, conn_nodes):
@@ -341,14 +362,13 @@ def main():
         back = np.empty(len(loc), dtype=np.int64)
         for n, i in loc.items():
             back[i] = n
-        keys, ring, supp = stencils(conn, a.cycles)
-        u2[es] = [(int(back[k[0]]), int(back[k[1]]), back[r]) 
-                  for k, r in zip(keys, ring)]
-        u3[es] = [(int(back[k[0]]), int(back[k[1]]), back[s])
-                  for k, s in zip(keys, supp)]
-        rs = np.array([len(r) for r in ring])
-        ss = np.array([len(s) for s in supp])
-        stats[es] = (len(ids), len(loc), len(keys), rs, ss)
+        ka, kb, rptr, ridx, sptr, sidx = stencils(conn, a.cycles)
+        # one fancy-index over the whole flat array, not one per edge
+        u2[es] = (back[ka], back[kb], rptr, back[ridx])
+        u3[es] = (back[ka], back[kb], sptr, back[sidx])
+        rs = np.diff(rptr)
+        ss = np.diff(sptr)
+        stats[es] = (len(ids), len(loc), len(ka), rs, ss)
 
     # --- the mastruct insertion wall ------------------------------------
     #
@@ -435,19 +455,23 @@ def main():
         g.extend(row)
 
     for es in sets:
-        for na, nb, nl in u2[es]:
-            rest = sorted(int(x) for x in nl if x != na and x != nb)
-            push(('U2', es, len(nl), len(nl)), [na, nb] + rest)
-        for (ra, rb, rl), (sa, sb, sl) in zip(u2[es], u3[es]):
-            assert (ra, rb) == (sa, sb), 'u2/u3 edge lists out of step'
+        ka, kb, rptr, ridx = u2[es]
+        _, _, sptr, sidx = u3[es]
+        for h in range(len(ka)):
+            na = int(ka[h])
+            nb = int(kb[h])
+            rl = ridx[rptr[h]:rptr[h + 1]]
+            sl = sidx[sptr[h]:sptr[h + 1]]
+            rest = sorted(int(x) for x in rl if x != na and x != nb)
+            push(('U2', es, len(rl), len(rl)), [na, nb] + rest)
             ring = set(int(x) for x in rl)
             supp = set(int(x) for x in sl)
             if not ring <= supp:
                 raise SystemExit(
                     'fbares: the edge ring of %d-%d is not contained in its '
                     'E A^c support -- the ring-first ordering the element '
-                    'relies on is not well defined' % (ra, rb))
-            inner = [ra, rb] + sorted(ring - {ra, rb})
+                    'relies on is not well defined' % (na, nb))
+            inner = [na, nb] + sorted(ring - {na, nb})
             outer = sorted(supp - ring)
             push(('U3', es, len(supp), len(inner)), inner + outer)
 
@@ -550,7 +574,7 @@ def main():
                 # at a chain boundary, where ccx reads it as a fresh element
                 # and reports 'element N is already defined'.
                 emit('** SPAX F-barES-FEM-T4(c=%d): %d edge domains'
-                           % (a.cycles, sum(len(u2[e]) for e in sets)))
+                           % (a.cycles, sum(len(u2[e][0]) for e in sets)))
                 for k in sorted(groups):
                     emit('*USER ELEMENT,TYPE=%s%s,NODES=%d,'
                                'INTEGRATIONPOINTS=1,MAXDOF=3'
