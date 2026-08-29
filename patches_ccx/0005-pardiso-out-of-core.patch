@@ -32,6 +32,24 @@ core with a 256 MB budget, agree exactly:
   patch test, max|u - eps.X|/max|u|     3.165e-07   both
   confined C1111 (exact 2.204400e+08)   2.204400e+08 both
 
+MTYPE 1 MUST BECOME 11 UNDER OUT-OF-CORE, OR THE FACTOR DIES.
+
+MKL PARDISO supports out-of-core ONLY for mtype = -2 and 11, not for
+mtype = 1 (structurally symmetric, numerically asymmetric).  The F-bar
+asymmetric path (linstatic.c sets symmetryflag=2, inputformat=1) lands on
+mtype = 1 in core and works there; with iparm(60)=2 the same matrix returns
+error -10 ("no license" / unsupported type) and the factor never starts.
+
+The inputformat=1 branch already composes the FULL general matrix (lower
+triangle + diagonal + upper triangle) into aupardiso/icolpardiso/pointers,
+so it is a genuine general matrix and may be factored as mtype = 11.  The
+switch is therefore made at the top of pardiso_factor, and mirrored in
+pardiso_solve and pardiso_cleanup so all three phases agree (a mismatched
+solve phase returns error -1).  In-core runs keep mtype = 1 and are
+unchanged.  The in-core budget must also be large enough: CCX_PARDISO_OOC
+= 4096 and 8192 return error -9 ("not enough memory") on the 0.0120 F-bar
+deck; 16384 works with a 22.6 GB peak RSS.
+
 AND CHECK THE RETURN CODE, WHICH ccx NEVER DID.
 
 pardiso.c hands &error to all three phases and reads it nowhere.  So ANY
@@ -71,7 +89,7 @@ direct solver is the worst failure mode this campaign has.
  ITG *icolpardiso=NULL,*pointers=NULL,iparm[64];
  long long pt[64];
  double *aupardiso=NULL;
-@@ -297,6 +299,37 @@
+@@ -297,6 +299,47 @@
      }
    }
  
@@ -104,12 +122,22 @@ direct solver is the worst failure mode this campaign has.
 +	   env,getenv("MKL_PARDISO_OOC_PATH")?
 +	   getenv("MKL_PARDISO_OOC_PATH"):"./ooc_temp");
 +    fflush(stdout);
++
++    /* SPAX: MKL PARDISO supports out-of-core only for mtype = -2 and 11, NOT
++       for mtype = 1 (structurally symmetric, numerically asymmetric).  The
++       inputformat=1 branch above (the asymmetric / F-bar path of linstatic.c)
++       has already composed the FULL general matrix into aupardiso,
++       icolpardiso, pointers -- lower triangle, diagonal AND upper triangle --
++       so it is a genuine general matrix and may be factored as mtype = 11.
++       Passing the same matrix with iparm(60)=2 under mtype = 1 makes PARDISO
++       return error -10 and the solve dies.  In-core runs keep mtype = 1. */
++    if(mtype==1) mtype=11;
 +  }
 +
  /* next line is for the simulateous use of PARDISO and PaStiX */
  
    mkl_domain_set_num_threads(mthread_mkl,MKL_DOMAIN_PARDISO);
-@@ -305,6 +338,27 @@
+@@ -305,6 +348,27 @@
  		   pointers,icolpardiso,perm,&nrhs,iparm,&msglvl,
                     b,x,&error));
  
@@ -137,7 +165,18 @@ direct solver is the worst failure mode this campaign has.
    return;
  }
  
-@@ -342,6 +396,14 @@
+@@ -330,6 +394,10 @@
+       mtype=1;
+     }
+   }
++  /* SPAX: match pardiso_factor's out-of-core mtype upgrade, or the solve
++     phase (33) disagrees with the factor phase (12) and PARDISO returns
++     error -1.  MKL out-of-core supports only mtype -2 and 11. */
++  if(mtype==1 && getenv("CCX_PARDISO_OOC")!=NULL) mtype=11;
+   iparm[1]=3;
+   
+   /* pardiso_factor has been called before, MKL_NUM_THREADS=mthread_mkl is set*/
+@@ -342,6 +410,14 @@
  		   pointers,icolpardiso,perm,nrhs,iparm,&msglvl,
                     b,x,&error));
  
@@ -152,3 +191,13 @@ direct solver is the worst failure mode this campaign has.
    for(i=0;i<*nrhs**neq;i++){b[i]=x[i];}
    SFREE(x);
  
+@@ -363,6 +439,9 @@
+       mtype=1;
+     }
+   }
++  /* SPAX: keep the cleanup phase (-1) on the same mtype the factor and solve
++     phases used under out-of-core (11, not 1). */
++  if(mtype==1 && getenv("CCX_PARDISO_OOC")!=NULL) mtype=11;
+ 
+   FORTRAN(pardiso,(pt,&maxfct,&mnum,&mtype,&phase,neq,aupardiso,
+ 		   pointers,icolpardiso,perm,&nrhs,iparm,&msglvl,
