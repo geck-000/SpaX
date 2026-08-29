@@ -167,8 +167,13 @@ def iskw(line):
 
 
 def parse(path):
-    """nodes, tets, elset membership, elset -> material, material -> (E, nu)."""
-    nodes, tets = {}, {}
+    """tets, elset membership, elset -> material, material -> (E, nu).
+
+    Coordinates are deliberately NOT kept: the stencils are pure connectivity
+    and nothing downstream reads a node position, so holding them costs a few
+    hundred MB on a fine cell for nothing.
+    """
+    tets = {}
     elset_of, mat_of, elastic = defaultdict(list), {}, {}
     mode, cur, curmat = None, None, None
     for ln in open(path):
@@ -203,15 +208,13 @@ def parse(path):
                 mode = 'el'
             continue
         f = [x.strip() for x in s.split(',') if x.strip()]
-        if mode == 'n' and len(f) >= 4:
-            nodes[int(f[0])] = (float(f[1]), float(f[2]), float(f[3]))
-        elif mode == 'e' and len(f) >= 5:
+        if mode == 'e' and len(f) >= 5:
             tets[int(f[0])] = tuple(int(x) for x in f[1:5])
             elset_of[cur].append(int(f[0]))
         elif mode == 'el' and curmat and len(f) >= 2:
             elastic.setdefault(curmat, (float(f[0]), float(f[1])))
             mode = None
-    return nodes, tets, elset_of, mat_of, elastic
+    return tets, elset_of, mat_of, elastic
 
 
 def stencils(conn, ncyc, chunk=20000):
@@ -326,7 +329,7 @@ def main():
                          'never materialises.')
     a = ap.parse_args()
 
-    nodes, tets, elset_of, mat_of, elastic = parse(a.src)
+    tets, elset_of, mat_of, elastic = parse(a.src)
     sets = a.elset or sorted(elset_of)
     for es in sets:
         if es not in elset_of:
