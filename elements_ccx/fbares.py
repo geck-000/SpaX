@@ -49,6 +49,7 @@ matrix widened from 150 to 520 DOF along the whole e_c3d_u* path.
 import argparse
 import os
 import sys
+from array import array
 from collections import defaultdict
 
 import numpy as np
@@ -226,18 +227,24 @@ def stencils(conn, ncyc, chunk=20000):
                         shape=(ne, nn)).tocsr()
     inc.data[:] = 1
 
-    # edges of this material, and the elements at each
-    ekey = {}
-    for e in range(ne):
-        t = conn[e]
-        for i in range(4):
-            for j in range(i + 1, 4):
-                a, b = (t[i], t[j]) if t[i] < t[j] else (t[j], t[i])
-                ekey.setdefault((int(a), int(b)), []).append(e)
-    keys = sorted(ekey)
-    rows = np.repeat(np.arange(len(keys)),
-                     [len(ekey[k]) for k in keys])
-    cols = np.fromiter((e for k in keys for e in ekey[k]), dtype=np.int64)
+    # edges of this material, and the elements at each.
+    #
+    # Vectorised: a dict keyed by (int, int) tuples costs a few hundred bytes
+    # per edge and a Python loop over 6*ne of them, which at 0.0060 is ~4M
+    # edges and ~1 GB of dict before anything else is allocated.  Packing each
+    # sorted pair into one int64 and calling np.unique gives the same edge
+    # list in the same order -- lexicographic by (lo, hi), since hi < nn.
+    ii = np.array([0, 0, 0, 1, 1, 2])
+    jj = np.array([1, 2, 3, 2, 3, 3])
+    ea = conn[:, ii].ravel()
+    eb = conn[:, jj].ravel()
+    lo = np.minimum(ea, eb)
+    hi = np.maximum(ea, eb)
+    upair, inv = np.unique(lo * nn + hi, return_inverse=True)
+    del ea, eb, lo, hi
+    keys = list(zip((upair // nn).tolist(), (upair % nn).tolist()))
+    rows = inv.ravel()
+    cols = np.repeat(np.arange(ne, dtype=np.int64), 6)
     E = sp.coo_matrix((np.ones(len(cols), dtype=np.int8), (rows, cols)),
                       shape=(len(keys), ne)).tocsr()
     E.data[:] = 1
@@ -420,11 +427,17 @@ def main():
     # wrong is not silent -- e_c3d_u3 checks that tbar vanishes past nring and
     # stops with the element number if it does not.
     groups = {}
+
+    def push(key, row):
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = array('q')
+        g.extend(row)
+
     for es in sets:
         for na, nb, nl in u2[es]:
             rest = sorted(int(x) for x in nl if x != na and x != nb)
-            groups.setdefault(('U2', es, len(nl), len(nl)), []).append(
-                [na, nb] + rest)
+            push(('U2', es, len(nl), len(nl)), [na, nb] + rest)
         for (ra, rb, rl), (sa, sb, sl) in zip(u2[es], u3[es]):
             assert (ra, rb) == (sa, sb), 'u2/u3 edge lists out of step'
             ring = set(int(x) for x in rl)
@@ -436,8 +449,7 @@ def main():
                     'relies on is not well defined' % (ra, rb))
             inner = [ra, rb] + sorted(ring - {ra, rb})
             outer = sorted(supp - ring)
-            groups.setdefault(('U3', es, len(supp), len(inner)), []).append(
-                inner + outer)
+            push(('U3', es, len(supp), len(inner)), inner + outer)
 
     # --- type names -----------------------------------------------------
     #
@@ -474,7 +486,13 @@ def main():
         suffix[k] = LETTERS[nr - 1] + NAMES[j]
 
     # --- emit -------------------------------------------------------------
-    out, u5decl, done_step = [], False, False
+    fh = open(a.dst, 'w')
+
+    def emit(s):
+        fh.write(s)
+        fh.write('\n')
+
+    u5decl, done_step = False, False
     drop, sawnp = False, any(
         iskw(l) and l.upper().replace(' ', '').startswith(('*NODEPRINT',
                                                            '*NODEFILE'))
@@ -496,7 +514,7 @@ def main():
             # if the deck has none.
             drop = u.startswith('*ELPRINT') or u.startswith('*ELFILE')
             if drop:
-                out.append('** SPAX fbares: dropped '
+                emit('** SPAX fbares: dropped '
                            + ln.split(',')[0].strip()
                            + ' -- no element in an F-bar deck carries stress')
                 continue
@@ -507,15 +525,15 @@ def main():
                 # *NODE PRINT,NSET=NALL is answered with 'node set NALL does
                 # not exist' and an EMPTY .dat.  *NODE FILE needs no set and
                 # writes the .frd the post-processing already reads.
-                out.append('*NODE FILE')
-                out.append('U,RF')
+                emit('*NODE FILE')
+                emit('U,RF')
             if u.startswith('*ELEMENT') and any(
                     ('ELSET=' + e).upper() in u for e in sets):
                 if not u5decl:
-                    out.append('*USER ELEMENT,TYPE=U4,NODES=4,'
+                    emit('*USER ELEMENT,TYPE=U4,NODES=4,'
                                'INTEGRATIONPOINTS=1,MAXDOF=3')
                     u5decl = True
-                out.append(ln.replace('C3D4', 'U4').replace('c3d4', 'U4'))
+                emit(ln.replace('C3D4', 'U4').replace('c3d4', 'U4'))
                 continue
             if u.startswith('*STATIC'):
                 # The volumetric operator of eq. (17) is NOT symmetric, so the
@@ -531,24 +549,27 @@ def main():
                 # interleaving them puts a multi-line element's continuation
                 # at a chain boundary, where ccx reads it as a fresh element
                 # and reports 'element N is already defined'.
-                out.append('** SPAX F-barES-FEM-T4(c=%d): %d edge domains'
+                emit('** SPAX F-barES-FEM-T4(c=%d): %d edge domains'
                            % (a.cycles, sum(len(u2[e]) for e in sets)))
                 for k in sorted(groups):
-                    out.append('*USER ELEMENT,TYPE=%s%s,NODES=%d,'
+                    emit('*USER ELEMENT,TYPE=%s%s,NODES=%d,'
                                'INTEGRATIONPOINTS=1,MAXDOF=3'
                                % (k[0], suffix[k], k[2]))
                 for k in sorted(groups):
                     kind, es, sz, nr = k
                     tag = 'FBD' if kind == 'U2' else 'FBV'
-                    out.append('*ELEMENT,TYPE=%s%s,ELSET=%s_%s'
+                    emit('*ELEMENT,TYPE=%s%s,ELSET=%s_%s'
                                % (kind, suffix[k], tag, es))
-                    for conn in groups[k]:
+                    g, w = groups[k], k[2]
+                    for off in range(0, len(g), w):
+                        conn = g[off:off + w]
                         eid += 1
                         # konl(1), konl(2) ARE THE EDGE NODES, in both U2 and
                         # U3; u2edge/u3vol identify the edge from them and
                         # find the tets themselves.  For U3, konl(1..nring)
                         # is the edge ring -- see above.
-                        out.extend(card(eid, conn))
+                        for _c in card(eid, conn):
+                            emit(_c)
                 # Their OWN elset + *SOLID SECTION, never the phase's: an
                 # element in the phase elset joins its *EL PRINT set, and
                 # printoutelem.f would try to integrate a smoothing domain
@@ -557,11 +578,11 @@ def main():
                 for k in sorted(groups):
                     kind, es, sz, nr = k
                     tag = 'FBD' if kind == 'U2' else 'FBV'
-                    out.append('*SOLID SECTION,ELSET=%s_%s,MATERIAL=%s'
+                    emit('*SOLID SECTION,ELSET=%s_%s,MATERIAL=%s'
                                % (tag, es, mat_of[es]))
-        out.append(ln)
+        emit(ln)
 
-    open(a.dst, 'w').write('\n'.join(out) + '\n')
+    fh.close()
 
     print('fbares: %s -> %s   (c = %d)' % (a.src, a.dst, a.cycles))
     for es in sets:
