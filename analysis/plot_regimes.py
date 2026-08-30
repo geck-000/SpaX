@@ -102,8 +102,7 @@ def inplane(ax, mode):
                                  fc=BRINE, ec='none'))
         lab = (r'$b\to1$: ice spans the plane'
                if mode == 'sealed' else
-               r'$b\to1$ still: drainage is a'
-               '\n' r'vertical change, not an in-plane one')
+               r'$b\to1$ still: drainage is not in-plane')
     elif mode == 'bridge':
         # non-overlapping bridges on a coarse jittered lattice
         pts = [(0.25, 0.25), (0.72, 0.24), (0.24, 0.72), (0.70, 0.71),
@@ -126,22 +125,22 @@ def inplane(ax, mode):
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else '.'
-    fig = plt.figure(figsize=fs.size(0.615))
+    fig = plt.figure(figsize=fs.size(0.645))
 
     # Four regimes as a 2x2 grid (each panel roughly twice the area of the old
     # 1x4 strip), with the closure below spanning the full width.
-    gs = fig.add_gridspec(3, 2, height_ratios=[1.0, 1.0, 1.30],
-                          hspace=0.26, wspace=0.12)
+    gs = fig.add_gridspec(3, 2, height_ratios=[1.0, 1.0, 1.34],
+                          hspace=0.30, wspace=0.12)
     modes = ['sealed', 'drained', 'bridge', 'struts']
     for i, (rng_lab, name, law) in enumerate(REGIMES):
         row, col = divmod(i, 2)
-        cell = gs[row, col].subgridspec(2, 2, height_ratios=[0.20, 1.0],
-                                        wspace=0.06, hspace=0.06)
+        cell = gs[row, col].subgridspec(2, 2, height_ratios=[0.30, 1.0],
+                                        wspace=0.06, hspace=0.05)
         axt = fig.add_subplot(cell[0, :])
         axt.axis('off')
-        axt.text(0.0, 0.72, '%s    %s' % (rng_lab, name),
+        axt.text(0.0, 0.80, '%s    %s' % (rng_lab, name),
                  fontsize=8.8, fontweight='bold', va='center')
-        axt.text(0.0, 0.10, law, fontsize=8.2, color=fs.BLUE, va='center')
+        axt.text(0.0, 0.24, law, fontsize=8.2, color=fs.BLUE, va='center')
 
         axv = fig.add_subplot(cell[1, 0])
         platelets(axv, modes[i])
