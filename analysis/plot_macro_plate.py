@@ -60,29 +60,32 @@ def main():
     z, z0p, dDp = assemble(Erve, nu)
     _, z0h, dDh = assemble(hyb, nu)
 
-    fig, ax = plt.subplots(1, 3, figsize=(15.2, 5.4))
+    fig, ax = plt.subplots(1, 3, figsize=fs.size(0.40), sharey=True)
 
     # ---- (a) the two profiles, with their neutral planes -------------------
     a = ax[0]
-    a.plot(Erve, z, 'o-', color=fs.ORANGE, ms=6, lw=2.0,
-           label='particle throughout')
-    a.plot(hyb, z, 's-', color=fs.BLUE, ms=6, lw=2.4,
-           label='layered below $\\phi_c$')
+    a.plot(Erve, z, 'o-', color=fs.ORANGE, ms=4.4, lw=2.6,
+           label='particle throughout', zorder=2)
+    a.plot(hyb, z, 's-', color=fs.BLUE, ms=2.6, lw=1.2,
+           label='layered below $\\phi_c$', zorder=3)
+    a.axhline(0.5, color='0.55', lw=0.8, ls=':', zorder=1)
+    # The two neutral planes are only 0.03 apart, so their labels are separated
+    # horizontally rather than vertically: layered at the left edge, particle
+    # at the right.
     for z0, c, ls in ((z0p, fs.ORANGE, '--'), (z0h, fs.BLUE, '-.')):
-        a.axhline(z0, color=c, lw=1.3, ls=ls)
-    a.axhline(0.5, color='0.5', lw=1.0, ls=':')
-    a.text(11.5, 0.494, 'mid-depth', fontsize=8, color='0.45', ha='right')
-    a.text(0.70, z0h - 0.014, '$z_0$ layered', fontsize=8.5, color=fs.BLUE)
-    a.text(11.5, z0p + 0.040, '$z_0$ particle', fontsize=8.5, color=fs.ORANGE,
-           ha='right')
-    a.axhspan(0.9, 1.0, color=fs.SKY, alpha=0.25, zorder=0)
-    a.text(4.6, 0.945, 'layered', fontsize=9, color=fs.BLUE, ha='center')
+        a.axhline(z0, color=c, lw=1.0, ls=ls, zorder=1)
+    a.text(0.68, z0h - 0.02, r'$z_0$', fontsize=8, color=fs.BLUE, va='bottom')
+    a.text(13.0, z0p + 0.02, r'$z_0$', fontsize=8, color=fs.ORANGE,
+           ha='right', va='top')
+    a.axhspan(0.9, 1.0, color=fs.SKY, alpha=0.28, lw=0, zorder=0)
+    a.text(3.2, 0.947, 'layered', fontsize=7, color=fs.BLUE, ha='center',
+           va='center')
     fs.depth_axis(a)
     a.set_xscale('log'); a.set_xlim(0.6, 14)
-    a.set_xlabel(r'$E_x(z)$   [GPa]')
-    a.text(0.015, 0.965, '(a)', transform=a.transAxes, fontsize=13,
-           fontweight='bold', va='top')
-    a.legend(loc='lower left', fontsize=9)
+    a.set_xticks([1, 10]); a.set_xticklabels(['1', '10'])
+    a.set_xlabel(r'$E_x(z)$  (GPa)')
+    fs.panel(a, 'a')
+    fs.clean(a)
 
     # ---- (b) where the bending stiffness sits ------------------------------
     b = ax[1]
@@ -91,11 +94,10 @@ def main():
            alpha=0.85, label='particle throughout')
     b.barh(z + w / 2, 100 * dDh / dDh.sum(), height=w, color=fs.BLUE,
            alpha=0.85, label='layered below $\\phi_c$')
-    fs.depth_axis(b)
-    b.set_xlabel('share of $D_{11}$   [%]')
-    b.text(0.015, 0.965, '(b)', transform=b.transAxes, fontsize=13,
-           fontweight='bold', va='top')
-    b.legend(loc='center right', fontsize=9)
+    fs.depth_axis(b, label=False)
+    b.set_xlabel('share of $D_{11}$  (%)')
+    fs.panel(b, 'b', x=0.975, y=0.06, ha='right', va='bottom')
+    fs.clean(b)
     b.grid(axis='y', alpha=0)
 
     # ---- (c) cumulative, read from the cold surface down -------------------
@@ -103,23 +105,34 @@ def main():
     for dD, col, lab in ((dDp, fs.ORANGE, 'particle throughout'),
                          (dDh, fs.BLUE, 'layered below $\\phi_c$')):
         cum = 100 * np.cumsum(dD) / dD.sum()
-        c.plot(cum, z, 'o-', color=col, ms=5, lw=2.2, label=lab)
+        c.plot(cum, z, 'o-', color=col, ms=3.0, lw=1.4, label=lab)
         # how much the top half carries
         half = np.interp(0.5, z, cum)
-        c.plot([half], [0.5], 'D', color=col, ms=9, zorder=5)
-        c.text(half + 3, 0.455 if col == fs.BLUE else 0.545,
-               '%.0f%%' % half, fontsize=10, color=col)
-    c.axhline(0.5, color='0.5', lw=1.0, ls=':')
-    fs.depth_axis(c)
-    c.set_xlim(0, 105)
-    c.set_xlabel('cumulative share of $D_{11}$   [%]')
-    c.text(0.015, 0.965, '(c)', transform=c.transAxes, fontsize=13,
-           fontweight='bold', va='top')
-    c.legend(loc='lower right', fontsize=9)
+        c.plot([half], [0.5], 'D', color=col, ms=4.5, zorder=5)
+        # blue label to the right of its marker, orange to the left, so the
+        # two do not stack on the mid-depth line
+        if col == fs.BLUE:
+            c.text(half + 5, 0.452, '%.0f%%' % half, fontsize=7.5, color=col,
+                   ha='left', va='bottom')
+        else:
+            c.text(half - 5, 0.548, '%.0f%%' % half, fontsize=7.5, color=col,
+                   ha='right', va='top')
+    c.axhline(0.5, color='0.55', lw=0.8, ls=':')
+    fs.depth_axis(c, label=False)
+    c.set_xlim(0, 108)
+    c.set_xticks([0, 25, 50, 75, 100])
+    c.set_xlabel('cumulative $D_{11}$  (%)')
+    fs.panel(c, 'c')
+    fs.clean(c)
 
-    fig.tight_layout()
+    # One legend for the three panels: the same two curves appear in each, so
+    # repeating it three times was clutter that also cost panel width.
+    h, l = a.get_legend_handles_labels()
+    fig.legend(h, l, loc='lower center', ncol=2, frameon=False,
+               bbox_to_anchor=(0.5, -0.035), fontsize=8)
+    fig.tight_layout(pad=0.3, w_pad=0.8, rect=(0, 0.055, 1, 1))
     p = os.path.join(out, 'fig_macro_plate.png')
-    fig.savefig(p, dpi=170)
+    fig.savefig(p)
     print('wrote %s' % p)
 
     # numbers for the caption

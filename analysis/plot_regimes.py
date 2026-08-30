@@ -78,12 +78,12 @@ def platelets(ax, mode):
     if mode == 'drained':
         ax.annotate('', xy=(0.33, 0.99), xytext=(0.33, 0.02),
                     arrowprops=dict(arrowstyle='->', color=fs.VERM, lw=1.8))
-        ax.text(0.42, 0.995, 'drains', fontsize=11, color=fs.VERM,
+        ax.text(0.42, 0.995, 'drains', fontsize=7.4, color=fs.VERM,
                 va='top')
     if mode == 'struts':
         ax.annotate('', xy=(0.97, 0.48), xytext=(0.03, 0.48),
                     arrowprops=dict(arrowstyle='<->', color=fs.VERM, lw=1.7))
-        ax.text(0.5, 0.55, 'brine crosses', fontsize=11, color=fs.VERM,
+        ax.text(0.5, 0.55, 'brine crosses', fontsize=7.4, color=fs.VERM,
                 ha='center')
     ax.set_xlim(0, 1); ax.set_ylim(0, 1.06)
     ax.set_xticks([]); ax.set_yticks([])
@@ -112,7 +112,7 @@ def inplane(ax, mode):
             ax.add_patch(Circle((px + rng.uniform(-0.03, 0.03),
                                  py + rng.uniform(-0.03, 0.03)), 0.125,
                                 fc=ICE, ec=ICE_E, lw=0.8))
-        lab = r'$b\approx0.16$--$0.33$: bridges'
+        lab = '$b\\approx0.16$\u2013$0.33$: bridges'
     else:
         pts = [(0.27, 0.28), (0.71, 0.26), (0.26, 0.71), (0.72, 0.73),
                (0.49, 0.50)]
@@ -121,27 +121,27 @@ def inplane(ax, mode):
         lab = r'$b<0.16$: sparse bridges'
     ax.set_xlim(0, 1); ax.set_ylim(0, 1)
     ax.set_xticks([]); ax.set_yticks([])
-    ax.set_xlabel(lab, fontsize=11.5, labelpad=4)
+    ax.set_xlabel(lab, fontsize=7.4, labelpad=3)
 
 
 def main():
     out = sys.argv[1] if len(sys.argv) > 1 else '.'
-    fig = plt.figure(figsize=(12.6, 10.6))
+    fig = plt.figure(figsize=fs.size(0.615))
 
     # Four regimes as a 2x2 grid (each panel roughly twice the area of the old
     # 1x4 strip), with the closure below spanning the full width.
-    gs = fig.add_gridspec(3, 2, height_ratios=[1.0, 1.0, 1.28],
-                          hspace=0.42, wspace=0.14)
+    gs = fig.add_gridspec(3, 2, height_ratios=[1.0, 1.0, 1.30],
+                          hspace=0.26, wspace=0.12)
     modes = ['sealed', 'drained', 'bridge', 'struts']
     for i, (rng_lab, name, law) in enumerate(REGIMES):
         row, col = divmod(i, 2)
-        cell = gs[row, col].subgridspec(2, 2, height_ratios=[0.30, 1.0],
-                                        wspace=0.08, hspace=0.10)
+        cell = gs[row, col].subgridspec(2, 2, height_ratios=[0.20, 1.0],
+                                        wspace=0.06, hspace=0.06)
         axt = fig.add_subplot(cell[0, :])
         axt.axis('off')
-        axt.text(0.0, 0.74, r'%s\ \ \ %s' % (rng_lab, name),
-                 fontsize=14.5, fontweight='bold', va='center')
-        axt.text(0.0, 0.14, law, fontsize=13.5, color=fs.BLUE, va='center')
+        axt.text(0.0, 0.72, '%s    %s' % (rng_lab, name),
+                 fontsize=8.8, fontweight='bold', va='center')
+        axt.text(0.0, 0.10, law, fontsize=8.2, color=fs.BLUE, va='center')
 
         axv = fig.add_subplot(cell[1, 0])
         platelets(axv, modes[i])
@@ -159,28 +159,30 @@ def main():
         axc.axvspan(a, b, color=c, zorder=0)
     axc.axvspan(ez.PHI_DRAIN - ez.PHI_DRAIN_SD, ez.PHI_DRAIN + ez.PHI_DRAIN_SD,
                 color=fs.VERM, alpha=0.20, zorder=0)
-    axc.fill_between(phi, lo, hi, color=fs.SKY, alpha=0.40,
+    axc.fill_between(phi, lo, hi, color=fs.SKY, alpha=0.45, lw=0,
                      label=r'closure, $n(b)$, $\pm2\,\mathrm{rms}$')
-    axc.plot(phi, np.maximum(mid, 0.04), color=fs.BLUE, lw=2.8,
+    axc.plot(phi, np.maximum(mid, 0.04), color=fs.BLUE, lw=1.9,
              label=r'closure, $n(b)$')
-    axc.plot(phi, ez.E_ICE * (1 - 1.65 * phi), color=fs.ORANGE, lw=2.0,
+    axc.plot(phi, ez.E_ICE * (1 - 1.65 * phi), color=fs.ORANGE, lw=1.4,
              ls='--', label='pocket cells (measured)')
-    axc.plot(phi, 9.5 * (1 - np.sqrt(phi)) ** 4, color=fs.BLACK, lw=1.6,
+    axc.plot(phi, 9.5 * (1 - np.sqrt(phi)) ** 4, color=fs.BLACK, lw=1.1,
              label='Weeks & Assur 1967')
     for x, lab in ((ez.PHI_DRAIN, r'$0.046$'), (ez.PHI_LAYER, r'$0.09$'),
                    (ez.PHI_CROSS, r'$0.14$'), (ez.PHI_0, r'$\phi_0=0.20$')):
-        axc.axvline(x, color='0.4', lw=1.0, ls=':')
-        axc.text(x, 17.0, lab, fontsize=12, color='0.3', ha='center', va='top')
-    axc.text(0.216, 0.30, 'skeletal:\nno model here', fontsize=11.5,
+        axc.axvline(x, color='0.45', lw=0.7, ls=':')
+        axc.text(x, 18.5, lab, fontsize=7.4, color='0.3', ha='center',
+                 va='top')
+    axc.text(0.216, 0.30, 'skeletal:\nno model here', fontsize=7.4,
              color=fs.VERM, ha='center')
     axc.set_yscale('log'); axc.set_ylim(0.04, 22); axc.set_xlim(0, 0.235)
-    axc.set_xlabel(r'brine volume fraction $\phi$', fontsize=15)
-    axc.set_ylabel(r'$E$   [GPa]', fontsize=15)
-    axc.legend(loc='lower left', fontsize=12.5)
+    axc.set_xlabel(r'brine volume fraction $\phi$')
+    axc.set_ylabel(r'$E$  (GPa)')
+    fs.clean(axc)
+    axc.legend(loc='lower left', ncol=2, fontsize=7.2)
 
-    fig.subplots_adjust(left=0.055, right=0.985, top=0.96, bottom=0.055)
+    fig.subplots_adjust(left=0.078, right=0.99, top=0.98, bottom=0.072)
     p = os.path.join(out, 'fig_regimes.png')
-    fig.savefig(p, dpi=170)
+    fig.savefig(p)
     print('wrote %s' % p)
 
 

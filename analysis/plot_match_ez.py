@@ -85,61 +85,71 @@ def kujala_implied_phi(z, n):
 def panel_modulus(ax, z):
     """Both studies against one model profile."""
     lo, mid, hi = ez.E_band(ref_phi(z), floor=0.0)
-    ax.fill_betweenx(z, lo, hi, color=fs.SKY, alpha=0.35,
+    ax.fill_betweenx(z, lo, hi, color=fs.SKY, alpha=0.45, lw=0,
                      label=r'$n(b)$ band')
-    ax.plot(mid, z, color=fs.BLUE, lw=2.6, label=r'closure, $n(b)$')
+    ax.plot(mid, z, color=fs.BLUE, lw=1.8, label=r'closure, $n(b)$', zorder=3)
 
     # Kujala: moduli at two depths only, four beams each, drawn as spread.
+    # clip_on=False so the surface markers are not sliced by the z=0 axis.
     for E, zz, lab in ((K_TOP, 0.015, 'Kujala, surface and base'),
                        (K_BOT, 0.985, None)):
-        ax.plot(E, np.full_like(E, zz), 'o', color=fs.ORANGE, ms=7,
-                mec='white', mew=0.8, label=lab, zorder=5)
-        ax.plot([E.min(), E.max()], [zz, zz], color=fs.ORANGE, lw=2.2, zorder=4)
+        ax.plot([E.min(), E.max()], [zz, zz], color=fs.ORANGE, lw=1.6,
+                zorder=4, clip_on=False)
+        ax.plot(E, np.full_like(E, zz), 'o', color=fs.ORANGE, ms=4.2,
+                mec='white', mew=0.6, label=lab, zorder=5, clip_on=False)
 
     # Gogolaze: a whole-beam rigidity, so it is a depth-integrated number and
     # cannot be drawn as a profile. His two reductions differ by 1.81x, which
-    # is why the target is a band rather than a line.
-    ax.axvspan(GOGO_APP, GOGO_COR, color=fs.GREEN, alpha=0.18, zorder=0)
-    ax.text(0.5 * (GOGO_APP + GOGO_COR), 0.52,
-            "Gogolaze\nbeam rigidity\n(two reductions)", fontsize=8.6,
-            color=fs.GREEN, ha='center', va='center')
+    # is why the target is a band rather than a line. The label runs up the
+    # band so it cannot collide with the legend, which sits in the empty
+    # middle of the panel.
+    ax.axvspan(GOGO_APP, GOGO_COR, color=fs.GREEN, alpha=0.20, lw=0, zorder=0)
+    ax.text(np.sqrt(GOGO_APP * GOGO_COR), 0.40,
+            'Gogolaze beam rigidity', fontsize=7.0, color='#00614A',
+            ha='center', va='center', rotation=90)
 
     fs.depth_axis(ax)
+    ax.set_ylim(1.02, -0.02)
     ax.set_xscale('log')
-    ax.set_xlabel("Young's modulus   [GPa]")
-    ax.text(0.015, 0.965, '(a)', transform=ax.transAxes, fontsize=13,
-            fontweight='bold', va='top')
-    ax.legend(loc='center left', fontsize=9)
+    ax.set_xlim(0.6, 13)
+    ax.set_xticks([1, 2, 5, 10])
+    ax.set_xticklabels(['1', '2', '5', '10'])
+    ax.set_xlabel(r"Young's modulus $E$  (GPa)")
+    fs.panel(ax, 'a')
+    fs.clean(ax)
+    ax.legend(loc='center', bbox_to_anchor=(0.56, 0.62))
 
 
 def panel_brine(ax, z):
     """The composition each comparison rests on."""
-    ax.plot(ref_phi(z), z, color=fs.BLUE, lw=2.6,
+    ax.plot(ref_phi(z), z, color=fs.BLUE, lw=1.8,
             label='our reference column')
-    ax.plot(gogo_phi(z), z, color=fs.GREEN, lw=2.4, ls='-',
+    ax.plot(gogo_phi(z), z, color=fs.GREEN, lw=1.6, ls='-',
             label='Gogolaze, measured')
-    ax.plot(kujala_implied_phi(z, None), z, color=fs.ORANGE, lw=2.4,
-            ls=(0, (5, 2)), label='Kujala, implied by inversion')
-    ax.axvspan(0.25, 0.55, color=fs.ORANGE, alpha=0.14, zorder=0)
-    ax.text(0.40, 0.12, 'skeletal\nrange', fontsize=9.5, color=fs.ORANGE,
-            ha='center')
-    fs.depth_axis(ax)
+    ax.plot(kujala_implied_phi(z, None), z, color=fs.ORANGE, lw=1.6,
+            ls=(0, (4.5, 1.8)), label='Kujala, implied by inversion')
+    ax.axvspan(0.25, 0.55, color=fs.ORANGE, alpha=0.15, lw=0, zorder=0)
+    ax.text(0.40, 0.055, 'skeletal range', fontsize=7.0, color='#8A5A00',
+            ha='center', va='center')
+    fs.depth_axis(ax, label=False)
+    ax.set_ylim(1.02, -0.02)
     ax.set_xlim(0, 0.55)
+    ax.set_xticks([0.0, 0.1, 0.2, 0.3, 0.4, 0.5])
     ax.set_xlabel(r'brine volume fraction $\phi$')
-    ax.text(0.015, 0.965, '(b)', transform=ax.transAxes, fontsize=13,
-            fontweight='bold', va='top')
-    ax.legend(loc='lower right', fontsize=9)
+    fs.panel(ax, 'b')
+    fs.clean(ax)
+    ax.legend(loc='center right', bbox_to_anchor=(1.0, 0.72))
 
 
 def main():
     outdir = sys.argv[1] if len(sys.argv) > 1 else '.'
     z = np.linspace(0.001, 0.999, 400)
-    fig, ax = plt.subplots(1, 2, figsize=(12.6, 5.4))
+    fig, ax = plt.subplots(1, 2, figsize=fs.size(0.46), sharey=True)
     panel_modulus(ax[0], z)
     panel_brine(ax[1], z)
-    fig.tight_layout()
+    fig.tight_layout(pad=0.3, w_pad=1.0)
     p = os.path.join(outdir, 'match_ez.png')
-    fig.savefig(p, dpi=165)
+    fig.savefig(p)
     print('wrote %s' % p)
 
 

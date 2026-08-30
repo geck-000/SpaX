@@ -69,7 +69,7 @@ def fig_rve(outdir):
     if not dens or not spac:
         print('  fig3: missing data, skipped')
         return
-    fig, ax = plt.subplots(1, 2, figsize=(12.4, 5.2), sharey=True)
+    fig, ax = plt.subplots(1, 2, figsize=fs.size(0.35), sharey=True)
     for a, g, letter, note in (
             (ax[0], dens, 'a',
              'bridge density held\nconverged: CV 1.9% / 0.8%'),
@@ -80,18 +80,20 @@ def fig_rve(outdir):
                                   ('und', fs.VERM, 's', 'undrained')):
             sub = {k: v for k, v in g.items() if k[1] == state}
             L, m, s = agg(sub, lambda k: int(k[0]) / 1000.0)
-            a.errorbar(L, m, yerr=s, marker=mk, color=c, capsize=3, label=lab)
-        a.set_xlabel(r'cell edge $L$   [model units]')
-        a.text(0.04, 0.06, note, transform=a.transAxes, fontsize=11,
+            a.errorbar(L, m, yerr=s, marker=mk, color=c, capsize=2,
+                       ms=3.6, lw=1.4, elinewidth=1.0, label=lab)
+        a.set_xlabel(r'cell edge $L$  (model units)')
+        a.text(0.04, 0.06, note, transform=a.transAxes, fontsize=7.0,
                color='0.25')
-        a.text(0.015, 0.965, '(%s)' % letter, transform=a.transAxes,
-               fontsize=13, fontweight='bold', va='top')
+        fs.panel(a, letter)
+        fs.clean(a)
         a.set_yscale('log'); a.set_ylim(0.15, 9)
-        a.legend(fontsize=10.5, loc='center left')
-    ax[0].set_ylabel(r'$E_x$   [GPa]')
-    fig.tight_layout()
+        fs.logticks(a, 'y', [0.2, 0.5, 1, 2, 5])
+        a.legend(loc='center left')
+    ax[0].set_ylabel(r'$E_x$  (GPa)')
+    fig.tight_layout(pad=0.3, w_pad=0.8)
     p = os.path.join(outdir, 'fig3_rve.png')
-    fig.savefig(p, dpi=170); print('  wrote %s' % p)
+    fig.savefig(p); print('  wrote %s' % p)
 
 
 # ---------------------------------------------------------------- Fig 5
@@ -238,24 +240,28 @@ def fig_bridge(outdir):
     if not g:
         print('  fig9: missing data, skipped')
         return
-    fig, ax = plt.subplots(1, 2, figsize=(12.6, 5.3))
+    fig, ax = plt.subplots(1, 2, figsize=fs.size(0.45))
     a = ax[0]
     fits = {}
     for state, c, mk, lab in (('drn', fs.BLUE, 'o', 'drained'),
                               ('und', fs.VERM, 's', 'undrained')):
         sub = {k: v for k, v in g.items() if k[1] == state}
         b, m, s = agg(sub, lambda k: int(k[0]) / 1000.0)
-        a.errorbar(b, m, yerr=s, marker=mk, color=c, ms=9, capsize=3, label=lab)
+        a.errorbar(b, m, yerr=s, marker=mk, color=c, ms=4.0, capsize=2,
+                   lw=1.4, elinewidth=1.0, label=lab)
         p, cov = np.polyfit(np.log(b), np.log(m), 1, cov=True)
         fits[state] = (p[0], np.sqrt(cov[0, 0]))
-        a.text(b[-1] * 1.1, m[-1], r'$b^{%.2f}$' % p[0], color=c, fontsize=12,
-               va='center')
+        a.text(b[-1] * 1.13, m[-1], r'$b^{%.2f}$' % p[0], color=c,
+               fontsize=7.5, va='center')
     a.set_xscale('log'); a.set_yscale('log'); a.set_ylim(0.15, 12)
+    a.set_xlim(right=b[-1] * 1.9)
+    fs.logticks(a, 'x', [0.02, 0.05, 0.1, 0.2, 0.4])
+    fs.logticks(a, 'y', [0.2, 0.5, 1, 2, 5, 10])
     a.set_xlabel(r'ice fraction of the layer plane $b$')
-    a.set_ylabel(r'$E_x$   [GPa]')
-    a.text(0.015, 0.965, '(a)', transform=a.transAxes, fontsize=13,
-           fontweight='bold', va='top')
-    a.legend(fontsize=10.5, loc='upper left')
+    a.set_ylabel(r'$E_x$  (GPa)')
+    fs.panel(a, 'a')
+    fs.clean(a)
+    a.legend(loc='lower right')
 
     # the drainage ratio: largest exactly where the bridges are sparsest
     b2, md, _ = agg({k: v for k, v in g.items() if k[1] == 'drn'},
@@ -264,19 +270,21 @@ def fig_bridge(outdir):
                    lambda k: int(k[0]) / 1000.0)
     r = mu / md
     bb = ax[1]
-    bb.plot(b2, r, 'D-', color=fs.PURPLE, ms=9)
+    bb.plot(b2, r, 'D-', color=fs.PURPLE, ms=4.0, lw=1.4)
     for x, y in zip(b2, r):
-        bb.text(x, y * 1.10, r'$\times%.1f$' % y, ha='center', fontsize=10.5)
-    bb.set_xscale('log'); bb.set_yscale('log'); bb.set_ylim(2, 32)
+        bb.text(x, y * 1.13, r'$\times%.1f$' % y, ha='center', fontsize=7.0)
+    bb.set_xscale('log'); bb.set_yscale('log'); bb.set_ylim(2, 42)
+    fs.logticks(bb, 'x', [0.02, 0.05, 0.1, 0.2, 0.4])
+    fs.logticks(bb, 'y', [2, 5, 10, 20, 40])
     bb.set_xlabel(r'ice fraction of the layer plane $b$')
     bb.set_ylabel('undrained / drained')
-    bb.text(0.015, 0.965, '(b)', transform=bb.transAxes, fontsize=13,
-            fontweight='bold', va='top')
-    bb.text(0.55, 0.80, 'drainage matters most\nwhere the bridges are sparsest',
-            transform=bb.transAxes, fontsize=10.5, color='0.25', ha='center')
-    fig.tight_layout()
+    fs.panel(bb, 'b')
+    fs.clean(bb)
+    bb.text(0.5, 0.86, 'drainage matters most where\nthe bridges are sparsest',
+            transform=bb.transAxes, fontsize=7.0, color='0.25', ha='center')
+    fig.tight_layout(pad=0.3, w_pad=0.9)
     p = os.path.join(outdir, 'fig9_bridge.png')
-    fig.savefig(p, dpi=170); print('  wrote %s' % p)
+    fig.savefig(p); print('  wrote %s' % p)
     print('     drained  n = %.3f +- %.3f' % fits['drn'])
     print('     undrained n = %.3f +- %.3f' % fits['und'])
 
