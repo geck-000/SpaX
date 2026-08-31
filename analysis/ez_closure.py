@@ -25,14 +25,17 @@ Two limits of w bracket this and both were used at some point:
                      knocking E_top to 6.3 GPa against a measured 7.18-8.60.
                      Wrong.
   w = Heaviside      a step at phi_c. Reproduces Kujala's endpoint ratio well
-                     (alpha 0.129 against a measured 0.12-0.19) but leaves
+                     (alpha 0.122 against a measured 0.12-0.19) but leaves
                      E(phi) discontinuous, so moduli between 4.6 and 8.6 GPa
                      have no corresponding brine fraction and the closure
                      cannot be inverted there.
 
-The ramp adopted here is continuous and monotone, so it inverts everywhere, at
-the cost of a milder basal knockdown (alpha 0.235). The transition width is not
-measured; the ramp and the step bracket it.
+The transition width is not measured, so the step and the ramp bracket it. The
+STEP is the adopted form and the default here: of the two it is the only one
+the four-bridge cells support. The ramp, running from phi_c to phi_0, is
+continuous and monotone and so inverts everywhere, at the cost of a milder
+basal knockdown (alpha 0.281); it is kept for the comparison the paper quotes
+and for the inversion, which a step cannot do.
 
 INGREDIENT           VALUE            STATUS
 E_pocket             above            MEASURED. R^2 = 0.999 over the column
@@ -207,11 +210,14 @@ def n_of_b(b, offset=0.0):
     """Bridge exponent at four bridges to a plane, Eq. n(b)."""
     return N_OF_B_INTERCEPT + N_OF_B_SLOPE * np.asarray(b, float) + offset
 
-# The ramp saturates at PHI_SAT, not at phi_0. The same cells put the bridge
-# factor essentially fully active by phi = 0.12 and flat thereafter, so
-# spreading it to phi_0 as an earlier version did leaves the closure far too
-# stiff through the layered range.
-PHI_SAT = 0.104
+# The ramp saturates at phi_0, which is how the paper defines it: with no
+# measured width, the two limits that bracket the transition are a step at
+# phi_c and a ramp running the full width of the layered range. An earlier
+# version saturated at phi_sat = 0.104; that value is retracted (see the note
+# on the ramp in E_of_phi), and it is not merely a different choice -- at
+# phi = 0.150 a ramp ending at 0.104 has already reached w = 1, so weight='ramp'
+# returned the step exactly and could not reproduce the ramp column of the
+# paper's Table 4. The ramp now uses the phi_0 passed to E_of_phi.
 
 # A0_MM defaults to the spacing the cells were solved at, NOT to Pringle's
 # measured 0.35 mm. That is a deliberate retreat. Extrapolating the a_0^0.69
@@ -391,7 +397,7 @@ def E_of_phi(phi, n=None, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR,
     # weight='ramp' reproduces the old behaviour for comparison and is not
     # supported by any measurement.
     if weight == 'ramp':
-        w = np.clip((phi - PHI_C) / (PHI_SAT - PHI_C), 0.0, 1.0)
+        w = np.clip((phi - PHI_C) / (phi_0 - PHI_C), 0.0, 1.0)
     elif weight == 'step':
         w = np.where(np.asarray(phi, float) > PHI_C, 1.0, 0.0)
     else:
