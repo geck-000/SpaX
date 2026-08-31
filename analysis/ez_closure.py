@@ -394,8 +394,9 @@ def E_of_phi(phi, n=None, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR,
     # shows no deficit to invert. Four-bridge cells run from phi = 0.076 to
     # 0.093, straight through phi_c, with no feature there. Of the two forms
     # the paper compares only the step retains support, so it is the default;
-    # weight='ramp' reproduces the old behaviour for comparison and is not
-    # supported by any measurement.
+    # weight='ramp' is kept for the comparison the paper quotes and for the
+    # inversion of Fig. 6(b), which a step cannot do, and is not supported by
+    # any measurement. It runs phi_c to phi_0, not to the retracted phi_sat.
     if weight == 'ramp':
         w = np.clip((phi - PHI_C) / (phi_0 - PHI_C), 0.0, 1.0)
     elif weight == 'step':

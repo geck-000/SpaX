@@ -6,8 +6,9 @@ r"""Figures for the E(z) match against Gogolaze and Kujala.
 
 (b) KUJALA. He reports no porosity, so nothing can be matched forwards. The
     panel shows the brine profile his beams IMPLY under the closure, against
-    the synthetic column. His is monotonic and reaches the skeletal range,
-    ours is C-shaped.
+    the synthetic column. His is monotonic, 0.065 at the surface to 0.166 at
+    the base, so it climbs toward the skeletal range drawn at 0.25 without
+    reaching it; ours is C-shaped.
 
 Marchenko is deliberately absent. His profile is a measured brine profile
 pushed through a correlation obtained elsewhere from three-point bending and
