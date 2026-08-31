@@ -34,7 +34,7 @@ The transition width is not measured, so the step and the ramp bracket it. The
 STEP is the adopted form and the default here: of the two it is the only one
 the four-bridge cells support. The ramp, running from phi_c to phi_0, is
 continuous and monotone and so inverts everywhere, at the cost of a milder
-basal knockdown (alpha 0.281); it is kept for the comparison the paper quotes
+basal knockdown (alpha 0.280); it is kept for the comparison the paper quotes
 and for the inversion, which a step cannot do.
 
 INGREDIENT           VALUE            STATUS
