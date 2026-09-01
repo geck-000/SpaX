@@ -187,11 +187,23 @@ def _gogo(weight):
     return 12 * float(np.sum(E * h * ((z - z0) ** 2 + h ** 2 / 12.0)))
 
 
+# The level correction, derived rather than asserted: c is the intersection of
+# what the two whole-beam quantities demand, so a change in the closure or in
+# either measured band moves it, and the manuscript's Eq. (7) has to move with
+# it. That did not happen when the ramp was fixed, which is how 3.70 / 2.62
+# survived in Table 6 after Table 7's ramp row had been rebuilt.
+_c_kujala = (3.6 / _plate['D12mid'], 4.6 / _plate['D12mid'])
+_c_gogo = (0.785 / _gogo('step'), 1.421 / _gogo('step'))
+
 F += [
+ ('c: lower end (kujala)',  max(_c_kujala[0], _c_gogo[0]),           0.467),
+ ('c: upper end (gogolaze)', min(_c_kujala[1], _c_gogo[1]),          0.552),
+ ('c: gogolaze lower',      _c_gogo[0],                              0.305),
+ ('c: kujala upper',        _c_kujala[1],                            0.596),
  ('sens: exponent +-2rms',  _E(n=_n - 2 * _ez.N_FIT_RMS) / _E(n=_n + 2 * _ez.N_FIT_RMS), 1.19),
  ('sens: a0 0.5-1.5 mm',    _E(a0_mm=1.5) / _E(a0_mm=0.5),           2.29),
  ('sens: phi_0 0.15-0.36',  _E(phi_0=0.36) / _E(phi_0=0.15),         5.38),
- ('sens: phi_0 0.14-0.24',  _E(phi_0=0.24) / _E(phi_0=0.14),         5.59),
+ ('sens: phi_0 0.14-0.23',  _E(phi_0=0.23) / _E(phi_0=0.14),         5.25),
  ('sens: b at phi=0.12',    _b,                                      0.225),
  ('N correction 4 -> 6',    _E(n_bridges=6) / _E(n_bridges=4),       1.22),
  ('N correction 4 -> 32',   _E(n_bridges=32) / _E(n_bridges=4),      2.81),
@@ -243,6 +255,12 @@ STALE = [
  ('\\times1.18$', 'pre-n(b) exponent sensitivity'),
  ('$0.93$--$1.04$', 'retired fixed exponent band'),
  ('E_{\\mathrm{flex}}=1.22', 'pre-n(b) flexural ratio'),
+ ('0.47$--$0.54', 'pre-rerun level correction'),
+ ('0.47\\text{--}0.54', 'pre-rerun level correction in Eq. (7)'),
+ ('3.70 / 2.62', 'pre-rerun gogolaze rigidity'),
+ ('$0.14$--$0.24$', 'pre-rerun phi_0 bracket'),
+ ('factor of two to three', 'rounded overshoot'),
+ ('$\\times5.59$', 'superseded narrowed sensitivity'),
 ]
 echo = 0
 for pat, why in STALE:
