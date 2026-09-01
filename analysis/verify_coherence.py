@@ -6,8 +6,17 @@ import io, os, re
 import numpy as np
 import pandas as pd
 
-TEX = 'C:/Users/stirpeg2/AppData/Local/Temp/overleaf-68d39c9d6e301aadbb376c0e/main_fix.tex'
-RES = 'C:/Users/stirpeg2/SpaX/SpaX/.claude/worktrees/skeletal-eringen-weibull/results'
+# Paths were hardcoded to one workstation and to main_fix.tex, a manuscript that
+# is no longer the one being submitted, so the audit silently checked the wrong
+# file. Both are now arguments, defaulting to the current paper and this
+# checkout's results:
+#     SPAX_TEX=/path/to/new_rve_paper.tex python3 analysis/verify_coherence.py
+TEX = os.environ.get(
+    'SPAX_TEX',
+    os.path.expanduser('~/opencode-workspace/sea-ice-paper/new_rve_paper.tex'))
+RES = os.environ.get(
+    'SPAX_RESULTS',
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'results'))
 os.chdir(RES)
 tex = io.open(TEX, encoding='utf8').read()
 
@@ -41,10 +50,81 @@ F = [
  ('SCF gas P50',            wb.loc['GAS', 'SCFeff_m1'],   1.146),
  ('failure base P99',       fail.SCF_p99.iloc[-1],        3.57),
  ('failure top P99',        fail.SCF_p99.iloc[0],         2.024),
- ('skeletal aniso, cells',  sk.a.max(),                   1.79),
- ('skeletal phi max',       sk.phi_soft_total.max(),      0.45),
  ('coltensor base ratio',   ct.E_ratio.iloc[-1],          1.1135),
  ('coltensor base split',   100*(ct.E_y.iloc[-1]/ct.E_x.iloc[-1]-1), 0.74),
+]
+# The two skeletal checks that used to sit here asserted 1.79 and 0.45, numbers
+# main_fix.tex carried and new_rve_paper.tex does not. A check against a claim
+# the manuscript no longer makes reports a mismatch for ever, so they are gone
+# rather than merely failing.
+
+# --- the round-3 numbers ------------------------------------------------------
+# Everything below is recomputed from the tensors and the closure rather than
+# copied from the manuscript, so a change in either shows up as a mismatch.
+import glob
+
+
+def _C(fn):
+    rows = []
+    for line in io.open(fn, encoding='utf8'):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        q = line.split(',')
+        if q[0] in ('11', '22', '33', '12', '13', '23'):
+            rows.append([float(x) for x in q[1:7]])
+        if len(rows) == 6:
+            break
+    return np.array(rows)
+
+
+def _ratios(pattern):
+    ry, rz = [], []
+    for fn in sorted(glob.glob(pattern)):
+        S = np.linalg.inv(_C(fn))
+        Ex, Ey, Ez = 1 / S[0, 0], 1 / S[1, 1], 1 / S[2, 2]
+        if Ex <= 0:
+            continue
+        ry.append(Ey / Ex)
+        rz.append(Ez / Ex)
+    return np.mean(ry), np.mean(rz)
+
+T = os.path.join('..', 'tensors')
+y85, z85 = _ratios(os.path.join(T, 'basetensor85_seeds', '*_z85_s*.csv'))
+y95, z95 = _ratios(os.path.join(T, 'basetensor_seeds', '*_z95_s*.csv'))
+
+# the layered basal cell, at fixed azimuth and averaged over azimuth
+Cl = _C(os.path.join(T, 'layertensor', 'elasticity_tensor_LTEN_z95.csv'))
+Sl = np.linalg.inv(Cl)
+Sp = np.array([[Sl[0, 0], Sl[0, 1], 0], [Sl[0, 1], Sl[1, 1], 0], [0, 0, Sl[3, 3]]])
+Ql = np.linalg.inv(Sp)
+R = np.diag([1, 1, 2])
+Qb = np.zeros((3, 3))
+Sb = np.zeros((3, 3))
+NTH = 7200
+for th in np.linspace(0, 2 * np.pi, NTH, endpoint=False):
+    c, sn = np.cos(th), np.sin(th)
+    t = np.array([[c * c, sn * sn, 2 * c * sn],
+                  [sn * sn, c * c, -2 * c * sn],
+                  [-c * sn, c * sn, c * c - sn * sn]])
+    ti = np.linalg.inv(t)
+    Qb += ti @ Ql @ R @ t @ np.linalg.inv(R)
+    Sb += R @ t @ np.linalg.inv(R) @ Sp @ ti
+Qb /= NTH
+Sb /= NTH
+nur = -Sb[0, 1] / Sb[0, 0]
+Q_reuss = (1 / Sb[0, 0]) / (1 - nur ** 2)
+
+F += [
+ ('z85 in-plane E_y/E_x',   y85,                          0.998),
+ ('z85 anisotropy E_z/E_x', z85,                          1.052),
+ ('z95 in-plane E_y/E_x',   y95,                          0.999),
+ ('z95 anisotropy E_z/E_x', z95,                          1.117),
+ ('layered base E_y/E_x',   (1 / Sl[1, 1]) / (1 / Sl[0, 0]), 6.3),
+ ('layered base nu_xy',     -Sl[0, 1] / Sl[0, 0],         0.047),
+ ('layered base Q11 (GPa)', Ql[0, 0] / 1e9,               1.180),
+ ('azimuthal Q, strain',    Qb[0, 0] / 1e9,               3.65),
+ ('azimuthal Q, stress',    Q_reuss / 1e9,                1.84),
 ]
 
 print('=' * 72)
@@ -69,6 +149,10 @@ STALE = [
  ('3.3\\%$ predicted', 'old neutral offset'), ('falls at the top of the measured', 'kujala overstatement'),
  ('1.935', 'old SCF P90'), ('does not move at all', 'tilt overstatement'),
  ('$45\\%$ for the first-year', 'old FY drop'), ('$\\approx0.55$', 'old alpha'),
+ ('B/\\sqrt{AD}=0.190', 'retired coupling'),
+ ('upper half taking $66', 'old upper-half share'),
+ ('0.999\\pm0.008', 'old z95 ensemble sd'),
+ ('slightly\nmore steeply', 'reversed phase ordering'),
 ]
 echo = 0
 for pat, why in STALE:
