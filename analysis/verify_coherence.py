@@ -195,7 +195,57 @@ def _gogo(weight):
 _c_kujala = (3.6 / _plate['D12mid'], 4.6 / _plate['D12mid'])
 _c_gogo = (0.785 / _gogo('step'), 1.421 / _gogo('step'))
 
+# Section 3.4's seasonal sweeps and Section 4.4's neutral-plane argument. The
+# first two are closure-derived through the SEAS profiles, the third through the
+# assembled column; all three had been left on a superseded configuration, the
+# neutral-plane paragraph on the ramp while the paper adopts the step.
+def _seas():
+    import csv as _csv
+    ph, Ec = {}, {}
+    for r in _csv.DictReader(io.open('results_seas.csv', encoding='utf8')):
+        for w in ('w20', 'w12', 'w06'):
+            if 'SEAS_' + w in r['run_id']:
+                ph.setdefault(w, []).append(float(r['phi_soft_total']))
+                Ec.setdefault(w, []).append(float(r['E_x']) / 1e9)
+    out = {}
+    for w in ph:
+        p_, c_ = np.array(ph[w]), np.array(Ec[w])
+        E = np.array([float(_ez.E_of_phi(x)) for x in p_])
+        Eh = np.where(p_ > 0.05, E, c_)
+        out[w] = dict(alpha=Eh[-1] / c_[0], past=float((p_ > _ez.PHI_C).mean()))
+    return out
+
+
+_s = _seas()
+
+
+def _z0(E, nu, h, zc):
+    Q = E / (1 - nu ** 2)
+    return float(np.sum(Q * h * zc) / np.sum(Q * h))
+
+
+def _straight_line_z0():
+    """Neutral plane of a straight line through the adopted column's endpoints."""
+    import csv as _csv
+    rows = list(_csv.DictReader(io.open('results_column_ensemble.csv', encoding='utf8')))
+    Ex = np.array([float(r['E_x']) for r in rows]) / 1e9
+    nu = np.array([float(r['nu_x']) for r in rows])
+    h = 1.0 / len(rows)
+    zc = (np.arange(len(rows)) + 0.5) * h
+    T = np.array([-19.1, -17.3, -15.4, -13.6, -11.8, -10.0, -8.2, -6.3, -4.5, -2.7])
+    S = np.array([7.0, 5.5, 4.8, 4.5, 4.3, 4.3, 4.5, 5.0, 6.0, 8.0])
+    pp = _ez.brine_volume(T, S)
+    Ec = np.array([float(_ez.E_of_phi(x)) for x in pp])
+    E = np.where(pp > 0.05, Ec, Ex)
+    return _z0(np.linspace(E[0], E[-1], len(E)), nu, h, zc)
+
+
 F += [
+ ('seas: alpha w20',        _s['w20']['alpha'],                      0.075),
+ ('seas: alpha w12',        _s['w12']['alpha'],                      0.012),
+ ('seas: alpha w06',        _s['w06']['alpha'],                      0.006),
+ ('seas: past phi_c, w06',  _s['w06']['past'],                       0.30),
+ ('neutral plane, straight', _straight_line_z0(),                    0.356),
  ('c: lower end (kujala)',  max(_c_kujala[0], _c_gogo[0]),           0.467),
  ('c: upper end (gogolaze)', min(_c_kujala[1], _c_gogo[1]),          0.552),
  ('c: gogolaze lower',      _c_gogo[0],                              0.305),
@@ -261,6 +311,9 @@ STALE = [
  ('$0.14$--$0.24$', 'pre-rerun phi_0 bracket'),
  ('factor of two to three', 'rounded overshoot'),
  ('$\\times5.59$', 'superseded narrowed sensitivity'),
+ ('$0.226$ to $0.089$', 'pre-rerun warming endpoint ratios'),
+ ('$z_0/H=0.397$', 'neutral plane on the ramp column'),
+ ('$0.06$ to $0.09$', 'ramp-column shortfall'),
 ]
 echo = 0
 for pat, why in STALE:
