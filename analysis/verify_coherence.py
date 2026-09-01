@@ -240,7 +240,48 @@ def _straight_line_z0():
     return _z0(np.linspace(E[0], E[-1], len(E)), nu, h, zc)
 
 
+# Section 3.5's mechanism numbers and the appendix sweeps, none of which had a
+# check: the constriction and bracket exponents, the drainage ratios, the
+# spacing exponent from the layer-count sweep, the above-phi_0 exponents, the
+# anisotropy sweeps and the localisation percentiles.
+def _pow(fn, key, state, xfun, col='E_x', scale=1e9):
+    d = pd.read_csv(fn)
+    d[col] = pd.to_numeric(d[col], errors='coerce') / scale
+    d = d[d.run_id.str.contains(state)]
+    x = d.run_id.map(xfun)
+    m = d.groupby(x)[col].mean().dropna()
+    lx, ly = np.log(m.index.values.astype(float)), np.log(m.values)
+    return float(np.polyfit(lx, ly, 1)[0]), m
+
+
+import re as _re
+_nb = lambda r: float(_re.search(r'_n(\d+)', r).group(1))
+_bb = lambda r: float(_re.search(r'_b(\d+)', r).group(1)) / 1000
+
+_con, _ = _pow('results_bracket_nbridges.csv', 'n', '_drn', _nb)
+_conu, _ = _pow('results_bracket_nbridges.csv', 'n', '_und', _nb)
+_brk, _mbrk = _pow('results_bracket_bridge.csv', 'b', '_drn', _bb)
+_brku, _mu = _pow('results_bracket_bridge.csv', 'b', '_und', _bb)
+_nl = lambda r: 1.0 / float(_re.search(r'_n(\d+)', r).group(1))
+_spc, _ = _pow('results_bracket_nlayers.csv', 'a0', '_drn', _nl)
+_wl = pd.read_csv('results_weibull_layer_scf.csv').drop_duplicates('run_id')
+_wl['g'] = _wl.run_id.str.replace(r'_s\d+$', '', regex=True)
+_wg = _wl.groupby('g').SCF_p99.mean()
+_wb = pd.read_csv('results_weibull.csv').set_index('case')
+
 F += [
+ ('constriction N^ (drained)', _con,                                 0.458),
+ ('constriction N^ (undrained)', _conu,                              0.017),
+ ('bracket b^ (drained)',    _brk,                                   0.689),
+ ('bracket b^ (undrained)',  _brku,                                  0.007),
+ ('drainage ratio at b=0.02', _mu.iloc[0] / _mbrk.iloc[0],           19.3),
+ ('drainage ratio at b=0.28', _mu.iloc[-1] / _mbrk.iloc[-1],         2.9),
+ ('spacing exponent a0^',    _spc,                                   0.69),
+ ('SCF layered, phi=0.09',   _wg['WBLL_chan_drn'],                   6.23),
+ ('SCF layered, phi=0.21',   _wg['WBLL_base_drn'],                   31.18),
+ ('SCF layered sealed',      _wg['WBLL_base_und'],                   7.29),
+ ('SCF lowest slice P99',    _wb.loc['BASE', 'P99_mean'],            3.593),
+ ('SCF isolated pocket P99', _wb.loc['POCK', 'P99_mean'],            2.091),
  ('seas: alpha w20',        _s['w20']['alpha'],                      0.075),
  ('seas: alpha w12',        _s['w12']['alpha'],                      0.012),
  ('seas: alpha w06',        _s['w06']['alpha'],                      0.006),
@@ -314,6 +355,9 @@ STALE = [
  ('$0.226$ to $0.089$', 'pre-rerun warming endpoint ratios'),
  ('$z_0/H=0.397$', 'neutral plane on the ramp column'),
  ('$0.06$ to $0.09$', 'ramp-column shortfall'),
+ ('P99}=4.56', 'unlocated localisation percentile'),
+ ('cell reaches $2.11$', 'peak quoted as a percentile'),
+ ('$m\\approx4$', 'mis-stated m-norm crossover'),
 ]
 echo = 0
 for pat, why in STALE:
