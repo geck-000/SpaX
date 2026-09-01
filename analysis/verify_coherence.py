@@ -2,7 +2,7 @@
 """Coherence audit, extended with the facts the first version did not cover:
 comparisons (gas vs channels in the SCF table), the CLT neutral-plane numbers,
 the cantilever fit, the Kujala beams, and the skeletal separation."""
-import io, os, re
+import io, os, re, sys
 import numpy as np
 import pandas as pd
 
@@ -115,7 +115,32 @@ Sb /= NTH
 nur = -Sb[0, 1] / Sb[0, 0]
 Q_reuss = (1 / Sb[0, 0]) / (1 - nur ** 2)
 
+# The Section 5 sensitivity block. These were computed on the closure as it
+# stood at 4281f3c, before n(b) replaced the single fitted exponent, and went
+# unrevised for two rounds because nothing checked them: the sweep definitions
+# live only in the prose, and 'a factor of three about the value the cells were
+# solved at' turned out to mean 0.5-1.5 mm rather than 0.25-2.25. They are
+# recomputed here so the next change to the closure cannot leave them behind.
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+import ez_closure as _ez                                             # noqa: E402
+
+PHI_REF = 0.12
+_b = 1 - np.sqrt(PHI_REF / _ez.PHI_0)
+_n = _ez.n_of_b(_b)
+
+
+def _E(**kw):
+    return float(_ez.E_of_phi(PHI_REF, **kw))
+
+
 F += [
+ ('sens: exponent +-2rms',  _E(n=_n - 2 * _ez.N_FIT_RMS) / _E(n=_n + 2 * _ez.N_FIT_RMS), 1.19),
+ ('sens: a0 0.5-1.5 mm',    _E(a0_mm=1.5) / _E(a0_mm=0.5),           2.29),
+ ('sens: phi_0 0.15-0.36',  _E(phi_0=0.36) / _E(phi_0=0.15),         5.38),
+ ('sens: phi_0 0.14-0.24',  _E(phi_0=0.24) / _E(phi_0=0.14),         5.59),
+ ('sens: b at phi=0.12',    _b,                                      0.225),
+ ('N correction 4 -> 6',    _E(n_bridges=6) / _E(n_bridges=4),       1.22),
+ ('N correction 4 -> 32',   _E(n_bridges=32) / _E(n_bridges=4),      2.81),
  ('z85 in-plane E_y/E_x',   y85,                          0.998),
  ('z85 anisotropy E_z/E_x', z85,                          1.052),
  ('z95 in-plane E_y/E_x',   y95,                          0.999),
@@ -153,6 +178,11 @@ STALE = [
  ('upper half taking $66', 'old upper-half share'),
  ('0.999\\pm0.008', 'old z95 ensemble sd'),
  ('slightly\nmore steeply', 'reversed phase ordering'),
+ ('\\times3.89', 'pre-n(b) phi_0 sensitivity'),
+ ('\\times3.84', 'pre-n(b) narrowed phi_0 sensitivity'),
+ ('\\times2.79', 'pre-n(b) spacing sensitivity'),
+ ('\\times1.18$', 'pre-n(b) exponent sensitivity'),
+ ('$0.93$--$1.04$', 'retired fixed exponent band'),
 ]
 echo = 0
 for pat, why in STALE:
