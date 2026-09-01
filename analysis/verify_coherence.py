@@ -133,6 +133,60 @@ def _E(**kw):
     return float(_ez.E_of_phi(PHI_REF, **kw))
 
 
+
+# The plate quantities and the Gogolaze forward evaluation. E_flex is the
+# ABD-inverse modulus, 12(D - B^2/A), which is what Section 4.4's E_flex/E_ext
+# and Section 4.5's E^t/E_flex both use; Table 6's "thickness average" is 12D
+# about the geometric mid-plane instead, so both are checked rather than one
+# being assumed to stand for the other.
+def _column():
+    import csv as _csv
+    rows = list(_csv.DictReader(io.open('results_column_ensemble.csv', encoding='utf8')))
+    Ex = np.array([float(r['E_x']) for r in rows]) / 1e9
+    nu = np.array([float(r['nu_x']) for r in rows])
+    h = 1.0 / len(rows)
+    zc = (np.arange(len(rows)) + 0.5) * h
+    T = np.array([-19.1, -17.3, -15.4, -13.6, -11.8, -10.0, -8.2, -6.3, -4.5, -2.7])
+    S = np.array([7.0, 5.5, 4.8, 4.5, 4.3, 4.3, 4.5, 5.0, 6.0, 8.0])
+    ph = _ez.brine_volume(T, S)
+    Ec = np.array([float(_ez.E_of_phi(x)) for x in ph])
+    E = np.where(ph > 0.05, Ec, Ex)
+    Q = E / (1 - nu ** 2)
+    A = np.sum(Q * h)
+    B = np.sum(Q * h * (zc - 0.5))
+    Dm = np.sum(Q * h * ((zc - 0.5) ** 2 + h ** 2 / 12.0))
+    Mi = np.linalg.inv(np.array([[A, B], [B, Dm]]))
+    return dict(Et=Ec[0], Eext=1 / Mi[0, 0], Eflex=12 / Mi[1, 1], D12mid=12 * Dm)
+
+
+_plate = _column()
+
+
+def _gogo(weight):
+    """Beam rigidity of the Gogolaze column, 12D about its own neutral plane."""
+    import csv as _csv
+    import re as _re
+    from collections import defaultdict as _dd
+    g = _dd(list)
+    for r in _csv.DictReader(io.open('results_gogo_column.csv', encoding='utf8',
+                                     errors='replace')):
+        m = _re.match(r'GOGO_z(\d+)_s(\d+)', r['run_id'])
+        if not m:
+            continue
+        try:
+            ex, ph = float(r['E_x']), float(r['phi_inclusion'])
+        except (TypeError, ValueError):
+            continue
+        if ex > 0:
+            g[int(m.group(1)) / 1000.0].append(ph)
+    z = np.array(sorted(g))
+    ph = np.array([np.mean(g[k]) for k in z])
+    h = 1.0 / len(z)
+    E = np.array([float(_ez.E_of_phi(x, weight=weight)) for x in ph])
+    z0 = float(np.sum(E * h * z) / np.sum(E * h))
+    return 12 * float(np.sum(E * h * ((z - z0) ** 2 + h ** 2 / 12.0)))
+
+
 F += [
  ('sens: exponent +-2rms',  _E(n=_n - 2 * _ez.N_FIT_RMS) / _E(n=_n + 2 * _ez.N_FIT_RMS), 1.19),
  ('sens: a0 0.5-1.5 mm',    _E(a0_mm=1.5) / _E(a0_mm=0.5),           2.29),
@@ -141,6 +195,11 @@ F += [
  ('sens: b at phi=0.12',    _b,                                      0.225),
  ('N correction 4 -> 6',    _E(n_bridges=6) / _E(n_bridges=4),       1.22),
  ('N correction 4 -> 32',   _E(n_bridges=32) / _E(n_bridges=4),      2.81),
+ ('plate: E_flex/E_ext',    _plate['Eflex'] / _plate['Eext'],        0.854),
+ ('plate: E^t/E_flex',      _plate['Et'] / _plate['Eflex'],          1.214),
+ ('plate: 12D about mid',   _plate['D12mid'],                        7.715),
+ ('gogolaze rigidity, step', _gogo('step'),                          2.574),
+ ('gogolaze rigidity, ramp', _gogo('ramp'),                          3.577),
  ('z85 in-plane E_y/E_x',   y85,                          0.998),
  ('z85 anisotropy E_z/E_x', z85,                          1.052),
  ('z95 in-plane E_y/E_x',   y95,                          0.999),
@@ -183,6 +242,7 @@ STALE = [
  ('\\times2.79', 'pre-n(b) spacing sensitivity'),
  ('\\times1.18$', 'pre-n(b) exponent sensitivity'),
  ('$0.93$--$1.04$', 'retired fixed exponent band'),
+ ('E_{\\mathrm{flex}}=1.22', 'pre-n(b) flexural ratio'),
 ]
 echo = 0
 for pat, why in STALE:
