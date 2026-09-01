@@ -269,7 +269,60 @@ _wl['g'] = _wl.run_id.str.replace(r'_s\d+$', '', regex=True)
 _wg = _wl.groupby('g').SCF_p99.mean()
 _wb = pd.read_csv('results_weibull.csv').set_index('case')
 
+# Appendix A.1's replicate and size statistics, and the constituent sweeps. The
+# thirteen layered conditions are the nine LSK cells and the four LCOL ones;
+# nothing recorded that, and it is the only set of thirteen whose drained median
+# and maximum are 1.10 and 3.87 and whose undrained pair is 5.55 and 19.2.
+def _cov_set(files, state):
+    out = []
+    for fn in files:
+        d = pd.read_csv(fn)
+        d['E'] = pd.to_numeric(d['E_x'], errors='coerce')
+        d['g'] = d.run_id.astype(str).str.replace(r'_s\d+$', '', regex=True)
+        for g, x in d.groupby('g'):
+            e = x.E.dropna()
+            if len(e) >= 2 and state in g:
+                out.append(100 * e.std(ddof=0) / e.mean())
+    return np.array(sorted(out))
+
+
+_LAY = ['results_layerskel.csv', 'results_layercol.csv']
+_ld, _lu = _cov_set(_LAY, '_drn'), _cov_set(_LAY, '_und')
+
+
+def _spread(fn, state, col='E_x'):
+    d = pd.read_csv(fn)
+    d[col] = pd.to_numeric(d[col], errors='coerce') / 1e9
+    d['g'] = d.run_id.astype(str).str.replace(r'_s\d+$', '', regex=True)
+    m = d[d.run_id.str.contains(state)].groupby('g')[col].mean()
+    return 100 * m.std(ddof=0) / m.mean()
+
+
+def _minspread(fn, tag):
+    d = pd.read_csv(fn)
+    d['E'] = pd.to_numeric(d['E_x'], errors='coerce') / 1e9
+    q = d[d.run_id.str.contains(tag)]
+    return 100 * (q.E.max() - q.E.min()) / q.E.min()
+
+
+_bkc = pd.read_csv('results_brineKconst.csv')
+_bkt = pd.read_csv('results_brineKtemp.csv')
+for _x in (_bkc, _bkt):
+    _x['E'] = pd.to_numeric(_x['E_x'], errors='coerce')
+
 F += [
+ ('layered CoV, drained median', float(np.median(_ld)),               1.10),
+ ('layered CoV, drained max',   float(_ld.max()),                     3.87),
+ ('layered CoV, undrained median', float(np.median(_lu)),             5.55),
+ ('layered CoV, undrained max', float(_lu.max()),                     19.2),
+ ('size, density held drained', _spread('results_bracket_density.csv', '_drn'), 1.868),
+ ('size, density held undrained', _spread('results_bracket_density.csv', '_und'), 0.843),
+ ('brine G sweep, pocket',      _minspread('results_brine.csv', 'iso_G'),   1.549),
+ ('brine K sweep, pocket',      _minspread('results_brine.csv', 'iso_K'),   1.926),
+ ('brine G sweep, channelled',  _minspread('results_brine.csv', 'chan_G'),  6.446),
+ ('brine K sweep, channelled',  _minspread('results_brine.csv', 'chan_K'),  4.987),
+ ('K(T) column shift %',        100 * (_bkt.E.mean() - _bkc.E.mean()) / _bkc.E.mean(), 0.0285),
+ ('Goodier SCF at nu=0.33',     (27 - 15 * 0.33) / (2 * (7 - 5 * 0.33)),    2.06),
  ('constriction N^ (drained)', _con,                                 0.458),
  ('constriction N^ (undrained)', _conu,                              0.017),
  ('bracket b^ (drained)',    _brk,                                   0.689),
@@ -358,6 +411,7 @@ STALE = [
  ('P99}=4.56', 'unlocated localisation percentile'),
  ('cell reaches $2.11$', 'peak quoted as a percentile'),
  ('$m\\approx4$', 'mis-stated m-norm crossover'),
+ ('$1.030$--$1.037$', 'channels-off range on a channelled sweep'),
 ]
 echo = 0
 for pat, why in STALE:
