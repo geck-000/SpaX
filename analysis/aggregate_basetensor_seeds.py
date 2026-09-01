@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Aggregate the base-slice full-tensor replicates into an ensemble statement.
 
-Reads elasticity_tensor_<prefix>_z95_s*.csv (one per packing, six load cases each,
+Reads elasticity_tensor_<prefix>_z<slice>_s*.csv (one per packing, six load cases
+each,
 written by SpaX_PostProcess.extract_elasticity_tensor) and reports the mean and
 population standard deviation of the engineering constants across packings.
 
@@ -38,10 +39,13 @@ def main():
     out_csv = sys.argv[2] if len(sys.argv) > 2 else 'results_basetensor_seeds.csv'
 
     pat = sys.argv[3] if len(sys.argv) > 3 else '*'
+    # The slice, so the same aggregation serves the base and the slice above it:
+    # SPAX_BT_ZSLICE=85 reads the BTEN_z85 campaign written for referee M9.
+    zs = int(os.environ.get('SPAX_BT_ZSLICE', 95))
     files = sorted(glob.glob(os.path.join(
-        d, 'elasticity_tensor_%s_z95_s*.csv' % pat)))
+        d, 'elasticity_tensor_%s_z%02d_s*.csv' % (pat, zs))))
     if not files:
-        print('no elasticity_tensor_%s_z95_s*.csv in %s' % (pat, d))
+        print('no elasticity_tensor_%s_z%02d_s*.csv in %s' % (pat, zs, d))
         return 1
 
     rows = []

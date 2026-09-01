@@ -39,7 +39,11 @@ import os
 from make_ice_studies import BASE, COLS, write
 
 N_SEED = 5
-Z_SLICE = 95                                     # warm base, z/H = 0.95
+# Which depth slice is replicated. The base, z/H = 0.95, is the one the paper
+# reports; SPAX_BT_ZSLICE=85 replicates the slice above it, which carries the
+# other half of the anisotropy claim (Table 4 shows the scatter rising in the
+# bottom *two* slices, not one) and is asked for by referee comment M9.
+Z_SLICE = int(os.environ.get('SPAX_BT_ZSLICE', 95))
 COLUMN_CSV = os.path.join(os.path.dirname(__file__), '..', 'results',
                           'results_column.csv')
 
@@ -82,7 +86,9 @@ def study_basetensor(L=None, prefix='BTEN', out=None, full_tensor=True):
         rr['run_id'] = f'{prefix}_z{Z_SLICE:02d}_s{s}'
         rows.append(rr)
 
-    write(out or 'rve_basetensor_seeds.csv',
+    default = ('rve_basetensor_seeds.csv' if Z_SLICE == 95 else
+               'rve_basetensor%d_seeds.csv' % Z_SLICE)
+    write(out or default,
           [{c: row.get(c, BASE.get(c, '')) for c in COLS} for row in rows])
 
 
