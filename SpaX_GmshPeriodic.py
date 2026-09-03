@@ -683,9 +683,20 @@ def place_bridges_layers(L, bridge_fraction, n_bridges, n_layers,
     if c >= 0.999:
         return [list(base) for _ in range(n_layers)], b_real
     if c <= 1e-9:
-        # exactly the old behaviour, seeded per layer as before
+        # The caller's seed used to be DISCARDED on this branch, so bridge_seed
+        # had no effect at the default correlation = 0 -- which is every deck in
+        # the campaign. Replicates over bridge ARRANGEMENT were therefore
+        # impossible to produce, although SpaX_Standalone advertises them
+        # ("Exposed so a sweep can average over arrangements instead of
+        # measuring one of them"): four distinct bridge_seed values returned
+        # bit-identical effective moduli.
+        #
+        # Folding the caller's seed in fixes that, and it is INERT for every
+        # existing deck: seed None or the default 7919 reproduces the old
+        # per-layer seeds (k + 1) * 7919 exactly, so no stored result moves.
+        _s = 1 if seed in (None, 7919) else seed
         return ([place_bridges(L, bridge_fraction, n_bridges,
-                               seed=(k + 1) * 7919)[0]
+                               seed=(k + 1) * 7919 * _s)[0]
                  for k in range(n_layers)], b_real)
 
     r = base[0][2]
