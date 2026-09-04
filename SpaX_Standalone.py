@@ -1017,6 +1017,42 @@ def _densify_packing(spheres, L, sep, min_distance, VoF_target,
     return spheres, current_vof
 
 
+def _uniform_on_sphere():
+    """A unit vector drawn uniformly on the unit sphere."""
+    v = np.random.randn(3)
+    n = float(np.linalg.norm(v))
+    return v / n if n > 1e-12 else np.array([1.0, 0.0, 0.0])
+
+
+def _uniform_in_plane():
+    """A unit vector drawn uniformly in the HORIZONTAL (x-y) plane.
+
+    S2 sea ice carries its c axes in the horizontal plane, so the basal planes
+    that hold the brine are vertical sheets whose normals are horizontal with a
+    uniformly distributed azimuth. For an oblate inclusion the distinct axis IS
+    that normal, so this is the orientation statistic the S2 morphology has --
+    neither the axis-aligned case nor the 3D-uniform one.
+    """
+    a = 2.0 * math.pi * np.random.rand()
+    return np.array([math.cos(a), math.sin(a), 0.0])
+
+
+def _axis_angle_x_to_d(d):
+    """Compact axis*angle that maps +X onto unit vector d."""
+    d = np.asarray(d, dtype=float)
+    n = float(np.linalg.norm(d))
+    d = d / n if n > 1e-12 else np.array([1.0, 0.0, 0.0])
+    c = float(d[0])
+    if c > 1.0 - 1e-12:
+        return np.zeros(3)
+    if c < -1.0 + 1e-12:
+        return np.array([0.0, 0.0, math.pi])
+    ang = math.acos(max(-1.0, min(1.0, c)))
+    axis = np.array([0.0, -d[2], d[1]])
+    axis = axis / float(np.linalg.norm(axis))
+    return axis * ang
+
+
 def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
                              max_iterations, sphericity_avg=0.85,
                              sphericity_std=0.1, growth_direction='Random',
@@ -1383,9 +1419,28 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     # Build sphere array
     N = len(spheres)
     Sphere_array = np.zeros((N, 10))
+    _gd = str(growth_direction).strip().lower()
+    _random_orient = _gd in ('random', 'randomxy')
+    _in_plane = (_gd == 'randomxy')
     for i, (cx, cy, cz, rx, ry, rz) in enumerate(spheres):
         sph = min(rx, ry, rz) / max(rx, ry, rz) if max(rx, ry, rz) > 0 else 1.0
-        Sphere_array[i] = [cx, cy, cz, rx, ry, rz, 0, 0, 0, sph]
+        if _random_orient and abs(sph - 1.0) > 1e-6:
+            # Continuous orientation: the distinct axis is drawn uniformly on
+            # the sphere and the semi-axes are re-encoded canonically (distinct
+            # axis along +X) with the rotation carried in rot1..3. The mesher
+            # squashes along +X then rotates, which stays meshable at any
+            # orientation (a Y-directed squash develops a degenerate seam).
+            v = sorted([rx, ry, rz])
+            if abs(v[0] - v[1]) < abs(v[1] - v[2]):
+                r_distinct, r_pair = v[2], v[0]   # prolate needle
+            else:
+                r_distinct, r_pair = v[0], v[2]   # oblate plate
+            rot = _axis_angle_x_to_d(_uniform_in_plane() if _in_plane
+                                     else _uniform_on_sphere())
+            Sphere_array[i] = [cx, cy, cz, r_distinct, r_pair, r_pair,
+                               rot[0], rot[1], rot[2], sph]
+        else:
+            Sphere_array[i] = [cx, cy, cz, rx, ry, rz, 0, 0, 0, sph]
     
     print("  Packing: {} spheres, VoF = {:.4f} (target {:.4f}, {:.1%} achieved)".format(
         N, current_vof, VoF_target, current_vof/VoF_target if VoF_target > 0 else 1.0))

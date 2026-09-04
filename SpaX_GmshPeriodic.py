@@ -46,6 +46,78 @@ except ImportError:
 # Geometry construction
 # =====================================================================
 
+def _distinct_pair(radii):
+    """Split spheroid semi-axes into (distinct, pair).
+
+    The packer emits one distinct semi-axis (the short axis of an oblate plate
+    or the long axis of a prolate needle) and two equal pair axes. Returns
+    (r_distinct, r_pair); for a sphere the two are equal.
+    """
+    v = sorted(radii)
+    if abs(v[0] - v[1]) < abs(v[1] - v[2]):
+        return v[2], v[0]
+    return v[0], v[2]
+
+
+def _decode_axis_angle(rot):
+    """Return (unit axis, angle radians) from a compact axis*angle vector."""
+    mag = math.sqrt(rot[0] * rot[0] + rot[1] * rot[1] + rot[2] * rot[2])
+    if mag < 1e-12:
+        return (1.0, 0.0, 0.0), 0.0
+    return (rot[0] / mag, rot[1] / mag, rot[2] / mag), mag
+
+
+def _rotate_vec(v, axis, ang):
+    """Rotate vector v about unit axis by ang (Rodrigues)."""
+    c = math.cos(ang)
+    s = math.sin(ang)
+    ax, ay, az = axis
+    d = ax * v[0] + ay * v[1] + az * v[2]
+    return (v[0] * c + (ay * v[2] - az * v[1]) * s + ax * d * (1.0 - c),
+            v[1] * c + (az * v[0] - ax * v[2]) * s + ay * d * (1.0 - c),
+            v[2] * c + (ax * v[1] - ay * v[0]) * s + az * d * (1.0 - c))
+
+
+def _axis_angle_x_to_d(d):
+    """Compact axis*angle that maps +X onto the unit vector d."""
+    dx, dy, dz = d[0], d[1], d[2]
+    n = math.sqrt(dx * dx + dy * dy + dz * dz)
+    dx, dy, dz = dx / n, dy / n, dz / n
+    c = dx
+    if c > 1.0 - 1e-12:
+        return (0.0, 0.0, 0.0)
+    if c < -1.0 + 1e-12:
+        return (0.0, 0.0, math.pi)
+    ang = math.acos(max(-1.0, min(1.0, c)))
+    ax, ay, az = 0.0, -dz, dy        # (1,0,0) x d, normalized below
+    norm = math.sqrt(ax * ax + ay * ay + az * az)
+    ax, ay, az = ax / norm, ay / norm, az / norm
+    return (ax * ang, ay * ang, az * ang)
+
+
+def _orientation_of(radii, rot):
+    """Distinct-axis direction d and canonical semi-axes (rd, rp).
+
+    ``rot`` is the axis*angle that maps +X onto d. For the axis-aligned legacy
+    packing ``rot`` is (0,0,0) and d is read off the semi-axes instead.
+    """
+    rd, rp = _distinct_pair(radii)
+    if rot and (rot[0] or rot[1] or rot[2]):
+        axis, ang = _decode_axis_angle(rot)
+        d = _rotate_vec((1.0, 0.0, 0.0), axis, ang)
+        return tuple(d), rd, rp
+    k = int(np.argmin(radii)) if rd < rp else int(np.argmax(radii))
+    d = [0.0, 0.0, 0.0]
+    d[k] = 1.0
+    return tuple(d), rd, rp
+
+
+def _world_half_extents(d, rd, rp):
+    """Bounding-box half-extents of an oriented spheroid along x/y/z."""
+    return tuple(math.sqrt(rd * rd * d[e] * d[e] + rp * rp * (1.0 - d[e] * d[e]))
+                 for e in range(3))
+
+
 class _TolIndex(object):
     """Look points up by position, within a tolerance.
 
@@ -938,27 +1010,37 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                       "{:.0f} deg".format(math.degrees(_az_fixed))
                       if _az_fixed is not None else "per-channel random"))
 
-    def _add_inclusion(ox, oy, oz, radii):
+    def _add_inclusion(ox, oy, oz, radii, rot=(0.0, 0.0, 0.0)):
         """Build one inclusion as the ellipsoid the packer placed.
 
         OCC has no ellipsoid primitive, so a sphere is built at the largest
-        semi-axis and squashed along the other two. The packer only ever
-        produces axis-aligned ellipsoids -- the long axis is assigned to
-        whichever of x/y/z the orientation sampling made dominant, which is why
-        the rotation columns of the sphere array are all zero -- so no rotation
-        is needed here.
-
-        Building the bounding sphere instead, as this did previously, inflates
-        each inclusion by 1/sphericity^2 in volume (a cell at sphericity 0.62
-        carries 2.6x the intended brine) and silently discards pocket shape and
-        orientation altogether.
+        semi-axis and squashed along the distinct axis, then rotated from the
+        canonical +X orientation onto the requested one. Squashing is ALWAYS
+        done along +X first: a sphere dilated directly along Y develops a
+        degenerate parametric seam at the poles that Gmsh's 2D mesher cannot
+        triangulate ("Surface consists of no elements"), while a +X squash
+        followed by a rigid rotation stays meshable at every orientation. For
+        the axis-aligned legacy packing (rot == 0) the distinct axis is read
+        off the semi-axes and the same canonical build is rotated onto it.
         """
-        erx, ery, erz = radii
-        base = max(erx, ery, erz)
+        rd, rp = _distinct_pair(radii)
+        base = max(radii)
         tag = gmsh.model.occ.addSphere(ox, oy, oz, base)
-        if min(erx, ery, erz) < base * (1.0 - 1e-12):
-            gmsh.model.occ.dilate([(3, tag)], ox, oy, oz,
-                                  erx / base, ery / base, erz / base)
+        gmsh.model.occ.dilate([(3, tag)], ox, oy, oz,
+                              rd / base, rp / base, rp / base)
+        if rot and (rot[0] or rot[1] or rot[2]):
+            axis, ang = _decode_axis_angle(rot)
+            gmsh.model.occ.rotate([(3, tag)], ox, oy, oz,
+                                  axis[0], axis[1], axis[2], ang)
+        else:
+            d, _, _ = _orientation_of(radii, rot)
+            if d[0] < 1.0 - 1e-9:
+                rax, ray, raz = 0.0, -d[2], d[1]   # (1,0,0) x d
+                n = math.sqrt(rax * rax + ray * ray + raz * raz)
+                if n > 1e-12:
+                    ang = math.acos(max(-1.0, min(1.0, d[0])))
+                    gmsh.model.occ.rotate([(3, tag)], ox, oy, oz,
+                                          rax / n, ray / n, raz / n, ang)
         return tag
 
     for cx, cy, cz, r, radii, parent_idx, is_channel in parents:
@@ -988,7 +1070,7 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
                 sphere_to_parent[cc] = parent_idx
             continue
         # Main inclusion (clipped to RVE later via fragment)
-        s = _add_inclusion(cx, cy, cz, radii)
+        s = _add_inclusion(cx, cy, cz, radii, tuple(sphere_array[parent_idx, 6:9]))
         sphere_tags.append((3, s))
         sphere_to_parent[s] = parent_idx
 
@@ -998,8 +1080,14 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         # seam lands identically on both members of a face pair; when the box
         # cuts them the two faces then decompose into different curves and the
         # manual periodic node copy has nothing to match. Copying guarantees
-        # each image is an exact translate, topology and all.
-        copies = _add_periodic_sphere_copies(cx, cy, cz, radii, L)
+        # each image is an exact translate, topology and all. The copy decision
+        # uses the ROTATED world half-extents, not the axis-aligned radii, so a
+        # continuously-oriented plate gets copies only on the faces it actually
+        # crosses.
+        _rot = tuple(sphere_array[parent_idx, 6:9])
+        _d, _rd, _rp = _orientation_of(radii, _rot)
+        _ext = _world_half_extents(_d, _rd, _rp)
+        copies = _add_periodic_sphere_copies(cx, cy, cz, _ext, L)
         for ccx, ccy, ccz in copies:
             (_, sc), = gmsh.model.occ.copy([(3, s)])
             gmsh.model.occ.translate([(3, sc)], ccx - cx, ccy - cy, ccz - cz)
