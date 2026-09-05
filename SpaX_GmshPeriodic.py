@@ -332,16 +332,60 @@ def _periodic_curve_pairs(L, eps=None):
     for c, (com, _onmax) in info.items():
         idx.add(com, c)
 
-    pairs = []
+    # A LOOSE FALLBACK, GATED ON CURVE LENGTH.  The tight centre-of-mass match
+    # above is unambiguous when it succeeds, but it MISSES when the quadrature
+    # noise on a long, eccentric spline cut exceeds 1e-5 L -- which is what
+    # happens once the inclusions are flat enough that their cuts are far from
+    # circular.  A missed pair is silent here and fatal later: the slave curve
+    # is never made periodic, and Gmsh raises "Cannot find periodic counterpart
+    # of node ... of curve ..." during the 2D mesh, or the manual surface copy
+    # leaves unmatched boundary nodes.
+    #
+    # So a miss falls back to the nearest candidate within a much looser radius,
+    # accepted only if the two curves have the same LENGTH to a part in 1e4.
+    # Length is a strong discriminator and is exact for OCC, so a wrong pair
+    # cannot slip through it: two distinct boundary curves that happen to lie
+    # within 1e-3 L of each other's translate are essentially never the same
+    # length as well.
+    loose = _TolIndex(2e-3 * L)
+    for c, (com, _onmax) in info.items():
+        loose.add(com, c)
+
+    def _length(c):
+        try:
+            return float(gmsh.model.occ.getMass(1, c))
+        except Exception:
+            return None
+
+    pairs, n_loose, unpaired = [], 0, []
     for c, (com, onmax) in info.items():
         if not onmax:
             continue
         axis = min(onmax)
         trans = [0.0, 0.0, 0.0]
         trans[axis] = L
-        m = idx.get([com[0] - trans[0], com[1] - trans[1], com[2] - trans[2]])
+        target = [com[0] - trans[0], com[1] - trans[1], com[2] - trans[2]]
+        m = idx.get(target)
+        if m is None or m == c:
+            cand = loose.get(target)
+            if cand is not None and cand != c:
+                lc, lm = _length(c), _length(cand)
+                if lc and lm and abs(lc - lm) <= 1e-4 * max(lc, lm):
+                    m, n_loose = cand, n_loose + 1
+                else:
+                    m = None
         if m is not None and m != c:
             pairs.append((m, c, trans))
+        else:
+            unpaired.append(c)
+    if n_loose:
+        print("  Periodic curves: {} paired by the length-gated fallback"
+              .format(n_loose))
+    if unpaired:
+        # Loud, because the mesh that follows will fail in a way that does not
+        # name this as the cause.
+        print("  WARNING: {} max-face curve(s) left UNPAIRED: {}"
+              .format(len(unpaired), unpaired[:12]))
     return pairs
 
 
