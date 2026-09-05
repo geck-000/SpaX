@@ -357,27 +357,62 @@ def _periodic_curve_pairs(L, eps=None):
         except Exception:
             return None
 
-    pairs, n_loose, unpaired = [], 0, []
+    def _find(target, c):
+        """Master at `target`, tight first then the length-gated fallback."""
+        m = idx.get(target)
+        if m is not None and m != c:
+            return m, False
+        cand = loose.get(target)
+        if cand is not None and cand != c:
+            lc, lm = _length(c), _length(cand)
+            if lc and lm and abs(lc - lm) <= 1e-4 * max(lc, lm):
+                return cand, True
+        return None, False
+
+    # SLAVE ALONG EVERY MAX AXIS AT ONCE, NOT THE LOWEST ONE.
+    #
+    # The lowest-axis rule stops a curve being slaved twice, but it does not
+    # stop CHAINS: a curve on the x = L and y = L faces is slaved along x to a
+    # curve that still lies on y = L, and that curve is a slave in its own
+    # right.  Gmsh then has to copy a mesh onto a curve whose own mesh is a
+    # copy, and its edge correspondence is built one hop at a time -- which is
+    # where "Can't find periodic counterpart of mesh edge ..." comes from, with
+    # the 1D node counts all matching (they do; the diagnostic below checks it).
+    #
+    # Translating by -L along EVERY max axis lands directly on the root of the
+    # tree, a curve that lies on no max face and is therefore never a slave.
+    # One hop for every pair, no chains by construction.  If the multi-axis
+    # translate is not in the model -- it should be, the packer adds edge and
+    # corner copies -- fall back to the old single-axis hop rather than leaving
+    # the curve unpaired.
+    pairs, n_loose, unpaired, n_multi, n_fallback = [], 0, [], 0, 0
     for c, (com, onmax) in info.items():
         if not onmax:
             continue
-        axis = min(onmax)
         trans = [0.0, 0.0, 0.0]
-        trans[axis] = L
+        for a in onmax:
+            trans[a] = L
         target = [com[0] - trans[0], com[1] - trans[1], com[2] - trans[2]]
-        m = idx.get(target)
-        if m is None or m == c:
-            cand = loose.get(target)
-            if cand is not None and cand != c:
-                lc, lm = _length(c), _length(cand)
-                if lc and lm and abs(lc - lm) <= 1e-4 * max(lc, lm):
-                    m, n_loose = cand, n_loose + 1
-                else:
-                    m = None
+        m, loose_hit = _find(target, c)
+        if m is None and len(onmax) > 1:
+            # multi-axis root missing: hop along the lowest axis as before
+            trans = [0.0, 0.0, 0.0]
+            trans[min(onmax)] = L
+            target = [com[0] - trans[0], com[1] - trans[1], com[2] - trans[2]]
+            m, loose_hit = _find(target, c)
+            if m is not None:
+                n_fallback += 1
+        elif m is not None and len(onmax) > 1:
+            n_multi += 1
+        if loose_hit:
+            n_loose += 1
         if m is not None and m != c:
             pairs.append((m, c, trans))
         else:
             unpaired.append(c)
+    if n_multi or n_fallback:
+        print("  Periodic curves: {} multi-axis root(s), {} single-axis "
+              "fallback(s)".format(n_multi, n_fallback))
     if n_loose:
         print("  Periodic curves: {} paired by the length-gated fallback"
               .format(n_loose))
@@ -1535,10 +1570,56 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         aff[3], aff[7], aff[11] = trans[0], trans[1], trans[2]
         gmsh.model.mesh.setPeriodic(1, [slave_c], [master_c], aff)
     print("  Periodic curve pairs set: {}".format(len(curve_pairs)))
+    # A slave that is also somebody's master forms a CHAIN, which gmsh must
+    # resolve in order; a cycle it cannot resolve at all.  Both are possible
+    # here because a curve on two max faces is slaved along the lowest axis
+    # only, so its master may itself lie on another max face.
+    _mast = set(m for m, _s, _t in curve_pairs)
+    _slav = set(s2 for _m, s2, _t in curve_pairs)
+    _both = _mast & _slav
+    if _both:
+        _next = {s2: m for m, s2, _t in curve_pairs}
+        _cyc = []
+        for c0 in _both:
+            seen, c = set(), c0
+            while c in _next and c not in seen:
+                seen.add(c)
+                c = _next[c]
+            if c in seen:
+                _cyc.append(c0)
+        print("  Periodic chains: {} curve(s) are both master and slave{}"
+              .format(len(_both),
+                      "; {} lie on a CYCLE".format(len(_cyc)) if _cyc else ""))
 
     # Stage 2: mesh 1D + 2D (master faces meshed with the size field; slave
     # boundary curves are periodic copies of their masters).
     gmsh.option.setNumber("Mesh.ToleranceInitialDelaunay", 1e-8)
+
+    # 1D FIRST, AND CHECK IT.  generate(2) does the 1D pass internally, so a
+    # periodic curve copy that fails there surfaces as an exception from the
+    # SURFACE mesher with no indication of which pair broke.  Meshing 1D on its
+    # own is cheap and makes the failure attributable: every (master, slave)
+    # pair must carry the same number of nodes, because the slave's mesh is
+    # supposed to be the master's translate.
+    print("  Generating curve mesh (1D)...")
+    gmsh.model.mesh.generate(1)
+    bad = []
+    for master_c, slave_c, _t in curve_pairs:
+        try:
+            nm = len(gmsh.model.mesh.getNodes(1, master_c)[0])
+            ns = len(gmsh.model.mesh.getNodes(1, slave_c)[0])
+        except Exception:
+            continue
+        if nm != ns:
+            bad.append((master_c, slave_c, nm, ns))
+    if bad:
+        print("  1D PERIODICITY BROKEN on {} of {} pairs (master, slave, "
+              "n_master, n_slave):".format(len(bad), len(curve_pairs)))
+        for b in bad[:10]:
+            print("      {}".format(b))
+    else:
+        print("  1D periodic copy OK on all {} pairs".format(len(curve_pairs)))
+
     print("  Generating surface mesh (2D)...")
     gmsh.model.mesh.generate(2)
 
