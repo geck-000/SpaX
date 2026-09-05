@@ -1037,6 +1037,18 @@ def _uniform_in_plane():
     return np.array([math.cos(a), math.sin(a), 0.0])
 
 
+def _world_half_extents(d, r_distinct, r_pair):
+    """Bounding-box half-extents of an oriented spheroid along x/y/z.
+
+    Mirrors _world_half_extents in SpaX_GmshPeriodic: the extent along world
+    axis e is sqrt(rd^2 d_e^2 + rp^2 (1 - d_e^2)) for a spheroid whose distinct
+    semi-axis rd lies along unit vector d and whose pair semi-axis is rp.
+    """
+    return tuple(math.sqrt(r_distinct * r_distinct * d[e] * d[e]
+                           + r_pair * r_pair * (1.0 - d[e] * d[e]))
+                 for e in range(3))
+
+
 def _axis_angle_x_to_d(d):
     """Compact axis*angle that maps +X onto unit vector d."""
     d = np.asarray(d, dtype=float)
@@ -1096,6 +1108,11 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     """
     V_RVE = L ** 3
     spheres = []  # list of (cx, cy, cz, rx, ry, rz)
+    # Orientation of each accepted placement, keyed by CENTRE rather than by
+    # index: the densify and trim passes below may extend or rescale the list,
+    # and a centre is stable under both.  Value is (r_distinct, r_pair, rot).
+    _orients = {}
+    _okey = lambda a, b, c: (round(a, 9), round(b, 9), round(c, 9))
     octree = Octree(L, capacity=8, max_depth=12)
     current_vof = 0.0
     n_consecutive_fails = 0
@@ -1234,6 +1251,40 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
             np.random.shuffle(axes)
             rx, ry, rz = axes
         
+        # ORIENTATION IS DRAWN HERE, not after the packing loop.  The sliver
+        # rejection below is the only thing standing between a near-tangent
+        # placement and a periodic boundary the mesher cannot pair, and it tests
+        # the half-extent NORMAL to each face.  For a continuously oriented
+        # spheroid that extent is the ROTATED one: a plate accepted because its
+        # thin axis lay along z can be rotated to present that thin axis to x,
+        # and every cap height changes with it.  Drawing the orientation after
+        # the loop -- as this did when continuous orientation was introduced --
+        # therefore let genuine slivers through, and they surfaced as
+        # "Can't find periodic counterpart of mesh edge" during meshing.
+        _gd_l = str(growth_direction).strip().lower()
+        if _gd_l in ('random', 'randomxy') and abs(sph - 1.0) > 1e-6:
+            _v = sorted([rx, ry, rz])
+            if abs(_v[0] - _v[1]) < abs(_v[1] - _v[2]):
+                _rd, _rp = _v[2], _v[0]          # prolate needle
+            else:
+                _rd, _rp = _v[0], _v[2]          # oblate plate
+            _dvec = (_uniform_in_plane() if _gd_l == 'randomxy'
+                     else _uniform_on_sphere())
+            _rot_i = _axis_angle_x_to_d(_dvec)
+            _orient_i = (_rd, _rp, _rot_i)
+            # The FACE-CAP test needs the rotated world half-extents; the
+            # VOLUME and OVERLAP accounting must keep the true semi-axes.
+            # Overwriting rx, ry, rz with the bounding-box extents overstates
+            # the inclusion volume -- for a rotated spheroid the box strictly
+            # contains the ellipsoid -- so the packer reaches its target on
+            # paper while the realised fraction falls short, which is exactly
+            # what the first in-plane run did (phi 0.009 against a target
+            # 0.020).
+            _ext_i = _world_half_extents(_dvec, _rd, _rp)
+        else:
+            _orient_i = None
+            _ext_i = None
+
         # Sliver rejection (geometric, mesh-aware). Reject placements whose
         # cut geometry would be thinner than one resolvable element (sep):
         #   - a thin spherical cap where the sphere grazes a face,
@@ -1248,8 +1299,8 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         # is accepted, and the mesher then fails to build a consistent periodic
         # boundary. (Harmless while inclusions were meshed as bounding spheres,
         # since then the bounding radius *was* the geometry.)
-        r_check = max(rx, ry, rz)
-        r_axis = (rx, ry, rz)
+        r_check = max(_ext_i) if _ext_i is not None else max(rx, ry, rz)
+        r_axis = _ext_i if _ext_i is not None else (rx, ry, rz)
         reject_portion = False
         cc = [cx, cy, cz]
         for i, v in enumerate(cc):
@@ -1333,6 +1384,8 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
 
         if not overlap:
             spheres.append((cx, cy, cz, rx, ry, rz))
+            if _orient_i is not None:
+                _orients[_okey(cx, cy, cz)] = _orient_i
             octree.insert((cx, cy, cz), (rx, ry, rz))
             # Insert periodic images into octree too
             for dx in [L, -L, 0]:
@@ -1408,6 +1461,7 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     # the placement tests already accepted; growing could do both, so an
     # undershooting pack (the packer stalled and could not reach the target) is
     # left alone and reported as it stands.
+    _pre_trim_vof = current_vof
     if VoF_target > 0 and current_vof > VoF_target and spheres:
         f = (VoF_target / current_vof) ** (1.0 / 3.0)
         spheres = [(cx, cy, cz, rx * f, ry * f, rz * f)
@@ -1422,9 +1476,23 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     _gd = str(growth_direction).strip().lower()
     _random_orient = _gd in ('random', 'randomxy')
     _in_plane = (_gd == 'randomxy')
+    # If the trim pass rescaled every semi-axis by f, the stored distinct/pair
+    # radii rescale with them; the orientation itself is unchanged.
+    _scale = ((VoF_target / _pre_trim_vof) ** (1.0 / 3.0)
+              if VoF_target > 0 and _pre_trim_vof > VoF_target and spheres
+              else 1.0)
     for i, (cx, cy, cz, rx, ry, rz) in enumerate(spheres):
         sph = min(rx, ry, rz) / max(rx, ry, rz) if max(rx, ry, rz) > 0 else 1.0
-        if _random_orient and abs(sph - 1.0) > 1e-6:
+        _stored = _orients.get(_okey(cx, cy, cz))
+        if _stored is not None:
+            # The orientation the SLIVER REJECTION was run against.  Re-drawing
+            # here would silently discard that test.
+            _rd_s, _rp_s = _stored[0] * _scale, _stored[1] * _scale
+            _rot_s = _stored[2]
+            Sphere_array[i] = [cx, cy, cz, _rd_s, _rp_s, _rp_s,
+                               _rot_s[0], _rot_s[1], _rot_s[2],
+                               min(_rd_s, _rp_s) / max(_rd_s, _rp_s)]
+        elif _random_orient and abs(sph - 1.0) > 1e-6:
             # Continuous orientation: the distinct axis is drawn uniformly on
             # the sphere and the semi-axes are re-encoded canonically (distinct
             # axis along +X) with the rotation carried in rot1..3. The mesher
