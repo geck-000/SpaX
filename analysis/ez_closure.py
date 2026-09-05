@@ -64,6 +64,7 @@ seawater, and needs its own description. Nothing here is calibrated against
 failure or strength data, which sit below the isotropic bounds and so contain
 damage this elastic closure does not model.
 """
+import os
 import numpy as np
 
 # numpy 2.x removed np.trapz in favour of np.trapezoid; keep the old name.
@@ -109,6 +110,44 @@ PHI_C = PHI_LAYER       # retained name: the threshold the closure branches at
 # to 19x once the brine spans the cell, which is the whole point of that
 # section. Applied above PHI_DRAIN only.
 DRAIN_FACTOR = 1.04
+# ---------------------------------------------------------------------------
+# THE POCKET COEFFICIENT IS NOT ONE NUMBER, AND DRAINAGE IS NOT A LEVEL FACTOR.
+#
+# 1.65 was measured on cells whose inclusions are near-equiaxed (sphericity
+# 0.85-0.62) and whose growth direction is Z, so the transverse load runs ALONG
+# the brine planes.  Sub-threshold sea-ice brine is neither: it is flattened
+# into the layer planes whether or not it is yet connected, and in S2 ice the
+# c-axes are horizontal, so the plate normals are horizontal too and a
+# transverse load crosses them at an angle random in that plane.  The layered
+# cells of this paper already assume exactly that (slab_axis = x); the pocket
+# cells did not, and the brine does not rotate at the percolation threshold.
+#
+# The coefficient for the fabric sea ice actually has is SOLVED, on cells with
+# Growth_Direction = RandomXY at sphericity 4, and it is
+#
+#     K_SEALED  = 2.427     K_DRAINED = 2.855
+#
+# against 1.65 for the cells as built.  Both are measurements on realised brine
+# fraction, and both are bracketed by the 3D-random and fully aligned fabrics
+# as the mean squared direction cosine of the plate normal requires.
+#
+# Drainage then STEEPENS the coefficient rather than dividing the level.  That
+# is what the cells show -- releasing the brine changes the SLOPE of E(phi), not
+# a multiplier on it -- and a level factor d(phi) cannot represent it.  The
+# measured drained/sealed ratio at this fabric is 1.18, where d(phi) carried
+# 1.04.  d(phi) is therefore retired: set FABRIC = 'paper1' to recover it and
+# the published 1.65 for reproducing the earlier numbers.
+K_SEALED, K_DRAINED = 2.373, 2.730
+FABRIC = os.environ.get('SPAX_FABRIC', 's2')      # 's2' (measured) or 'paper1' (1.65 + d(phi))
+
+
+def pocket_law(phi, u):
+    """E_pocket at brine fraction `phi` with drainage weight `u` in [0, 1]."""
+    if FABRIC == 'paper1':
+        return E_ICE * (1.0 - 1.65 * phi) / (1.0 + (DRAIN_FACTOR - 1.0) * u)
+    k = K_SEALED + (K_DRAINED - K_SEALED) * u
+    return E_ICE * (1.0 - k * phi)
+# ---------------------------------------------------------------------------
 # THE EXPONENT IS NOT A CONSTANT. It falls linearly with the bridge fraction:
 #
 #     n(b) = 1.091 - 1.337 b        R2 = 0.87, rms 0.029
@@ -206,9 +245,43 @@ N_ARRANGEMENT_SD = 0.011
 N_MID, N_LO, N_HI = 0.98, 0.93, 1.04
 
 
-def n_of_b(b, offset=0.0):
-    """Bridge exponent at four bridges to a plane, Eq. n(b)."""
-    return N_OF_B_INTERCEPT + N_OF_B_SLOPE * np.asarray(b, float) + offset
+def n_of_b(b, offset=0.0, phi_0=None):
+    """Bridge exponent at four bridges to a plane, Eq. n(b).
+
+    THE EXPONENT ABSORBS A CHANGE OF PREFACTOR EXACTLY, and it must, because it
+    was not assumed: it was obtained from the four-bridge cells as
+
+        n = log(E_cell / E_pocket) / log b.
+
+    E_cell is a solved modulus and cannot move because a coefficient did, so
+    promoting the pocket law from 1.65 to the measured k(phi) has to be carried
+    into n or the layered branch is changed by fiat.  Writing the new pocket law
+    as f(phi) times the old one, invariance of E_pocket * b^n requires
+
+        dn(b) = -ln f(phi(b)) / ln b,      phi(b) = phi_0 (1 - b)^2,
+
+    which is closed-form: it needs the cells' brine fractions, not their moduli.
+    With it the layered branch returns exactly what it measured and only the
+    POCKET branch, below phi_c, moves -- which is the only place the pocket law
+    is what is being applied.
+
+    This is the same absorption the paper already invokes when it says a change
+    in the prefactor "is absorbed exactly by the exponent wherever the exponent
+    was measured".
+    """
+    b = np.asarray(b, float)
+    n = N_OF_B_INTERCEPT + N_OF_B_SLOPE * b + offset
+    if FABRIC == 'paper1':
+        return n
+    p0 = PHI_0 if phi_0 is None else phi_0
+    phi = p0 * (1.0 - b) ** 2
+    u = np.clip((phi - (PHI_DRAIN - PHI_DRAIN_SD)) / (2.0 * PHI_DRAIN_SD),
+                0.0, 1.0)
+    old = E_ICE * (1.0 - 1.65 * phi) / (1.0 + (DRAIN_FACTOR - 1.0) * u)
+    f = pocket_law(phi, u) / old
+    with np.errstate(divide='ignore', invalid='ignore'):
+        dn = np.where((b > 0) & (b < 1), -np.log(f) / np.log(b), 0.0)
+    return n + np.nan_to_num(dn)
 
 # The ramp saturates at phi_0, which is how the paper defines it: with no
 # measured width, the two limits that bracket the transition are a step at
@@ -365,7 +438,7 @@ def E_of_phi(phi, n=None, phi_0=PHI_0, a0_mm=A0_MM, floor=E_FLOOR,
     # the ramped layered branch was adopted to secure.
     u = np.clip((phi - (PHI_DRAIN - PHI_DRAIN_SD)) / (2.0 * PHI_DRAIN_SD),
                 0.0, 1.0)
-    E_pocket = E_ICE * (1.0 - 1.65 * phi) / (1.0 + (DRAIN_FACTOR - 1.0) * u)
+    E_pocket = pocket_law(phi, u)
 
     # The bridge factor applies only where the lamellar plane it describes
     # actually exists. Below the percolation threshold the brine sits in
