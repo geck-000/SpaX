@@ -1049,6 +1049,79 @@ def _world_half_extents(d, r_distinct, r_pair):
                  for e in range(3))
 
 
+def _face_cap_ok(cx, cy, cz, r_axis, L, sep):
+    """No face of the RVE is cut into a slice thinner than `sep`.
+
+    Mirrors the face-cap half of the placement-time sliver rejection: the cap an
+    inclusion leaves at a face is set by its half-extent NORMAL to that face,
+    and both the cap and the body left inside must be resolvable.
+    """
+    for i, v in enumerate((cx, cy, cz)):
+        r_ax = r_axis[i]
+        for face_dist in (v, L - v):
+            if face_dist < r_ax:
+                cap = r_ax - face_dist
+                if cap < sep or (2.0 * r_ax - cap) < sep:
+                    return False
+    return True
+
+
+def _repair_face_caps(spheres, orients, L, sep, V_RVE, current_vof,
+                      f_min=0.60, step=0.005):
+    """Shrink inclusions that the densify pass pushed into a periodic face.
+
+    The placement loop rejects a near-tangent inclusion because the mesher
+    cannot pair the sliver it cuts from a face.  The densify pass then GROWS and
+    MOVES what survived -- by a linear factor of 1.3 or more on the flat cells --
+    which re-creates exactly that condition, and nothing re-tested it.  The
+    result reached Gmsh as "Can't find periodic counterpart of mesh edge".
+
+    Each offending inclusion is scaled down by the largest factor that clears
+    the test.  Shrinking only ever increases pair clearances and distances to
+    faces, so it cannot introduce an overlap the packing already accepted.  The
+    predicate is NOT monotone in the scale (an inclusion can pass by cutting the
+    face deeply, fail in between, and pass again once it no longer reaches the
+    face at all), so the scan walks down from 1 and takes the first pass rather
+    than bisecting.  An inclusion that cannot be repaired inside `f_min` is
+    dropped; the volume it takes with it shows up in the realised fraction,
+    which is measured on the mesh and reported.
+    """
+    out_s, out_o, n_fix, n_drop, vol_lost = [], [], 0, 0, 0.0
+    for i, (cx, cy, cz, rx, ry, rz) in enumerate(spheres):
+        o = orients[i] if i < len(orients) else None
+        if o is None:
+            r_axis = (rx, ry, rz)
+            rd = rp = None
+        else:
+            v = sorted([rx, ry, rz])
+            rd, rp = ((v[2], v[0]) if abs(v[0] - v[1]) < abs(v[1] - v[2])
+                      else (v[0], v[2]))
+            r_axis = _world_half_extents(o[0], rd, rp)
+        if _face_cap_ok(cx, cy, cz, r_axis, L, sep):
+            out_s.append((cx, cy, cz, rx, ry, rz))
+            out_o.append(o)
+            continue
+        f = 1.0 - step
+        while f >= f_min:
+            ra = tuple(x * f for x in r_axis)
+            if _face_cap_ok(cx, cy, cz, ra, L, sep):
+                break
+            f -= step
+        if f < f_min:
+            n_drop += 1
+            vol_lost += 4.0 / 3.0 * math.pi * rx * ry * rz
+            continue
+        n_fix += 1
+        vol_lost += (1.0 - f ** 3) * 4.0 / 3.0 * math.pi * rx * ry * rz
+        out_s.append((cx, cy, cz, rx * f, ry * f, rz * f))
+        out_o.append(o)
+    if n_fix or n_drop:
+        current_vof -= vol_lost / V_RVE
+        print("    [FaceCap] {} inclusion(s) shrunk, {} dropped; "
+              "VoF -> {:.4f}".format(n_fix, n_drop, current_vof))
+    return out_s, out_o, current_vof
+
+
 def _axis_angle_x_to_d(d):
     """Compact axis*angle that maps +X onto unit vector d."""
     d = np.asarray(d, dtype=float)
@@ -1108,11 +1181,18 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     """
     V_RVE = L ** 3
     spheres = []  # list of (cx, cy, cz, rx, ry, rz)
-    # Orientation of each accepted placement, keyed by CENTRE rather than by
-    # index: the densify and trim passes below may extend or rescale the list,
-    # and a centre is stable under both.  Value is (r_distinct, r_pair, rot).
-    _orients = {}
-    _okey = lambda a, b, c: (round(a, 9), round(b, 9), round(c, 9))
+    # Orientation of each accepted placement, held in a list PARALLEL to
+    # `spheres` and appended in lock-step with it.  It was keyed by centre once;
+    # that silently lost every orientation, because _densify_packing MOVES
+    # inclusions (`spheres[i] = (nx, ny, nz, ...)`) as well as growing them, so
+    # the key no longer matched and the array build below re-drew a fresh random
+    # orientation -- discarding the sliver rejection that had just been run
+    # against the old one.  That is the failure that kept surfacing as
+    # "Can't find periodic counterpart of mesh edge".  Every pass between here
+    # and the array build (densify, off-axis repair, trim) mutates in place and
+    # preserves both length and index order, so an index is stable where a
+    # centre is not.  Entry is (direction unit vector, axis*angle rotation).
+    _orients = []
     octree = Octree(L, capacity=8, max_depth=12)
     current_vof = 0.0
     n_consecutive_fails = 0
@@ -1271,7 +1351,11 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
             _dvec = (_uniform_in_plane() if _gd_l == 'randomxy'
                      else _uniform_on_sphere())
             _rot_i = _axis_angle_x_to_d(_dvec)
-            _orient_i = (_rd, _rp, _rot_i)
+            # Only the DIRECTION is carried.  The radii are re-derived from the
+            # final semi-axes at the array build, because densify, the off-axis
+            # repair and the trim all rescale them; carrying the pre-growth
+            # radii instead wrote the packing's UNGROWN inclusions into the deck.
+            _orient_i = (tuple(float(x) for x in _dvec), _rot_i)
             # The FACE-CAP test needs the rotated world half-extents; the
             # VOLUME and OVERLAP accounting must keep the true semi-axes.
             # Overwriting rx, ry, rz with the bounding-box extents overstates
@@ -1384,8 +1468,7 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
 
         if not overlap:
             spheres.append((cx, cy, cz, rx, ry, rz))
-            if _orient_i is not None:
-                _orients[_okey(cx, cy, cz)] = _orient_i
+            _orients.append(_orient_i)
             octree.insert((cx, cy, cz), (rx, ry, rz))
             # Insert periodic images into octree too
             for dx in [L, -L, 0]:
@@ -1448,6 +1531,12 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
         print("    [Densify] VoF {:.4f} -> {:.4f} by growing {} inclusions".format(
             vof_before, current_vof, len(spheres)))
 
+    # The densify pass grows AND moves what the placement loop accepted, so the
+    # face-cap half of the sliver rejection has to be re-run against the result.
+    if densify and spheres:
+        spheres, _orients, current_vof = _repair_face_caps(
+            spheres, _orients, L, sep, V_RVE, current_vof)
+
     # Land on the target fraction rather than the first value past it.
     #
     # The grow/densify rounds stop as soon as the running VoF crosses the
@@ -1461,7 +1550,6 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     # the placement tests already accepted; growing could do both, so an
     # undershooting pack (the packer stalled and could not reach the target) is
     # left alone and reported as it stands.
-    _pre_trim_vof = current_vof
     if VoF_target > 0 and current_vof > VoF_target and spheres:
         f = (VoF_target / current_vof) ** (1.0 / 3.0)
         spheres = [(cx, cy, cz, rx * f, ry * f, rz * f)
@@ -1476,19 +1564,27 @@ def generate_sphere_packing(L, r_avg, r_std, VoF_target, min_distance,
     _gd = str(growth_direction).strip().lower()
     _random_orient = _gd in ('random', 'randomxy')
     _in_plane = (_gd == 'randomxy')
-    # If the trim pass rescaled every semi-axis by f, the stored distinct/pair
-    # radii rescale with them; the orientation itself is unchanged.
-    _scale = ((VoF_target / _pre_trim_vof) ** (1.0 / 3.0)
-              if VoF_target > 0 and _pre_trim_vof > VoF_target and spheres
-              else 1.0)
+    if len(_orients) != len(spheres):
+        # A pass changed the list length; the index correspondence is gone and
+        # re-drawing is the only honest fallback.  Loud, because it means the
+        # sliver rejection no longer describes the cell that gets meshed.
+        print("    [Orient] WARNING: {} orientations for {} inclusions -- "
+              "re-drawing".format(len(_orients), len(spheres)))
+        _orients = [None] * len(spheres)
     for i, (cx, cy, cz, rx, ry, rz) in enumerate(spheres):
         sph = min(rx, ry, rz) / max(rx, ry, rz) if max(rx, ry, rz) > 0 else 1.0
-        _stored = _orients.get(_okey(cx, cy, cz))
+        _stored = _orients[i]
         if _stored is not None:
             # The orientation the SLIVER REJECTION was run against.  Re-drawing
-            # here would silently discard that test.
-            _rd_s, _rp_s = _stored[0] * _scale, _stored[1] * _scale
-            _rot_s = _stored[2]
+            # here would silently discard that test.  The RADII come from the
+            # final semi-axes, by the same rule the placement loop used, so the
+            # densify and trim passes are carried rather than thrown away.
+            _v = sorted([rx, ry, rz])
+            if abs(_v[0] - _v[1]) < abs(_v[1] - _v[2]):
+                _rd_s, _rp_s = _v[2], _v[0]      # prolate needle
+            else:
+                _rd_s, _rp_s = _v[0], _v[2]      # oblate plate
+            _rot_s = _stored[1]
             Sphere_array[i] = [cx, cy, cz, _rd_s, _rp_s, _rp_s,
                                _rot_s[0], _rot_s[1], _rot_s[2],
                                min(_rd_s, _rp_s) / max(_rd_s, _rp_s)]
