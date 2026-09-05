@@ -1105,8 +1105,34 @@ def generate_periodic_mesh(sphere_array, L, L_mesh, output_dir,
         rd, rp = _distinct_pair(radii)
         base = max(radii)
         tag = gmsh.model.occ.addSphere(ox, oy, oz, base)
+        # SQUASH ALONG THE SPHERE'S OWN AXIS OF REVOLUTION, then bring the
+        # distinct axis onto +X.
+        #
+        # OCC builds a sphere as a surface of revolution about Z, with poles at
+        # +/-Z and a seam meridian.  Squashing along X -- perpendicular to that
+        # axis -- leaves the poles alone but makes the PARAMETRIC metric
+        # anisotropic by the full aspect ratio: at s = 6 the parametric speed
+        # varies six-fold around the seam.  Gmsh's surface mesher works in
+        # parameter space, and past about 4:1 it starts reporting "N elements
+        # remain invalid in surface X" and falls into its recovery path,
+        # "Serializing surface X and refining all its bounding edges".  That
+        # recovery REFINES THE BOUNDING CURVES -- the ones setPeriodic(1) has
+        # just made periodic -- so the 1D correspondence is destroyed, and
+        # alignPeriodicBoundaries then fails with "Can't find periodic
+        # counterpart of mesh edge ...", with every 1D node count still matching
+        # at the point they were checked.  Seventeen such recoveries fired on
+        # the s = 6 cell that would not mesh.
+        #
+        # Squashing along Z instead keeps the spheroid a surface of revolution
+        # about its own axis: the azimuthal direction stays a circle of constant
+        # radius and only the polar direction is compressed, which is the case
+        # the parametrisation is built for.  A rigid rotation of +Z onto +X then
+        # restores the canonical orientation everything downstream assumes, and
+        # a rigid rotation cannot reintroduce parametric distortion.
         gmsh.model.occ.dilate([(3, tag)], ox, oy, oz,
-                              rd / base, rp / base, rp / base)
+                              rp / base, rp / base, rd / base)
+        gmsh.model.occ.rotate([(3, tag)], ox, oy, oz,
+                              0.0, 1.0, 0.0, 0.5 * math.pi)
         if rot and (rot[0] or rot[1] or rot[2]):
             axis, ang = _decode_axis_angle(rot)
             gmsh.model.occ.rotate([(3, tag)], ox, oy, oz,
